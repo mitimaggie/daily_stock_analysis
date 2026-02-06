@@ -39,6 +39,7 @@ class AnalysisResult:
     success: bool = True
     error_message: Optional[str] = None
     current_price: float = 0.0
+    market_snapshot: Optional[Dict[str, Any]] = None  # 当日行情快照（推送中展示用）
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -209,6 +210,7 @@ class GeminiAnalyzer:
             result.raw_response = response_text
             result.search_performed = bool(news_context)
             result.current_price = context.get('price', 0)
+            result.market_snapshot = self._build_market_snapshot(context)
             return result
             
         except Exception as e:
@@ -324,6 +326,93 @@ analysis_summary, risk_warning
             )
         except Exception as e:
             return AnalysisResult(code, name, 50, "解析错", "人工核查", success=True, error_message=str(e))
+
+    def _format_price(self, value: Any) -> str:
+        """格式化价格/数值为展示用字符串"""
+        if value is None: return 'N/A'
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return 'N/A'
+
+    def _format_percent(self, value: Any) -> str:
+        """格式化涨跌幅等百分比"""
+        if value is None: return 'N/A'
+        try:
+            return f"{float(value):.2f}%"
+        except (TypeError, ValueError):
+            return 'N/A'
+
+    def _format_volume(self, value: Any) -> str:
+        """格式化成交量（可转为万手等）"""
+        if value is None: return 'N/A'
+        try:
+            v = float(value)
+            if v >= 1e8: return f"{v/1e8:.2f}亿"
+            if v >= 1e4: return f"{v/1e4:.2f}万"
+            return f"{v:.0f}"
+        except (TypeError, ValueError):
+            return 'N/A'
+
+    def _format_amount(self, value: Any) -> str:
+        """格式化成交额"""
+        if value is None: return 'N/A'
+        try:
+            v = float(value)
+            if v >= 1e8: return f"{v/1e8:.2f}亿"
+            if v >= 1e4: return f"{v/1e4:.2f}万"
+            return f"{v:.0f}"
+        except (TypeError, ValueError):
+            return 'N/A'
+
+    def _build_market_snapshot(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """构建当日行情快照（推送中「当日行情」表格用）"""
+        today = context.get('today') or {}
+        realtime = context.get('realtime') or {}
+        yesterday = context.get('yesterday') or {}
+
+        prev_close = yesterday.get('close')
+        close = today.get('close')
+        high = today.get('high')
+        low = today.get('low')
+
+        amplitude = None
+        change_amount = None
+        if prev_close not in (None, 0) and high is not None and low is not None:
+            try:
+                amplitude = (float(high) - float(low)) / float(prev_close) * 100
+            except (TypeError, ValueError, ZeroDivisionError):
+                amplitude = None
+        if prev_close is not None and close is not None:
+            try:
+                change_amount = float(close) - float(prev_close)
+            except (TypeError, ValueError):
+                change_amount = None
+
+        snapshot = {
+            "date": context.get('date', '未知'),
+            "close": self._format_price(close),
+            "open": self._format_price(today.get('open')),
+            "high": self._format_price(high),
+            "low": self._format_price(low),
+            "prev_close": self._format_price(prev_close),
+            "pct_chg": self._format_percent(today.get('pct_chg')),
+            "change_amount": self._format_price(change_amount),
+            "amplitude": self._format_percent(amplitude),
+            "volume": self._format_volume(today.get('volume')),
+            "amount": self._format_amount(today.get('amount')),
+        }
+        if realtime:
+            src = realtime.get('source')
+            if hasattr(src, 'value'):
+                src = src.value
+            snapshot.update({
+                "price": self._format_price(realtime.get('price')),
+                "volume_ratio": realtime.get('volume_ratio') if realtime.get('volume_ratio') is not None else 'N/A',
+                "turnover_rate": self._format_percent(realtime.get('turnover_rate')),
+                "source": src if src is not None else 'N/A',
+            })
+        return snapshot
 
     def chat(self, prompt: str) -> str:
         """通用对话接口 (大盘复盘用)"""

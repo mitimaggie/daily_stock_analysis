@@ -87,9 +87,34 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--no-market-review', action='store_true', help='跳过大盘复盘')
     parser.add_argument('--webui', action='store_true', help='启动WebUI')
     parser.add_argument('--webui-only', action='store_true', help='仅WebUI')
+    parser.add_argument('--serve', action='store_true', help='启动 FastAPI 后端服务（同时执行分析任务）')
+    parser.add_argument('--serve-only', action='store_true', help='仅启动 FastAPI 后端服务，不自动执行分析')
+    parser.add_argument('--host', type=str, default='0.0.0.0', help='FastAPI 监听地址')
+    parser.add_argument('--port', type=int, default=8000, help='FastAPI 服务端口')
     parser.add_argument('--no-context-snapshot', action='store_true', help='不保存快照')
     parser.add_argument('--chip-only', action='store_true', help='仅拉取筹码分布并落库（供定时任务在固定时间跑，分析时用缓存）')
     return parser.parse_args()
+
+def start_api_server(host: str, port: int, config: Config) -> None:
+    """在后台线程启动 FastAPI 服务（React WebUI 后端）"""
+    import threading
+    try:
+        import uvicorn
+    except ImportError:
+        logger.error("请安装 uvicorn: pip install uvicorn")
+        return
+    def run_server():
+        level_name = (config.log_level or "INFO").lower()
+        uvicorn.run(
+            "api.app:app",
+            host=host,
+            port=port,
+            log_level=level_name,
+            log_config=None,
+        )
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+    logger.info(f"FastAPI 服务已启动: http://{host}:{port}")
 
 def run_chip_only(config: Config) -> None:
     """仅拉取筹码分布并落库（供定时任务在 16:00 等固定时间调用）。"""
@@ -245,6 +270,7 @@ def main() -> int:
     
     # WebUI 逻辑
     start_webui = (args.webui or args.webui_only or config.webui_enabled) and os.getenv("GITHUB_ACTIONS") != "true"
+    start_serve = (args.serve or args.serve_only) and os.getenv("GITHUB_ACTIONS") != "true"
     if start_webui:
         try:
             from webui import run_server_in_thread
@@ -252,8 +278,19 @@ def main() -> int:
             start_bot_stream_clients(config)
         except Exception as e:
             logger.error(f"WebUI 启动失败: {e}")
+    if start_serve:
+        try:
+            start_api_server(host=args.host, port=args.port, config=config)
+        except Exception as e:
+            logger.error(f"FastAPI 服务启动失败: {e}")
     
     if args.webui_only:
+        try:
+            while True: time.sleep(1)
+        except KeyboardInterrupt: return 0
+    if args.serve_only:
+        logger.info("模式: 仅 FastAPI 服务")
+        logger.info(f"API 运行中: http://{args.host}:{args.port} 文档: http://{args.host}:{args.port}/docs")
         try:
             while True: time.sleep(1)
         except KeyboardInterrupt: return 0
@@ -317,7 +354,7 @@ def main() -> int:
         # 模式3: 正常运行
         run_full_analysis(config, args, stock_codes)
         
-        if start_webui and not (args.schedule or config.schedule_enabled):
+        if (start_webui or start_serve) and not (args.schedule or config.schedule_enabled):
             try:
                 while True: time.sleep(1)
             except KeyboardInterrupt: pass

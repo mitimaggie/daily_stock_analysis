@@ -216,9 +216,28 @@ class StockAnalysisPipeline:
         except Exception as e:
             pass
 
+        # 当日/昨日 K 线（供推送中的「当日行情」快照用）
+        today_row = {}
+        yesterday_row = {}
+        context_date = ''
+        if daily_df is not None and not daily_df.empty and len(daily_df) >= 1:
+            try:
+                keys = ['open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg', 'date']
+                last = daily_df.iloc[-1]
+                today_row = {k: last[k] for k in keys if k in last.index}
+                context_date = str(today_row.get('date', ''))
+                if len(daily_df) >= 2:
+                    prev = daily_df.iloc[-2]
+                    yesterday_row = {k: prev[k] for k in keys if k in prev.index}
+            except Exception:
+                pass
+
         context = {
             'code': code,
             'stock_name': stock_name,
+            'date': context_date,
+            'today': today_row,
+            'yesterday': yesterday_row,
             'price': quote.price,
             'realtime': quote.to_dict(),
             'chip': chip_data,
