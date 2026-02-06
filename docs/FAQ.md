@@ -247,6 +247,27 @@ python main.py --market-only
 
 ## 💬 还有问题？
 
+---
+
+## 🔄 Git / 同步相关
+
+### Q: 每次 commit 后点 Sync 都报错，要手动在终端跑 `git fetch --tags --force` 才能正常？
+
+**原因**：仓库有 [Auto Tag](.github/workflows/auto-tag.yml)，每次 push 到 main 会在 CI 里自动打新 tag（如 v2.1.14 → v2.1.15）。Sync 时会从远程拉 tag，若和本地同名 tag 指向不同提交，Git 会拒绝更新，就报错。
+
+**以本地为准（推荐）**：开发都在本地改、希望 Sync 不因 tag 冲突报错，可以让本仓库**不拉取远程 tag**，这样本地 tag 不会被远程覆盖，Sync 只同步分支：
+
+```bash
+git config remote.origin.tagOpt --no-tags
+```
+
+以后 Sync 只拉取/推送分支，不拉取远程 tag，就不会再出现 tag 冲突。需要远程最新 tag 时再手动 `git fetch --tags` 即可。
+
+执行后，直接点 Sync 即可，无需再手动 `git fetch --tags --force`。  
+（只影响当前仓库，不会改全局 Git 配置。）
+
+---
+
 如果以上内容没有解决你的问题，欢迎：
 1. 查看 [完整配置指南](full-guide.md)
 2. 搜索或提交 [GitHub Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
