@@ -17,7 +17,7 @@ import json
 import logging
 import re
 from datetime import datetime, date, timedelta
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, TYPE_CHECKING, Tuple
 from pathlib import Path
 
 import pandas as pd
@@ -371,7 +371,39 @@ class DatabaseManager:
                 select(AnalysisHistory).where(and_(*conditions)).order_by(desc(AnalysisHistory.created_at)).limit(limit)
             ).scalars().all()
             return list(results)
-    
+
+    def get_analysis_history_paginated(
+        self,
+        code: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        offset: int = 0,
+        limit: int = 20
+    ) -> Tuple[List[AnalysisHistory], int]:
+        """分页查询分析历史记录（带总数），供 API 历史列表使用"""
+        from sqlalchemy import func
+
+        with self.get_session() as session:
+            conditions = []
+            if code:
+                conditions.append(AnalysisHistory.code == code)
+            if start_date:
+                conditions.append(AnalysisHistory.created_at >= datetime.combine(start_date, datetime.min.time()))
+            if end_date:
+                conditions.append(AnalysisHistory.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
+            where_clause = and_(*conditions) if conditions else True
+            total_query = select(func.count(AnalysisHistory.id)).where(where_clause)
+            total = session.execute(total_query).scalar() or 0
+            data_query = (
+                select(AnalysisHistory)
+                .where(where_clause)
+                .order_by(desc(AnalysisHistory.created_at))
+                .offset(offset)
+                .limit(limit)
+            )
+            results = session.execute(data_query).scalars().all()
+            return list(results), total
+
     def save_daily_data(self, df: pd.DataFrame, code: str, data_source: str = "Unknown") -> int:
         if df is None or df.empty: return 0
         saved_count = 0

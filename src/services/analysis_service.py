@@ -119,18 +119,18 @@ class AnalysisService:
         # 计算情绪标签
         sentiment_label = self._get_sentiment_label(result.sentiment_score)
         
-        # 构建报告结构
+        # 构建报告结构（兼容本仓库 AnalysisResult 无 change_pct/news_summary 等字段）
         report = {
             "meta": {
                 "query_id": query_id,
                 "stock_code": result.code,
                 "stock_name": result.name,
                 "report_type": "detailed",
-                "current_price": result.current_price,
-                "change_pct": result.change_pct,
+                "current_price": getattr(result, "current_price", 0) or 0,
+                "change_pct": getattr(result, "change_pct", None),
             },
             "summary": {
-                "analysis_summary": result.analysis_summary,
+                "analysis_summary": getattr(result, "analysis_summary", "") or "",
                 "operation_advice": result.operation_advice,
                 "trend_prediction": result.trend_prediction,
                 "sentiment_score": result.sentiment_score,
@@ -143,10 +143,10 @@ class AnalysisService:
                 "take_profit": sniper_points.get("take_profit"),
             },
             "details": {
-                "news_summary": result.news_summary,
-                "technical_analysis": result.technical_analysis,
-                "fundamental_analysis": result.fundamental_analysis,
-                "risk_warning": result.risk_warning,
+                "news_summary": getattr(result, "news_summary", "") or "",
+                "technical_analysis": getattr(result, "technical_analysis", "") or "",
+                "fundamental_analysis": getattr(result, "fundamental_analysis", "") or "",
+                "risk_warning": getattr(result, "risk_warning", "") or "",
             }
         }
         
