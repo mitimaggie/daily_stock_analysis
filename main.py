@@ -88,7 +88,34 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--webui', action='store_true', help='启动WebUI')
     parser.add_argument('--webui-only', action='store_true', help='仅WebUI')
     parser.add_argument('--no-context-snapshot', action='store_true', help='不保存快照')
+    parser.add_argument('--chip-only', action='store_true', help='仅拉取筹码分布并落库（供定时任务在固定时间跑，分析时用缓存）')
     return parser.parse_args()
+
+def run_chip_only(config: Config) -> None:
+    """仅拉取筹码分布并落库（供定时任务在 16:00 等固定时间调用）。"""
+    config.refresh_stock_list()
+    codes = config.stock_list
+    if not codes:
+        logger.warning("未配置自选股列表，跳过筹码拉取")
+        return
+    try:
+        from data_provider import DataFetcherManager
+    except ImportError:
+        from data_provider.base import DataFetcherManager
+    fetcher = DataFetcherManager()
+    for i, code in enumerate(codes):
+        try:
+            chip = fetcher.get_chip_distribution(code, force_fetch=True)
+            if chip:
+                logger.info(f"[{i+1}/{len(codes)}] ✅ {code} 筹码已拉取并落库")
+            else:
+                logger.debug(f"[{i+1}/{len(codes)}] {code} 筹码拉取跳过/失败")
+        except Exception as e:
+            logger.warning(f"[{i+1}/{len(codes)}] {code} 筹码拉取异常: {e}")
+        if i < len(codes) - 1:
+            time.sleep(2)
+    logger.info("筹码拉取任务结束")
+
 
 def run_full_analysis(config: Config, args: argparse.Namespace, stock_codes: Optional[List[str]] = None):
     """
@@ -232,6 +259,33 @@ def main() -> int:
         except KeyboardInterrupt: return 0
 
     try:
+        # 模式0: 仅拉取筹码并落库（定时在固定时间跑，分析时 CHIP_FETCH_ONLY_FROM_CACHE=true 用缓存）
+        if getattr(args, 'chip_only', False):
+            logger.info("模式: 仅拉取筹码分布并落库")
+            config.refresh_stock_list()
+            codes = stock_codes or config.stock_list
+            if not codes:
+                logger.error("未配置自选股列表")
+                return 1
+            try:
+                from data_provider import DataFetcherManager
+            except ImportError:
+                from data_provider.base import DataFetcherManager
+            fetcher = DataFetcherManager()
+            for i, code in enumerate(codes):
+                try:
+                    chip = fetcher.get_chip_distribution(code, force_fetch=True)
+                    if chip:
+                        logger.info(f"[{i+1}/{len(codes)}] ✅ {code} 筹码已拉取并落库")
+                    else:
+                        logger.debug(f"[{i+1}/{len(codes)}] {code} 筹码拉取跳过/失败")
+                except Exception as e:
+                    logger.warning(f"[{i+1}/{len(codes)}] {code} 筹码拉取异常: {e}")
+                if i < len(codes) - 1:
+                    time.sleep(2)
+            logger.info("筹码拉取任务结束")
+            return 0
+
         # 模式1: 仅大盘复盘
         if args.market_review:
             logger.info("模式: 仅大盘复盘")
@@ -245,11 +299,19 @@ def main() -> int:
             run_market_review(notifier=notifier, analyzer=analyzer, search_service=search_service)
             return 0
         
-        # 模式2: 定时任务
+        # 模式2: 定时任务（可同时注册：每日固定时间拉取筹码 + 每日分析/推送）
         if args.schedule or config.schedule_enabled:
-            logger.info(f"模式: 定时任务 ({config.schedule_time})")
-            from src.scheduler import run_with_schedule
-            run_with_schedule(lambda: run_full_analysis(config, args, stock_codes), config.schedule_time, True)
+            from src.scheduler import Scheduler
+            scheduler = Scheduler(schedule_time=config.schedule_time)
+            scheduler.set_daily_task(
+                lambda: run_full_analysis(config, args, stock_codes),
+                run_immediately=True
+            )
+            # 若配置了筹码定时时间且与主任务时间不同，则增加每日筹码拉取任务（如 16:00 收盘后）
+            if getattr(config, 'chip_schedule_time', None) and config.chip_schedule_time != config.schedule_time:
+                scheduler.add_daily_job(config.chip_schedule_time, lambda: run_chip_only(config))
+                logger.info(f"已注册每日筹码拉取任务，执行时间: {config.chip_schedule_time}")
+            scheduler.run()
             return 0
         
         # 模式3: 正常运行

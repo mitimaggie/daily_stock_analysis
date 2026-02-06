@@ -177,6 +177,29 @@ class AnalysisHistory(Base):
         }
 
 
+class ChipCache(Base):
+    """筹码分布缓存：定时拉取后在此时间内复用，避免分析时频繁请求不稳定接口"""
+    __tablename__ = 'chip_cache'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)
+    chip_date = Column(String(20), nullable=False)
+    source = Column(String(32), default='akshare')
+    profit_ratio = Column(Float)
+    avg_cost = Column(Float)
+    cost_90_low = Column(Float)
+    cost_90_high = Column(Float)
+    concentration_90 = Column(Float)
+    cost_70_low = Column(Float)
+    cost_70_high = Column(Float)
+    concentration_70 = Column(Float)
+    fetched_at = Column(DateTime, default=datetime.now, index=True)
+
+    __table_args__ = (
+        Index('ix_chip_code_fetched', 'code', 'fetched_at'),
+    )
+
+
 class DatabaseManager:
     """
     数据库管理器 - 单例模式
@@ -387,12 +410,74 @@ class DatabaseManager:
                         session.add(record)
                         saved_count += 1
                 session.commit()
-                logger.info(f"保存 {code} 数据成功，新增 {saved_count} 条")
+                suffix = "（该日期已存在，仅更新）" if saved_count == 0 else ""
+                logger.info(f"保存 {code} 数据成功，新增 {saved_count} 条{suffix}")
             except Exception as e:
                 session.rollback()
                 logger.error(f"保存 {code} 数据失败: {e}")
                 raise
         return saved_count
+
+    def save_chip_distribution(self, code: str, chip_date: str, source: str, profit_ratio: float, avg_cost: float,
+                               concentration_90: float, concentration_70: float,
+                               cost_90_low: float = 0.0, cost_90_high: float = 0.0, cost_70_low: float = 0.0, cost_70_high: float = 0.0) -> int:
+        """保存筹码分布到缓存表，按 code 覆盖同一天的最新一条"""
+        with self.get_session() as session:
+            try:
+                existing = session.execute(
+                    select(ChipCache).where(and_(ChipCache.code == code, ChipCache.chip_date == chip_date))
+                ).scalar_one_or_none()
+                if existing:
+                    r = existing
+                    r.profit_ratio = profit_ratio
+                    r.avg_cost = avg_cost
+                    r.concentration_90 = concentration_90
+                    r.concentration_70 = concentration_70
+                    r.cost_90_low = cost_90_low
+                    r.cost_90_high = cost_90_high
+                    r.cost_70_low = cost_70_low
+                    r.cost_70_high = cost_70_high
+                    r.fetched_at = datetime.now()
+                else:
+                    session.add(ChipCache(
+                        code=code, chip_date=chip_date, source=source,
+                        profit_ratio=profit_ratio, avg_cost=avg_cost,
+                        concentration_90=concentration_90, concentration_70=concentration_70,
+                        cost_90_low=cost_90_low, cost_90_high=cost_90_high, cost_70_low=cost_70_low, cost_70_high=cost_70_high
+                    ))
+                session.commit()
+                return 1
+            except Exception as e:
+                session.rollback()
+                logger.debug(f"保存筹码缓存失败 {code}: {e}")
+                return 0
+
+    def get_chip_cached(self, code: str, max_age_hours: float = 24) -> Optional[Dict[str, Any]]:
+        """读取筹码缓存，仅当 fetched_at 在 max_age_hours 内时返回，否则返回 None"""
+        cutoff = datetime.now() - timedelta(hours=max_age_hours)
+        with self.get_session() as session:
+            row = session.execute(
+                select(ChipCache)
+                .where(and_(ChipCache.code == code, ChipCache.fetched_at >= cutoff))
+                .order_by(desc(ChipCache.fetched_at))
+                .limit(1)
+            ).scalars().first()
+            if not row:
+                return None
+            r = row
+            return {
+                'code': r.code,
+                'date': r.chip_date,
+                'source': r.source or 'akshare',
+                'profit_ratio': r.profit_ratio or 0.0,
+                'avg_cost': r.avg_cost or 0.0,
+                'cost_90_low': r.cost_90_low or 0.0,
+                'cost_90_high': r.cost_90_high or 0.0,
+                'concentration_90': r.concentration_90 or 0.0,
+                'cost_70_low': r.cost_70_low or 0.0,
+                'cost_70_high': r.cost_70_high or 0.0,
+                'concentration_70': r.concentration_70 or 0.0,
+            }
     
     def get_analysis_context(self, code: str, target_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
         if target_date is None: target_date = date.today()

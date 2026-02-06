@@ -84,7 +84,7 @@ class Scheduler:
         
     def set_daily_task(self, task: Callable, run_immediately: bool = True):
         """
-        设置每日定时任务
+        设置每日定时任务（主任务，在 schedule_time 执行）
         
         Args:
             task: 要执行的任务函数（无参数）
@@ -100,17 +100,33 @@ class Scheduler:
             logger.info("立即执行一次任务...")
             self._safe_run_task()
     
+    def add_daily_job(self, time_str: str, task: Callable):
+        """
+        增加一个每日定时任务（可与主任务不同时间，如 16:00 拉取筹码、18:00 全量分析）
+        
+        Args:
+            time_str: 每日执行时间，格式 "HH:MM"
+            task: 要执行的任务函数（无参数）
+        """
+        def run_job():
+            self._safe_run_task_with(task)
+        self.schedule.every().day.at(time_str).do(run_job)
+        logger.info(f"已添加每日任务，执行时间: {time_str}")
+    
     def _safe_run_task(self):
-        """安全执行任务（带异常捕获）"""
+        """安全执行主任务（带异常捕获）"""
         if self._task_callback is None:
             return
-        
+        self._safe_run_task_with(self._task_callback)
+    
+    def _safe_run_task_with(self, task: Callable):
+        """安全执行任意任务（带异常捕获）"""
         try:
             logger.info("=" * 50)
             logger.info(f"定时任务开始执行 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logger.info("=" * 50)
             
-            self._task_callback()
+            task()
             
             logger.info(f"定时任务执行完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             

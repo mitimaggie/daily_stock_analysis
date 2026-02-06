@@ -274,25 +274,77 @@ class DataFetcherManager:
             except Exception: continue
         return None
 
-    def get_chip_distribution(self, stock_code: str):
-        from .realtime_types import get_chip_circuit_breaker
+    def get_chip_distribution(self, stock_code: str, force_fetch: bool = False):
+        from .realtime_types import get_chip_circuit_breaker, ChipDistribution
         from src.config import get_config
-        
-        # 🔥 读取配置中的开关
-        if not get_config().enable_chip_distribution: return None
-        if stock_code in self._chip_cache: return self._chip_cache[stock_code]
-        
+        from src.storage import DatabaseManager
+
+        config = get_config()
+        if stock_code in self._chip_cache:
+            return self._chip_cache[stock_code]
+
+        # 1) 先查 DB 缓存（在 chip_cache_hours 内直接复用，不请求不稳定接口）
+        try:
+            db = DatabaseManager()
+            cache_hours = getattr(config, 'chip_cache_hours', 24.0)
+            cached = db.get_chip_cached(stock_code, max_age_hours=cache_hours)
+            if cached:
+                chip = ChipDistribution(
+                    code=cached['code'],
+                    date=cached.get('date', ''),
+                    source=cached.get('source', 'akshare'),
+                    profit_ratio=cached.get('profit_ratio', 0.0),
+                    avg_cost=cached.get('avg_cost', 0.0),
+                    cost_90_low=cached.get('cost_90_low', 0.0),
+                    cost_90_high=cached.get('cost_90_high', 0.0),
+                    concentration_90=cached.get('concentration_90', 0.0),
+                    cost_70_low=cached.get('cost_70_low', 0.0),
+                    cost_70_high=cached.get('cost_70_high', 0.0),
+                    concentration_70=cached.get('concentration_70', 0.0),
+                )
+                self._chip_cache[stock_code] = chip
+                return chip
+        except Exception:
+            pass
+
+        # 2) 仅用缓存模式（定时 --chip-only 已写入缓存，分析时不再实时拉取）
+        if getattr(config, 'chip_fetch_only_from_cache', False) and not force_fetch:
+            return None
+        if not config.enable_chip_distribution and not force_fetch:
+            return None
+
+        # 3) 实时拉取并落库
         circuit_breaker = get_chip_circuit_breaker()
         for fetcher in self._fetchers:
             source_key = f"{fetcher.name}_chip"
-            if not circuit_breaker.is_available(source_key): continue
-            
+            if not circuit_breaker.is_available(source_key):
+                continue
             if hasattr(fetcher, 'get_chip_distribution'):
                 try:
-                    chip = fetcher.get_chip_distribution(stock_code)
+                    try:
+                        chip = fetcher.get_chip_distribution(stock_code, force_fetch=force_fetch)
+                    except TypeError:
+                        chip = fetcher.get_chip_distribution(stock_code)
                     if chip:
                         circuit_breaker.record_success(source_key)
                         self._chip_cache[stock_code] = chip
+                        try:
+                            db = DatabaseManager()
+                            db.save_chip_distribution(
+                                code=stock_code,
+                                chip_date=chip.date,
+                                source=chip.source,
+                                profit_ratio=chip.profit_ratio,
+                                avg_cost=chip.avg_cost,
+                                concentration_90=chip.concentration_90,
+                                concentration_70=chip.concentration_70,
+                                cost_90_low=getattr(chip, 'cost_90_low', 0.0),
+                                cost_90_high=getattr(chip, 'cost_90_high', 0.0),
+                                cost_70_low=getattr(chip, 'cost_70_low', 0.0),
+                                cost_70_high=getattr(chip, 'cost_70_high', 0.0),
+                            )
+                        except Exception:
+                            pass
                         return chip
                 except Exception as e:
                     circuit_breaker.record_failure(source_key, str(e))

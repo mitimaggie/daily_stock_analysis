@@ -140,14 +140,17 @@ class Config:
     
     # === 定时任务配置 ===
     schedule_enabled: bool = False            # 是否启用定时任务
-    schedule_time: str = "18:00"              # 每日推送时间（HH:MM 格式）
+    schedule_time: str = "18:00"              # 每日分析/推送时间（HH:MM）
+    chip_schedule_time: str = "16:00"        # 每日筹码拉取时间（收盘后建议 16:00，与 schedule_time 同时启用定时时自动注册）
     market_review_enabled: bool = True        # 是否启用大盘复盘
 
     # === 实时行情增强数据配置 ===
     # 实时行情开关（关闭后使用历史收盘价进行分析）
     enable_realtime_quote: bool = True
-    # 筹码分布开关（该接口不稳定，云端部署建议关闭）
+    # 筹码分布：开关 + 缓存策略（定时拉取后在此时间内复用，避免分析时频繁请求）
     enable_chip_distribution: bool = True
+    chip_cache_hours: float = 24.0  # 筹码缓存有效期（小时），此时间内用 DB 缓存，不重新请求
+    chip_fetch_only_from_cache: bool = False  # True 时仅用缓存，不实时拉取（配合定时 --chip-only 使用）
     # 实时行情数据源优先级（逗号分隔）
     # 推荐顺序：tencent > akshare_sina > efinance > akshare_em > tushare
     # - tencent: 腾讯财经，有量比/换手率/市盈率等，单股查询稳定（推荐）
@@ -369,6 +372,7 @@ class Config:
             https_proxy=os.getenv('HTTPS_PROXY'),
             schedule_enabled=os.getenv('SCHEDULE_ENABLED', 'false').lower() == 'true',
             schedule_time=os.getenv('SCHEDULE_TIME', '18:00'),
+            chip_schedule_time=os.getenv('CHIP_SCHEDULE_TIME', '16:00'),
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
             webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',
             webui_host=os.getenv('WEBUI_HOST', '127.0.0.1'),
@@ -399,6 +403,8 @@ class Config:
             # 实时行情增强数据配置
             enable_realtime_quote=os.getenv('ENABLE_REALTIME_QUOTE', 'true').lower() == 'true',
             enable_chip_distribution=os.getenv('ENABLE_CHIP_DISTRIBUTION', 'true').lower() == 'true',
+            chip_cache_hours=float(os.getenv('CHIP_CACHE_HOURS', '24')),
+            chip_fetch_only_from_cache=os.getenv('CHIP_FETCH_ONLY_FROM_CACHE', 'false').lower() == 'true',
             # 实时行情数据源优先级：
             # - tencent: 腾讯财经，有量比/换手率/PE/PB等，单股查询稳定（推荐）
             # - akshare_sina: 新浪财经，基本行情稳定，但无量比

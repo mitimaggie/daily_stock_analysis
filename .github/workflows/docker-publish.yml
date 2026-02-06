@@ -2,15 +2,9 @@ name: Docker Publish
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*.*.*'
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
-      - 'LICENSE'
-      - '.gitignore'
+  # 仅在打 tag 时构建并推送镜像，避免每次 push main 都跑（需发布时执行: git tag v1.0.0 && git push origin v1.0.0）
 
 jobs:
   build-and-push:

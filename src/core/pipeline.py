@@ -195,11 +195,12 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.error(f"[{code}] 技术分析生成失败: {e}")
 
-        # 筹码数据
+        # 筹码数据（先查 DB/内存缓存，在有效期内直接用；否则按配置决定是否实时拉取）
         chip_data = {}
-        if getattr(self.config, 'enable_chip_distribution', False):
-            if hasattr(self.fetcher_manager, '_chip_cache') and code in self.fetcher_manager._chip_cache:
-                chip_data = self.fetcher_manager._chip_cache[code].to_dict()
+        if getattr(self.config, 'enable_chip_distribution', False) or getattr(self.config, 'chip_fetch_only_from_cache', False):
+            chip = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
+            if chip:
+                chip_data = chip.to_dict()
         
         # F10 基本面数据
         fundamental_data = {}

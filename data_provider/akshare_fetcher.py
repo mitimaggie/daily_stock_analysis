@@ -227,13 +227,13 @@ class AkshareFetcher(BaseFetcher):
             price=safe_float(row.get('最新价')), change_pct=safe_float(row.get('涨跌幅'))
         )
 
-    def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
-        """获取筹码分布"""
+    def get_chip_distribution(self, stock_code: str, force_fetch: bool = False) -> Optional[ChipDistribution]:
+        """获取筹码分布（force_fetch 时忽略 enable_chip_distribution，用于定时 --chip-only 拉取）"""
         import akshare as ak
-        
-        # 🔥 根据配置判断是否开启筹码功能
+
         config = get_config()
-        if not config.enable_chip_distribution: return None
+        if not force_fetch and not config.enable_chip_distribution:
+            return None
 
         if _is_us_code(stock_code) or _is_etf_code(stock_code): return None
         
@@ -252,5 +252,6 @@ class AkshareFetcher(BaseFetcher):
                 concentration_70=safe_float(latest.get('70集中度'))
             )
         except Exception as e:
-            logger.warning(f"筹码分布获取失败 {stock_code}: {e}")
+            # 东方财富/ak 接口易被断开(RemoteDisconnected)，降为 debug 避免刷屏；不需要筹码时可关闭 ENABLE_CHIP_DISTRIBUTION
+            logger.debug(f"筹码分布获取失败 {stock_code}: {e}")
             return None
