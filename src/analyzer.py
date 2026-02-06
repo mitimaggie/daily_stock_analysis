@@ -112,16 +112,21 @@ class GeminiAnalyzer:
         config = get_config()
         self._api_key = api_key or config.gemini_api_key
         self._model = None
+        self._model_light = None  # 命中舆情缓存时可选用的轻量模型（如 2.5 Flash），省成本
         self._openai_client = None
         self._use_openai = False
 
-        # 初始化 Gemini
+        # 初始化 Gemini（主模型 + 可选「缓存时轻量模型」）
         if self._api_key and "your_" not in self._api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self._api_key)
                 self._model = genai.GenerativeModel(model_name=config.gemini_model)
-            except: pass
+                when_cached = getattr(config, "gemini_model_when_cached", None)
+                if when_cached and when_cached.strip() and when_cached != config.gemini_model:
+                    self._model_light = genai.GenerativeModel(model_name=when_cached.strip())
+            except Exception:
+                pass
 
         # 初始化 OpenAI
         if (not self._model) and config.openai_api_key:
@@ -134,11 +139,19 @@ class GeminiAnalyzer:
     def is_available(self) -> bool:
         return self._model is not None or self._openai_client is not None
 
-    def analyze(self, context: Dict[str, Any], news_context: Optional[str] = None, role: str = "trader", market_overview: Optional[str] = None) -> AnalysisResult:
+    def analyze(
+        self,
+        context: Dict[str, Any],
+        news_context: Optional[str] = None,
+        role: str = "trader",
+        market_overview: Optional[str] = None,
+        use_light_model: bool = False,
+    ) -> AnalysisResult:
         """
         执行分析
         :param role: 指定角色 'trader'(个股), 'macro'(大盘), 'researcher'
-        :param market_overview: 大盘环境数据（新增参数）
+        :param market_overview: 大盘环境数据
+        :param use_light_model: True 时若配置了轻量模型（如 2.5 Flash）则用之，省成本、适合命中舆情缓存的场景
         """
         code = context.get('code', 'Unknown')
         name = context.get('stock_name') or STOCK_NAME_MAP.get(code, f'股票{code}')
@@ -169,9 +182,10 @@ class GeminiAnalyzer:
                 )
                 response_text = response.choices[0].message.content
             else:
-                # Gemini
+                # Gemini（有轻量模型且 use_light_model 时用轻量模型，否则主模型）
+                model = (self._model_light if use_light_model and self._model_light else self._model)
                 full_prompt = f"{system_prompt}\n\n{prompt}"
-                response_text = self._model.generate_content(full_prompt).text
+                response_text = model.generate_content(full_prompt).text
 
             # 4. 解析结果
             result = self._parse_response(response_text, code, name)
@@ -186,7 +200,7 @@ class GeminiAnalyzer:
 
     def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None) -> str:
         code = context.get('code', 'Unknown')
-        
+
         # A. 技术面数据 (量化模型产出)
         tech_report = context.get('technical_analysis_report', '无数据')
         

@@ -176,7 +176,11 @@ class StockAnalysisPipeline:
         stock_name = quote.name
         
         try:
-            daily_df = (prefetched or {}).get("df") or self.fetcher_manager.get_merged_data(code, days=120)
+            cache_df = (prefetched or {}).get("df")
+            if cache_df is not None:
+                daily_df = cache_df
+            else:
+                daily_df = self.fetcher_manager.get_merged_data(code, days=120)
         except Exception as e:
             logger.warning(f"[{code}] 获取合并数据失败: {e}")
             daily_df = None
@@ -244,10 +248,12 @@ class StockAnalysisPipeline:
 
             # === 1. 搜索舆情 (增加随机延迟防封号) ===
             search_content = ""
+            used_news_cache = False
             # 1) 优先复用 DB 缓存（命中则不外部搜索、不 sleep）
             cached = self._get_cached_news_context(code, stock_name)
             if cached:
                 search_content = cached
+                used_news_cache = True
                 logger.info(f"♻️  [{stock_name}] 命中舆情缓存，跳过外部搜索")
             # 2) 无缓存再走外部搜索
             elif self.search_service:
@@ -293,12 +299,13 @@ class StockAnalysisPipeline:
 
             logger.info(f"🤖 [{stock_name}] 调用 LLM 进行分析...")
             
-            # === 3. 执行分析 ===
+            # === 3. 执行分析（命中舆情缓存时若配置了轻量模型则用之，省成本）===
             result = self.analyzer.analyze(
-                context=context, 
-                news_context=search_content, 
+                context=context,
+                news_context=search_content,
                 role="trader",
-                market_overview=market_overview 
+                market_overview=market_overview,
+                use_light_model=used_news_cache,
             )
             
             if not result: return None
@@ -326,6 +333,15 @@ class StockAnalysisPipeline:
             daily_report = self.notifier.generate_dashboard_report(results)
             self.notifier.send(daily_report)
             self.notifier.save_report_to_file(daily_report)
+            # 同时保存一份 .txt 到本地，不改变 PushPlus 等推送逻辑
+            from pathlib import Path
+            reports_dir = Path(__file__).resolve().parents[2] / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            txt_name = f"report_{time.strftime('%Y%m%d')}.txt"
+            txt_path = reports_dir / txt_name
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(daily_report)
+            logger.info(f"日报已保存为 txt: {txt_path}")
         except Exception as e:
             logger.error(f"汇总推送失败: {e}")
 

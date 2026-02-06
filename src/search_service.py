@@ -17,7 +17,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 from itertools import cycle
 
 # 配置日志
@@ -168,8 +168,7 @@ class PerplexitySearchProvider:
                     prompt_tokens = usage.get('prompt_tokens', 0)
                     completion = usage.get('completion_tokens', 0)
                     
-                    print(f"💰 [Perplexity] 消耗统计: 输入{prompt_tokens} + 输出{completion} = 总计 {total} Tokens")
-                    logger.info(f"[Researcher] 侦查完成 (消耗 {total} tokens)")
+                    logger.debug(f"[Researcher] 侦查完成 (消耗 {total} tokens)")
 
                     return SearchResponse(query, [SearchResult(
                         title="Perplexity 深度情报",
@@ -182,7 +181,6 @@ class PerplexitySearchProvider:
                     return SearchResponse(query, [], self._name, False, "Empty Choices")
             
             elif response.status_code == 429:
-                print(f"⚠️ [Perplexity] 触发限流 (429)，休息一下...")
                 logger.warning(f"⚠️ [Perplexity] 触发限流 (429)")
                 return SearchResponse(query, [], self._name, False, "Rate Limited (429)")
             
@@ -233,6 +231,18 @@ class SearchService:
             success=False,
             error_message="Search Service Not Configured (Missing Perplexity Key)"
         )
+
+    def search_news(self, query: str, max_results: int = 5) -> List[Dict]:
+        """
+        大盘分析用：搜索并返回列表形式的新闻条目 [{"title", "snippet", "content"}, ...]
+        """
+        resp = self.search(query, max_results=max_results)
+        if not resp or not resp.success or not resp.results:
+            return []
+        return [
+            {"title": r.title, "snippet": r.snippet, "content": getattr(r, "snippet", "")}
+            for r in resp.results[:max_results]
+        ]
 
 # === 实例化入口函数 (关键修复) ===
 def get_search_service():
