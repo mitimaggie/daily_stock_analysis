@@ -53,9 +53,9 @@ class StockAnalysisPipeline:
         self.save_context_snapshot = save_context_snapshot
         self.source_message = source_message
         
-        # === 1. 修复 max_workers 为 None 的问题 ===
+        # === 1. 默认顺序执行（workers=1），避免多线程日志交错 ===
         if max_workers is None:
-            max_workers = 3
+            max_workers = 1
             
         # === 2. 初始化各个服务组件 ===
         self.fetcher_manager = DataFetcherManager()

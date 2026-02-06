@@ -81,7 +81,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--stocks', type=str, help='指定分析股票代码')
     parser.add_argument('--no-notify', action='store_true', help='不发送推送')
     parser.add_argument('--single-notify', action='store_true', help='单股推送模式')
-    parser.add_argument('--workers', type=int, default=None, help='并发线程数')
+    parser.add_argument('--workers', type=int, default=1, help='并发线程数（默认1即顺序输出）')
     parser.add_argument('--schedule', action='store_true', help='启用定时任务')
     parser.add_argument('--market-review', action='store_true', help='仅大盘复盘')
     parser.add_argument('--no-market-review', action='store_true', help='跳过大盘复盘')
