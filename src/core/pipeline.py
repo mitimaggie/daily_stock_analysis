@@ -22,11 +22,24 @@ try:
 except ImportError:
     def get_fundamental_data(code): return {}
 
-# 尝试导入 大盘监控 (Market Monitor)
-try:
-    from data_provider.market_monitor import market_monitor
-except ImportError:
-    market_monitor = None
+# 尝试导入 大盘监控 (Market Monitor) — 个股分析时作为「仓位上限/前置滤网」
+def _load_market_monitor():
+    try:
+        from data_provider.market_monitor import market_monitor
+        return market_monitor
+    except ImportError:
+        try:
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parents[2]
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from data_provider.market_monitor import market_monitor
+            return market_monitor
+        except ImportError:
+            return None
+
+market_monitor = _load_market_monitor()
 
 # === 内部模块导入 ===
 from src.stock_analyzer import StockTrendAnalyzer
@@ -93,13 +106,27 @@ class StockAnalysisPipeline:
             self.max_workers = max_workers
             logger.info(f"🚀 [极速模式] 纯本地分析，并发数: {self.max_workers}")
 
+        # 大盘监控：用于个股分析时的「仓位上限/前置滤网」（大盘定仓位，个股定方向）
+        self._market_monitor = market_monitor
+        if self._market_monitor:
+            logger.info("📊 [大盘监控] 已启用，个股分析将注入大盘环境作为前置滤网")
+        else:
+            logger.warning("📊 [大盘监控] 未加载，个股分析将不注入大盘环境（请检查 data_provider.market_monitor 与 akshare）")
+
     def fetch_and_save_stock_data(self, code: str) -> (bool, str):
-        """获取数据辅助函数"""
+        """获取数据并落库，保证下次可做「历史+实时」拼接"""
         try:
-            # 120天数据用于计算趋势
+            # 120天数据用于计算趋势（有历史则 DB+实时缝合，无历史则全量抓取）
             df = self.fetcher_manager.get_merged_data(code, days=120)
             if df is None or df.empty:
                 return False, "获取数据为空"
+            # 写入/更新日线到 DB，后续 run 才能用历史做缝合，技术面才和现实一致
+            try:
+                n = self.storage.save_daily_data(df, code, data_source="pipeline")
+                if n > 0:
+                    logger.debug(f"[{code}] 日线落库新增 {n} 条")
+            except Exception as e:
+                logger.warning(f"[{code}] 日线落库失败(继续分析): {e}")
             quote = self.fetcher_manager.get_realtime_quote(code)
             if not quote:
                 return False, "实时行情获取失败"
@@ -183,29 +210,37 @@ class StockAnalysisPipeline:
                 
                 logger.info(f"🔎 [{stock_name}] 正在侦查舆情 (延迟 {sleep_time:.1f}s)...")
                 try:
-                    # 兼容不同接口调用方式
+                    query = f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报"
                     if hasattr(self.search_service, 'search_stock_news'):
                         resp = self.search_service.search_stock_news(code, stock_name)
                     else:
-                        query = f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报"
                         resp = self.search_service.search(query)
                         
                     if resp and getattr(resp, 'success', False): 
                         search_content = resp.to_context()
+                        # 舆情落库，便于后续复用与审计
+                        if getattr(resp, 'results', None):
+                            try:
+                                self.storage.save_news_intel(
+                                    code, stock_name, dimension="舆情", query=query, response=resp,
+                                    query_context={"query_id": self.query_id, "query_source": self.query_source}
+                                )
+                            except Exception as e:
+                                logger.debug(f"[{stock_name}] 舆情落库跳过: {e}")
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 搜索服务异常: {e}")
 
-            # === 2. 获取大盘环境 ===
+            # === 2. 获取大盘环境（前置滤网：大盘定仓位上限，个股逻辑定买卖方向）===
             market_overview = None
-            if market_monitor:
+            if self._market_monitor:
                 try:
-                    snapshot = market_monitor.get_market_snapshot()
+                    snapshot = self._market_monitor.get_market_snapshot()
                     if snapshot.get('success'):
                         vol = snapshot.get('total_volume', 'N/A')
                         indices = snapshot.get('indices', [])
-                        # 格式化: "上证指数 +1.2% / 深证成指 -0.5%"
                         idx_str = " / ".join([f"{i['name']} {i['change_pct']}%" for i in indices])
                         market_overview = f"今日两市成交额: {vol}亿。指数表现: {idx_str}。"
+                        logger.info(f"📊 [{stock_name}] 大盘环境已注入（滤网）: 成交额{vol}亿 | {idx_str}")
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 获取大盘数据微瑕: {e}")
 

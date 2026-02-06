@@ -216,16 +216,22 @@ class GeminiAnalyzer:
 请验证昨天的逻辑是否被市场验证？
 """
 
-        # D. 大盘环境 (新增：第零维度)
+        # D. 大盘环境 (第零维度：前置滤网/仓位因子，不掩盖个股内生逻辑)
         market_str = market_overview if market_overview else "未提供具体大盘数据，请默认市场环境为【中性/震荡】，主要依据个股逻辑。"
+        market_rule = (
+            "【重要】大盘环境仅用于：① 设定仓位上限（顺势可重仓、逆势严控仓位）；② 极端行情时的风险滤网（如系统性风险时降档操作）。"
+            "**买卖方向必须由个股基本面(F10)+技术面(Quant)决定**，不得用大盘替代个股逻辑。"
+        )
 
         # 组装最终 Prompt (Markdown 表格增强版)
         return f"""# 深度复盘任务：{name} ({code})
 
-请综合以下多维情报，像一位顶级基金经理那样思考。
+请综合以下多维情报，像一位顶级基金经理那样思考：**大盘决定仓位上限，个股逻辑决定买卖方向**。
 
-## 第零维度：大盘环境 (Market Context)
-**这是决策的大背景**：
+## 第零维度：大盘环境 (Market Context) — 前置滤网 / 仓位因子
+{market_rule}
+
+**当前大盘快照**：
 {market_str}
 
 ## 第一维度：历史回溯 (Continuity)
@@ -247,7 +253,7 @@ class GeminiAnalyzer:
 stock_name, sentiment_score (0-100), trend_prediction, operation_advice (买入/持有/卖出),
 dashboard: {{
     core_conclusion: {{
-        one_sentence: "核心结论 (需结合大盘和个股逻辑)",
+        one_sentence: "核心结论 (个股F10+技术面定方向，大盘定仓位/滤网)",
         position_advice: {{ no_position: "空仓建议", has_position: "持仓建议" }}
     }},
     intelligence: {{ risk_alerts: [], positive_catalysts: [] }},
