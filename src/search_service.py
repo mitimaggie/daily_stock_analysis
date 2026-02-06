@@ -70,11 +70,11 @@ class PerplexitySearchProvider:
         # 配置重试策略 (底层自动处理握手失败)
         # total=3: 遇到连接错误重试3次
         # backoff_factor=1: 重试间隔 1s, 2s, 4s...
-        # status_forcelist: 遇到 429/5xx 错误也重试
+        # status_forcelist: 遇到 429/499/5xx 也重试（499 多为客户端超时/连接提前关闭）
         retry_strategy = Retry(
-            total=3,  
-            backoff_factor=1,  
-            status_forcelist=[429, 500, 502, 503, 504], 
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 499, 500, 502, 503, 504],
             allowed_methods=["POST"]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)

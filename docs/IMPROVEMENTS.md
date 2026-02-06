@@ -33,7 +33,7 @@
 | **速度** | 更快 | 较慢 |
 | **能力** | 常规任务、结构化输出足够 | 复杂推理、长文分析更强 |
 
-**分场景用法（已实现）**：在 .env 中设置 `GEMINI_MODEL_WHEN_CACHED=gemini-2.5-flash`。当**命中舆情缓存**（本次未做外部搜索）时自动用 2.5 Flash；当**有新鲜舆情**（刚搜过 Perplexity 等）时用主模型（如 gemini-3-flash-preview 或 gemini-3-pro-preview）。不设则始终用主模型。
+**分场景用法（已实现）**：命中舆情缓存时用 `GEMINI_MODEL_WHEN_CACHED`（默认 gemini-3-flash-preview，与主模型一致）；有新鲜舆情时用主模型 `GEMINI_MODEL`（默认 gemini-3-flash-preview）。可在 .env 中单独设置 `GEMINI_MODEL_WHEN_CACHED` 为其他模型（如 gemini-2.5-flash）以进一步省成本。
 
 ---
 
@@ -51,7 +51,7 @@
 ## 四、已实现的代码改动摘要
 
 1. **pipeline.run()**：阶段二开始前拉一次大盘，通过 `market_overview_override` 传入每只股。
-2. **按场景选模型**：配置 `GEMINI_MODEL_WHEN_CACHED` 后，命中舆情缓存时用轻量模型（如 2.5 Flash），有新鲜搜索时用主模型（如 3 Pro/Flash），兼顾质量与成本。
+2. **按场景选模型**：命中舆情缓存时用 `GEMINI_MODEL_WHEN_CACHED`（默认 3 Flash），有新鲜搜索时用主模型（默认 3 Flash）；可按需将 WHEN_CACHED 设为 2.5 Flash 进一步省成本。
 
 ---
 

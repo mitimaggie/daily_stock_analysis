@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from src.config import get_config
@@ -182,10 +183,26 @@ class GeminiAnalyzer:
                 )
                 response_text = response.choices[0].message.content
             else:
-                # Gemini（有轻量模型且 use_light_model 时用轻量模型，否则主模型）
+                # Gemini（带重试：499/超时等可重试，使用 config 中的重试次数与间隔）
                 model = (self._model_light if use_light_model and self._model_light else self._model)
                 full_prompt = f"{system_prompt}\n\n{prompt}"
-                response_text = model.generate_content(full_prompt).text
+                config = get_config()
+                max_retries = max(1, getattr(config, "gemini_max_retries", 5))
+                retry_delay = getattr(config, "gemini_retry_delay", 5.0)
+                response_text = ""
+                for attempt in range(max_retries):
+                    try:
+                        response_text = model.generate_content(full_prompt).text
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        is_retryable = "499" in err_str or "timeout" in err_str or "deadline" in err_str or "closed" in err_str
+                        if attempt < max_retries - 1 and is_retryable:
+                            wait = retry_delay * (attempt + 1)
+                            logger.warning(f"Gemini 请求异常 (499/超时等)，{wait:.0f}s 后重试 ({attempt + 1}/{max_retries}): {e}")
+                            time.sleep(wait)
+                        else:
+                            raise
 
             # 4. 解析结果
             result = self._parse_response(response_text, code, name)
