@@ -181,6 +181,12 @@ class StockAnalysisPipeline:
                 daily_df = cache_df
             else:
                 daily_df = self.fetcher_manager.get_merged_data(code, days=120)
+                # 单股/API 路径无 prefetch，拿到数据后落库，下次同一只股可直接用 DB 缓存
+                if daily_df is not None and not daily_df.empty:
+                    try:
+                        self.storage.save_daily_data(daily_df, code, data_source="pipeline")
+                    except Exception as e:
+                        logger.debug(f"[{code}] 日线落库失败(继续分析): {e}")
         except Exception as e:
             logger.warning(f"[{code}] 获取合并数据失败: {e}")
             daily_df = None

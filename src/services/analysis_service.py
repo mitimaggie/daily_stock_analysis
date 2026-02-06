@@ -116,24 +116,25 @@ class AnalysisService:
         if hasattr(result, 'get_sniper_points'):
             sniper_points = result.get_sniper_points() or {}
         
-        # 计算情绪标签
-        sentiment_label = self._get_sentiment_label(result.sentiment_score)
+        # 计算情绪标签（兼容无 sentiment_score）
+        score = getattr(result, "sentiment_score", 50)
+        sentiment_label = self._get_sentiment_label(score)
         
-        # 构建报告结构（兼容本仓库 AnalysisResult 无 change_pct/news_summary 等字段）
+        # 构建报告结构（全部 getattr 兼容本仓库 AnalysisResult 字段）
         report = {
             "meta": {
                 "query_id": query_id,
-                "stock_code": result.code,
-                "stock_name": result.name,
+                "stock_code": getattr(result, "code", ""),
+                "stock_name": getattr(result, "name", ""),
                 "report_type": "detailed",
                 "current_price": getattr(result, "current_price", 0) or 0,
                 "change_pct": getattr(result, "change_pct", None),
             },
             "summary": {
                 "analysis_summary": getattr(result, "analysis_summary", "") or "",
-                "operation_advice": result.operation_advice,
-                "trend_prediction": result.trend_prediction,
-                "sentiment_score": result.sentiment_score,
+                "operation_advice": getattr(result, "operation_advice", ""),
+                "trend_prediction": getattr(result, "trend_prediction", ""),
+                "sentiment_score": score,
                 "sentiment_label": sentiment_label,
             },
             "strategy": {
@@ -151,8 +152,8 @@ class AnalysisService:
         }
         
         return {
-            "stock_code": result.code,
-            "stock_name": result.name,
+            "stock_code": getattr(result, "code", ""),
+            "stock_name": getattr(result, "name", ""),
             "report": report,
         }
     

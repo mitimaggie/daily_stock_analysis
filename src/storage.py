@@ -336,6 +336,19 @@ class DatabaseManager:
             ).scalars().all()
             return list(results)
 
+    def get_news_intel_by_query_id(self, query_id: str, limit: int = 20) -> List[NewsIntel]:
+        """按 query_id 查询当次分析保存的新闻情报，供历史详情页展示"""
+        if not query_id:
+            return []
+        with self.get_session() as session:
+            results = session.execute(
+                select(NewsIntel)
+                .where(NewsIntel.query_id == query_id)
+                .order_by(desc(NewsIntel.fetched_at))
+                .limit(limit)
+            ).scalars().all()
+            return list(results)
+
     def save_analysis_history(self, result: Any, query_id: str, report_type: str, news_content: Optional[str], context_snapshot: Optional[Dict] = None, save_snapshot: bool = True) -> int:
         if result is None: return 0
         sniper_points = self._extract_sniper_points(result)
