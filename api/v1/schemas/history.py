@@ -107,6 +107,12 @@ class ReportMeta(BaseModel):
     change_pct: Optional[float] = Field(None, description="分析时涨跌幅(%)")
 
 
+class PositionAdvice(BaseModel):
+    """空仓/持仓分开展示"""
+    no_position: Optional[str] = Field(None, description="空仓建议")
+    has_position: Optional[str] = Field(None, description="持仓建议")
+
+
 class ReportSummary(BaseModel):
     """报告概览区"""
     
@@ -120,6 +126,7 @@ class ReportSummary(BaseModel):
         le=100
     )
     sentiment_label: Optional[str] = Field(None, description="情绪标签")
+    position_advice: Optional[PositionAdvice] = Field(None, description="空仓/持仓分开展示")
 
 
 class ReportStrategy(BaseModel):

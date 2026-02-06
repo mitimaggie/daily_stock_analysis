@@ -145,6 +145,18 @@ class HistoryService:
             # 计算情绪标签
             sentiment_label = self._get_sentiment_label(record.sentiment_score or 50)
             
+            # 从 raw_result 中提取空仓/持仓建议（供前端分开展示）
+            position_advice = None
+            if isinstance(raw_result, dict):
+                dashboard = raw_result.get("dashboard") or {}
+                core = dashboard.get("core_conclusion") or {}
+                pos = core.get("position_advice") or {}
+                if pos.get("no_position") or pos.get("has_position"):
+                    position_advice = {
+                        "no_position": pos.get("no_position", ""),
+                        "has_position": pos.get("has_position", ""),
+                    }
+            
             return {
                 "query_id": record.query_id,
                 "stock_code": record.code,
@@ -156,6 +168,7 @@ class HistoryService:
                 "trend_prediction": record.trend_prediction,
                 "sentiment_score": record.sentiment_score,
                 "sentiment_label": sentiment_label,
+                "position_advice": position_advice,
                 "ideal_buy": str(record.ideal_buy) if record.ideal_buy else None,
                 "secondary_buy": str(record.secondary_buy) if record.secondary_buy else None,
                 "stop_loss": str(record.stop_loss) if record.stop_loss else None,

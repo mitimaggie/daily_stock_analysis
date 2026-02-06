@@ -25,6 +25,7 @@ from api.v1.schemas.history import (
     ReportSummary,
     ReportStrategy,
     ReportDetails,
+    PositionAdvice,
 )
 from api.v1.schemas.common import ErrorResponse
 from src.storage import DatabaseManager
@@ -186,12 +187,17 @@ def get_history_detail(
             change_pct=change_pct
         )
         
+        pos_adv = result.get("position_advice")
+        position_advice = None
+        if isinstance(pos_adv, dict) and (pos_adv.get("no_position") or pos_adv.get("has_position")):
+            position_advice = PositionAdvice(no_position=pos_adv.get("no_position"), has_position=pos_adv.get("has_position"))
         summary = ReportSummary(
             analysis_summary=result.get("analysis_summary"),
             operation_advice=result.get("operation_advice"),
             trend_prediction=result.get("trend_prediction"),
             sentiment_score=result.get("sentiment_score"),
-            sentiment_label=result.get("sentiment_label")
+            sentiment_label=result.get("sentiment_label"),
+            position_advice=position_advice
         )
         
         strategy = ReportStrategy(

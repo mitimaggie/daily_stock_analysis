@@ -86,11 +86,14 @@ class GeminiAnalyzer:
 """
 
     # 角色3: 基金经理 (核心决策者 - 用于个股分析)
-    # 修改点：融合了大盘环境感知，同时保留了昨天的基本面+技术面判断逻辑
-    PROMPT_TRADER = """你是一位拥有【常胜心态 (Winning Mindset)】的资深基金经理。
-你不是简单的厌恶风险，而是【理性计算赔率】。你的目标是实现长期复利。
+    # 修改点：专业客观输出，禁止「作为基金经理」等人称表述
+    PROMPT_TRADER = """你是一位【理性、数据驱动】的决策者，拥有常胜心态。你不是简单的厌恶风险，而是输出客观、专业的分析结论。
 
-## 你的交易哲学
+## 输出规范（必须遵守）
+- **禁止**使用「作为基金经理」「我作为资深经理」「追求长期复利的经理人」等人称表述。
+- 用**客观、专业**的分析语言，直接给出结论与依据，不扮演角色、不第一人称自述。
+
+## 交易逻辑
 1. **环境为先 (Market Context)**：大盘环境决定你的**仓位上限**。
    - 顺势（大盘好）时重仓出击；逆势（大盘差）时严控仓位。
 2. **个股为重 (Micro Logic)**：个股的基本面和技术面决定你的**买卖方向**。
@@ -107,7 +110,7 @@ class GeminiAnalyzer:
 - **当基本面恶化 + 技术面破位**：👉 **坚决斩仓 (卖出)**，不抱幻想。
 - **当数据矛盾时**：👉 **尊重趋势，控制仓位**。
 
-请基于上述人设，生成【决策仪表盘】JSON。
+请基于上述逻辑，生成【决策仪表盘】JSON。分析结论与 operation_advice、analysis_summary 等字段请用客观陈述句，勿出现「我」「作为…」等表述。
 """
 
     def __init__(self, api_key: Optional[str] = None):
@@ -172,28 +175,30 @@ class GeminiAnalyzer:
             
             response_text = ""
             
-            # 3. 调用 API
+            # 3. 调用 API（temperature 从 config 读取，.env 中 GEMINI_TEMPERATURE / OPENAI_TEMPERATURE）
+            cfg = get_config()
             if self._use_openai:
                 response = self._openai_client.chat.completions.create(
-                    model=get_config().openai_model,
+                    model=cfg.openai_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.7
+                    temperature=getattr(cfg, "openai_temperature", 0.7),
                 )
                 response_text = response.choices[0].message.content
             else:
-                # Gemini（带重试：499/超时等可重试，使用 config 中的重试次数与间隔）
+                # Gemini（带重试：499/超时等可重试，temperature 用 config.gemini_temperature）
                 model = (self._model_light if use_light_model and self._model_light else self._model)
                 full_prompt = f"{system_prompt}\n\n{prompt}"
-                config = get_config()
-                max_retries = max(1, getattr(config, "gemini_max_retries", 5))
-                retry_delay = getattr(config, "gemini_retry_delay", 5.0)
+                max_retries = max(1, getattr(cfg, "gemini_max_retries", 5))
+                retry_delay = getattr(cfg, "gemini_retry_delay", 5.0)
+                gemini_temp = getattr(cfg, "gemini_temperature", 0.7)
+                generation_config = {"temperature": gemini_temp}
                 response_text = ""
                 for attempt in range(max_retries):
                     try:
-                        response_text = model.generate_content(full_prompt).text
+                        response_text = model.generate_content(full_prompt, generation_config=generation_config).text
                         break
                     except Exception as e:
                         err_str = str(e).lower()
@@ -263,7 +268,7 @@ class GeminiAnalyzer:
         # 组装最终 Prompt (Markdown 表格增强版)
         return f"""# 深度复盘任务：{name} ({code})
 
-请综合以下多维情报，像一位顶级基金经理那样思考：**大盘决定仓位上限，个股逻辑决定买卖方向**。
+请综合以下多维情报，基于数据与逻辑给出客观结论与操作建议：**大盘决定仓位上限，个股逻辑决定买卖方向**。输出时使用客观、专业的分析语言，不要使用「作为基金经理」「我作为…」等人称表述。
 
 ## 第零维度：大盘环境 (Market Context) — 前置滤网 / 仓位因子
 {market_rule}

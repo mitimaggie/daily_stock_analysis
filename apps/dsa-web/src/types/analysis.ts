@@ -28,6 +28,12 @@ export interface ReportMeta {
 /** 情绪标签 */
 export type SentimentLabel = '极度悲观' | '悲观' | '中性' | '乐观' | '极度乐观';
 
+/** 空仓/持仓分开展示 */
+export interface PositionAdvice {
+  noPosition?: string;
+  hasPosition?: string;
+}
+
 /** 报告概览区 */
 export interface ReportSummary {
   analysisSummary: string;
@@ -35,6 +41,8 @@ export interface ReportSummary {
   trendPrediction: string;
   sentimentScore: number;
   sentimentLabel?: SentimentLabel;
+  /** 空仓建议 / 持仓建议（有则分开展示） */
+  positionAdvice?: PositionAdvice;
 }
 
 /** 策略点位区 */

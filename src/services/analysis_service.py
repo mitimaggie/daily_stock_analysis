@@ -116,6 +116,15 @@ class AnalysisService:
         if hasattr(result, 'get_sniper_points'):
             sniper_points = result.get_sniper_points() or {}
         
+        # 持仓建议（空仓/持仓分开展示）
+        dashboard = getattr(result, "dashboard", None) or {}
+        core = dashboard.get("core_conclusion") or {}
+        pos_advice = core.get("position_advice") or {}
+        position_advice = {
+            "no_position": pos_advice.get("no_position", ""),
+            "has_position": pos_advice.get("has_position", ""),
+        }
+        
         # 计算情绪标签（兼容无 sentiment_score）
         score = getattr(result, "sentiment_score", 50)
         sentiment_label = self._get_sentiment_label(score)
@@ -136,6 +145,7 @@ class AnalysisService:
                 "trend_prediction": getattr(result, "trend_prediction", ""),
                 "sentiment_score": score,
                 "sentiment_label": sentiment_label,
+                "position_advice": position_advice,
             },
             "strategy": {
                 "ideal_buy": sniper_points.get("ideal_buy"),

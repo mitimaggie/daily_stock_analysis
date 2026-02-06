@@ -80,7 +80,26 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
             </div>
           </Card>
 
-          {/* 操作建议和趋势预测 */}
+          {/* 持仓建议（空仓/持仓分开）或 操作建议 + 趋势预测 */}
+          {(summary.positionAdvice?.noPosition || summary.positionAdvice?.hasPosition) ? (
+            <Card variant="bordered" padding="sm" hoverable>
+              <h4 className="text-xs font-medium text-cyan mb-3">持仓建议</h4>
+              <div className="space-y-3 text-sm">
+                {summary.positionAdvice.noPosition && (
+                  <div className="flex gap-2">
+                    <span className="text-cyan flex-shrink-0">空仓者</span>
+                    <p className="text-white/90 leading-relaxed">{summary.positionAdvice.noPosition}</p>
+                  </div>
+                )}
+                {summary.positionAdvice.hasPosition && (
+                  <div className="flex gap-2">
+                    <span className="text-warning flex-shrink-0">持仓者</span>
+                    <p className="text-white/90 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ) : null}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* 操作建议 */}
             <Card variant="bordered" padding="sm" hoverable>
