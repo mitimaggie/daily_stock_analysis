@@ -1,756 +1,334 @@
 # -*- coding: utf-8 -*-
-"""
-===================================
-A股自选股智能分析系统 - 核心分析流水线
-===================================
-
-职责：
-1. 管理整个分析流程
-2. 协调数据获取、存储、搜索、分析、通知等模块
-3. 实现并发控制和异常处理
-4. 提供股票分析的核心功能
-"""
-
 import logging
 import time
+import random
+import os
+from typing import List, Dict, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
-from typing import List, Dict, Any, Optional, Tuple
 
-from src.config import get_config, Config
-from src.storage import get_db
-from data_provider import DataFetcherManager
-from data_provider.realtime_types import ChipDistribution
-from src.analyzer import GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
-from src.notification import NotificationService, NotificationChannel
+# === 导入数据模块 (保持健壮性) ===
+try:
+    from data_provider import DataFetcherManager
+except ImportError:
+    try:
+        from data_provider.base import DataFetcherManager
+    except ImportError:
+        # 尝试从 src 导入
+        from src.data_provider.base import DataFetcherManager
+
+# 尝试导入 F10 数据获取器
+try:
+    from data_provider.fundamental_fetcher import get_fundamental_data
+except ImportError:
+    def get_fundamental_data(code): return {}
+
+# 尝试导入 大盘监控 (Market Monitor)
+try:
+    from data_provider.market_monitor import market_monitor
+except ImportError:
+    market_monitor = None
+
+# === 内部模块导入 ===
+from src.stock_analyzer import StockTrendAnalyzer
+from src.analyzer import GeminiAnalyzer, AnalysisResult
+from src.notification import NotificationService
+from src.storage import DatabaseManager  
 from src.search_service import SearchService
 from src.enums import ReportType
-from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
-from bot.models import BotMessage
-
 
 logger = logging.getLogger(__name__)
 
-
 class StockAnalysisPipeline:
     """
-    股票分析主流程调度器
-    
-    职责：
-    1. 管理整个分析流程
-    2. 协调数据获取、存储、搜索、分析、通知等模块
-    3. 实现并发控制和异常处理
+    股票分析流水线 (最终完整修复版)
+    适配 main.py 的 config 传参调用方式，包含两阶段执行和防封号逻辑
     """
-    
-    def __init__(
-        self,
-        config: Optional[Config] = None,
-        max_workers: Optional[int] = None,
-        source_message: Optional[BotMessage] = None,
-        query_id: Optional[str] = None,
-        query_source: Optional[str] = None,
-        save_context_snapshot: Optional[bool] = None
-    ):
+    def __init__(self, config, max_workers=3, query_id=None, query_source="cli", save_context_snapshot=True, source_message=None, **kwargs):
         """
-        初始化调度器
-        
-        Args:
-            config: 配置对象（可选，默认使用全局配置）
-            max_workers: 最大并发线程数（可选，默认从配置读取）
+        初始化 - 严格适配 main.py 的调用方式
         """
-        self.config = config or get_config()
-        self.max_workers = max_workers or self.config.max_workers
-        self.source_message = source_message
+        self.config = config
         self.query_id = query_id
-        self.query_source = self._resolve_query_source(query_source)
-        self.save_context_snapshot = (
-            self.config.save_context_snapshot if save_context_snapshot is None else save_context_snapshot
-        )
+        self.query_source = query_source
+        self.save_context_snapshot = save_context_snapshot
+        self.source_message = source_message
         
-        # 初始化各模块
-        self.db = get_db()
+        # === 1. 修复 max_workers 为 None 的问题 ===
+        if max_workers is None:
+            max_workers = 3
+            
+        # === 2. 初始化各个服务组件 ===
         self.fetcher_manager = DataFetcherManager()
-        # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
-        self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
-        self.analyzer = GeminiAnalyzer()
+        self.trend_analyzer = StockTrendAnalyzer()
+        
+        # 初始化 LLM (直接从 config 读取 key)
+        self.analyzer = GeminiAnalyzer(api_key=config.gemini_api_key)
+        
+        # 初始化 通知服务
         self.notifier = NotificationService(source_message=source_message)
         
-        # 初始化搜索服务
-        self.search_service = SearchService(
-            bocha_keys=self.config.bocha_api_keys,
-            tavily_keys=self.config.tavily_api_keys,
-            serpapi_keys=self.config.serpapi_keys,
-        )
+        # 初始化 数据库
+        self.storage = DatabaseManager() 
         
-        logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
-        logger.info("已启用趋势分析器 (MA5>MA10>MA20 多头判断)")
-        # 打印实时行情/筹码配置状态
-        if self.config.enable_realtime_quote:
-            logger.info(f"实时行情已启用 (优先级: {self.config.realtime_source_priority})")
-        else:
-            logger.info("实时行情已禁用，将使用历史收盘价")
-        if self.config.enable_chip_distribution:
-            logger.info("筹码分布分析已启用")
-        else:
-            logger.info("筹码分布分析已禁用")
-        if self.search_service.is_available:
-            logger.info("搜索服务已启用 (Tavily/SerpAPI)")
-        else:
-            logger.warning("搜索服务未启用（未配置 API Key）")
-    
-    def fetch_and_save_stock_data(
-        self, 
-        code: str,
-        force_refresh: bool = False
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        获取并保存单只股票数据
+        # === 3. 初始化搜索服务 & 智能流控 ===
+        self.search_service = None
+        has_search_key = False
         
-        断点续传逻辑：
-        1. 检查数据库是否已有今日数据
-        2. 如果有且不强制刷新，则跳过网络请求
-        3. 否则从数据源获取并保存
-        
-        Args:
-            code: 股票代码
-            force_refresh: 是否强制刷新（忽略本地缓存）
+        # 检查是否配置了任何一种搜索 Key
+        if (config.bocha_api_keys or config.tavily_api_keys or 
+            config.serpapi_keys or os.getenv("PERPLEXITY_API_KEY")):
             
-        Returns:
-            Tuple[是否成功, 错误信息]
-        """
+            self.search_service = SearchService(
+                bocha_keys=config.bocha_api_keys,
+                tavily_keys=config.tavily_api_keys,
+                serpapi_keys=config.serpapi_keys
+            )
+            has_search_key = True
+
+        # 如果启用了搜索，强制限制并发数，防止 429 错误
+        if has_search_key:
+            self.max_workers = min(max_workers, 2)
+            logger.info(f"🕵️  [深度模式] 搜索服务已启用，并发限制为: {self.max_workers}")
+        else:
+            self.max_workers = max_workers
+            logger.info(f"🚀 [极速模式] 纯本地分析，并发数: {self.max_workers}")
+
+    def fetch_and_save_stock_data(self, code: str) -> (bool, str):
+        """获取数据辅助函数"""
         try:
-            today = date.today()
-            
-            # 断点续传检查：如果今日数据已存在，跳过
-            if not force_refresh and self.db.has_today_data(code, today):
-                logger.info(f"[{code}] 今日数据已存在，跳过获取（断点续传）")
-                return True, None
-            
-            # 从数据源获取数据
-            logger.info(f"[{code}] 开始从数据源获取数据...")
-            df, source_name = self.fetcher_manager.get_daily_data(code, days=30)
-            
+            # 120天数据用于计算趋势
+            df = self.fetcher_manager.get_merged_data(code, days=120)
             if df is None or df.empty:
                 return False, "获取数据为空"
-            
-            # 保存到数据库
-            saved_count = self.db.save_daily_data(df, code, source_name)
-            logger.info(f"[{code}] 数据保存成功（来源: {source_name}，新增 {saved_count} 条）")
-            
-            return True, None
-            
+            quote = self.fetcher_manager.get_realtime_quote(code)
+            if not quote:
+                return False, "实时行情获取失败"
+            return True, "Success"
         except Exception as e:
-            error_msg = f"获取/保存数据失败: {str(e)}"
-            logger.error(f"[{code}] {error_msg}")
-            return False, error_msg
-    
-    def analyze_stock(self, code: str, report_type: ReportType) -> Optional[AnalysisResult]:
-        """
-        分析单只股票（增强版：含量比、换手率、筹码分析、多维度情报）
-        
-        流程：
-        1. 获取实时行情（量比、换手率）- 通过 DataFetcherManager 自动故障切换
-        2. 获取筹码分布 - 通过 DataFetcherManager 带熔断保护
-        3. 进行趋势分析（基于交易理念）
-        4. 多维度情报搜索（最新消息+风险排查+业绩预期）
-        5. 从数据库获取分析上下文
-        6. 调用 AI 进行综合分析
-        
-        Args:
-            code: 股票代码
-            report_type: 报告类型
-            
-        Returns:
-            AnalysisResult 或 None（如果分析失败）
-        """
-        try:
-            # 获取股票名称（优先从实时行情获取真实名称）
-            stock_name = STOCK_NAME_MAP.get(code, '')
-            
-            # Step 1: 获取实时行情（量比、换手率等）- 使用统一入口，自动故障切换
-            realtime_quote = None
-            try:
-                realtime_quote = self.fetcher_manager.get_realtime_quote(code)
-                if realtime_quote:
-                    # 使用实时行情返回的真实股票名称
-                    if realtime_quote.name:
-                        stock_name = realtime_quote.name
-                    # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
-                    volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
-                    turnover_rate = getattr(realtime_quote, 'turnover_rate', None)
-                    logger.info(f"[{code}] {stock_name} 实时行情: 价格={realtime_quote.price}, "
-                              f"量比={volume_ratio}, 换手率={turnover_rate}% "
-                              f"(来源: {realtime_quote.source.value if hasattr(realtime_quote, 'source') else 'unknown'})")
-                else:
-                    logger.info(f"[{code}] 实时行情获取失败或已禁用，将使用历史数据进行分析")
-            except Exception as e:
-                logger.warning(f"[{code}] 获取实时行情失败: {e}")
-            
-            # 如果还是没有名称，使用代码作为名称
-            if not stock_name:
-                stock_name = f'股票{code}'
-            
-            # Step 2: 获取筹码分布 - 使用统一入口，带熔断保护
-            chip_data = None
-            try:
-                chip_data = self.fetcher_manager.get_chip_distribution(code)
-                if chip_data:
-                    logger.info(f"[{code}] 筹码分布: 获利比例={chip_data.profit_ratio:.1%}, "
-                              f"90%集中度={chip_data.concentration_90:.2%}")
-                else:
-                    logger.debug(f"[{code}] 筹码分布获取失败或已禁用")
-            except Exception as e:
-                logger.warning(f"[{code}] 获取筹码分布失败: {e}")
-            
-            # Step 3: 趋势分析（基于交易理念）
-            trend_result: Optional[TrendAnalysisResult] = None
-            try:
-                # 获取历史数据进行趋势分析
-                context = self.db.get_analysis_context(code)
-                if context and 'raw_data' in context:
-                    import pandas as pd
-                    raw_data = context['raw_data']
-                    if isinstance(raw_data, list) and len(raw_data) > 0:
-                        df = pd.DataFrame(raw_data)
-                        trend_result = self.trend_analyzer.analyze(df, code)
-                        logger.info(f"[{code}] 趋势分析: {trend_result.trend_status.value}, "
-                                  f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
-            except Exception as e:
-                logger.warning(f"[{code}] 趋势分析失败: {e}")
-            
-            # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
-            news_context = None
-            if self.search_service.is_available:
-                logger.info(f"[{code}] 开始多维度情报搜索...")
-                
-                # 使用多维度搜索（最多5次搜索）
-                intel_results = self.search_service.search_comprehensive_intel(
-                    stock_code=code,
-                    stock_name=stock_name,
-                    max_searches=5
-                )
-                
-                # 格式化情报报告
-                if intel_results:
-                    news_context = self.search_service.format_intel_report(intel_results, stock_name)
-                    total_results = sum(
-                        len(r.results) for r in intel_results.values() if r.success
-                    )
-                    logger.info(f"[{code}] 情报搜索完成: 共 {total_results} 条结果")
-                    logger.debug(f"[{code}] 情报搜索结果:\n{news_context}")
+            return False, str(e)
 
-                    # 保存新闻情报到数据库（用于后续复盘与查询）
-                    try:
-                        query_context = self._build_query_context()
-                        for dim_name, response in intel_results.items():
-                            if response and response.success and response.results:
-                                self.db.save_news_intel(
-                                    code=code,
-                                    name=stock_name,
-                                    dimension=dim_name,
-                                    query=response.query,
-                                    response=response,
-                                    query_context=query_context
-                                )
-                    except Exception as e:
-                        logger.warning(f"[{code}] 保存新闻情报失败: {e}")
-            else:
-                logger.info(f"[{code}] 搜索服务不可用，跳过情报搜索")
+    def _prepare_stock_context(self, code: str) -> Optional[Dict[str, Any]]:
+        """准备 AI 分析所需的上下文数据"""
+        quote = self.fetcher_manager.get_realtime_quote(code)
+        if not quote:
+            logger.warning(f"[{code}] 无法获取实时行情，跳过")
+            return None
+        stock_name = quote.name
+        
+        try:
+            daily_df = self.fetcher_manager.get_merged_data(code, days=120)
+        except Exception as e:
+            logger.warning(f"[{code}] 获取合并数据失败: {e}")
+            daily_df = None
+
+        tech_report = "数据不足，无法进行技术分析"
+        if daily_df is not None and not daily_df.empty:
+            try:
+                trend_result = self.trend_analyzer.analyze(daily_df, code)
+                if quote.price:
+                    trend_result.current_price = quote.price
+                tech_report = self.trend_analyzer.format_analysis(trend_result)
+            except Exception as e:
+                logger.error(f"[{code}] 技术分析生成失败: {e}")
+
+        # 筹码数据
+        chip_data = {}
+        if getattr(self.config, 'enable_chip_distribution', False):
+            if hasattr(self.fetcher_manager, '_chip_cache') and code in self.fetcher_manager._chip_cache:
+                chip_data = self.fetcher_manager._chip_cache[code].to_dict()
+        
+        # F10 基本面数据
+        fundamental_data = {}
+        try:
+            fundamental_data = get_fundamental_data(code)
+        except Exception as e:
+            pass
+
+        # 历史记忆
+        history_summary = None
+        try:
+            history_summary = self.storage.get_last_analysis_summary(code)
+        except Exception as e:
+            pass
+
+        context = {
+            'code': code,
+            'stock_name': stock_name,
+            'price': quote.price,
+            'realtime': quote.to_dict(),
+            'chip': chip_data,
+            'technical_analysis_report': tech_report,
+            'fundamental': fundamental_data,
+            'history_summary': history_summary
+        }
+        return context
+
+    def process_single_stock(self, code: str, skip_analysis: bool = False, single_stock_notify: bool = False, report_type: ReportType = ReportType.SIMPLE, skip_data_fetch: bool = False) -> Optional[AnalysisResult]:
+        """处理单只股票的核心逻辑"""
+        try:
+            context = self._prepare_stock_context(code)
+            if not context: return None
+            stock_name = context['stock_name']
             
-            # Step 5: 获取分析上下文（技术面数据）
-            context = self.db.get_analysis_context(code)
+            if skip_analysis:
+                logger.info(f"[{code}] Dry-run 模式，跳过 AI 分析")
+                return AnalysisResult(code=code, name=stock_name, reasoning="Dry Run 测试", operation_advice="观望", sentiment_score=50, trend_prediction="测试", success=True)
+
+            # === 1. 搜索舆情 (增加随机延迟防封号) ===
+            search_content = ""
+            if self.search_service:
+                # 随机休眠 2.0 - 5.0 秒
+                sleep_time = random.uniform(2.0, 5.0)
+                time.sleep(sleep_time)
+                
+                logger.info(f"🔎 [{stock_name}] 正在侦查舆情 (延迟 {sleep_time:.1f}s)...")
+                try:
+                    # 兼容不同接口调用方式
+                    if hasattr(self.search_service, 'search_stock_news'):
+                        resp = self.search_service.search_stock_news(code, stock_name)
+                    else:
+                        query = f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报"
+                        resp = self.search_service.search(query)
+                        
+                    if resp and getattr(resp, 'success', False): 
+                        search_content = resp.to_context()
+                except Exception as e:
+                    logger.warning(f"[{stock_name}] 搜索服务异常: {e}")
+
+            # === 2. 获取大盘环境 ===
+            market_overview = None
+            if market_monitor:
+                try:
+                    snapshot = market_monitor.get_market_snapshot()
+                    if snapshot.get('success'):
+                        vol = snapshot.get('total_volume', 'N/A')
+                        indices = snapshot.get('indices', [])
+                        # 格式化: "上证指数 +1.2% / 深证成指 -0.5%"
+                        idx_str = " / ".join([f"{i['name']} {i['change_pct']}%" for i in indices])
+                        market_overview = f"今日两市成交额: {vol}亿。指数表现: {idx_str}。"
+                except Exception as e:
+                    logger.warning(f"[{stock_name}] 获取大盘数据微瑕: {e}")
+
+            logger.info(f"🤖 [{stock_name}] 调用 LLM 进行分析...")
             
-            if context is None:
-                logger.warning(f"[{code}] 无法获取历史行情数据，将仅基于新闻和实时行情分析")
-                from datetime import date
-                context = {
-                    'code': code,
-                    'stock_name': stock_name,
-                    'date': date.today().isoformat(),
-                    'data_missing': True,
-                    'today': {},
-                    'yesterday': {}
-                }
-            
-            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称）
-            enhanced_context = self._enhance_context(
-                context, 
-                realtime_quote, 
-                chip_data, 
-                trend_result,
-                stock_name  # 传入股票名称
+            # === 3. 执行分析 ===
+            result = self.analyzer.analyze(
+                context=context, 
+                news_context=search_content, 
+                role="trader",
+                market_overview=market_overview 
             )
             
-            # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
-            result = self.analyzer.analyze(enhanced_context, news_context=news_context)
-
-            # Step 8: 保存分析历史记录
-            if result:
+            if not result: return None
+            logger.info(f"\n[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score}")
+            
+            try:
+                self.storage.save_analysis_history(result=result, query_id=self.query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None)
+            except Exception as e:
+                logger.error(f"保存分析历史失败: {e}")
+            
+            if single_stock_notify and self.notifier.is_available():
                 try:
-                    context_snapshot = self._build_context_snapshot(
-                        enhanced_context=enhanced_context,
-                        news_content=news_context,
-                        realtime_quote=realtime_quote,
-                        chip_data=chip_data
-                    )
-                    self.db.save_analysis_history(
-                        result=result,
-                        query_id=self.query_id or "",
-                        report_type=report_type.value,
-                        news_content=news_context,
-                        context_snapshot=context_snapshot,
-                        save_snapshot=self.save_context_snapshot
-                    )
+                    report = self.notifier.generate_single_stock_report(result)
+                    self.notifier.send(report)
                 except Exception as e:
-                    logger.warning(f"[{code}] 保存分析历史失败: {e}")
-
+                    logger.warning(f"[{code}] 推送失败: {e}")
             return result
-            
         except Exception as e:
-            logger.error(f"[{code}] 分析失败: {e}")
-            logger.exception(f"[{code}] 详细错误信息:")
+            logger.exception(f"[{code}] 处理过程中发生未知错误: {e}")
             return None
-    
-    def _enhance_context(
-        self,
-        context: Dict[str, Any],
-        realtime_quote,
-        chip_data: Optional[ChipDistribution],
-        trend_result: Optional[TrendAnalysisResult],
-        stock_name: str = ""
-    ) -> Dict[str, Any]:
-        """
-        增强分析上下文
-        
-        将实时行情、筹码分布、趋势分析结果、股票名称添加到上下文中
-        
-        Args:
-            context: 原始上下文
-            realtime_quote: 实时行情数据（UnifiedRealtimeQuote 或 None）
-            chip_data: 筹码分布数据
-            trend_result: 趋势分析结果
-            stock_name: 股票名称
-            
-        Returns:
-            增强后的上下文
-        """
-        enhanced = context.copy()
-        
-        # 添加股票名称
-        if stock_name:
-            enhanced['stock_name'] = stock_name
-        elif realtime_quote and getattr(realtime_quote, 'name', None):
-            enhanced['stock_name'] = realtime_quote.name
-        
-        # 添加实时行情（兼容不同数据源的字段差异）
-        if realtime_quote:
-            # 使用 getattr 安全获取字段，缺失字段返回 None 或默认值
-            volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
-            enhanced['realtime'] = {
-                'name': getattr(realtime_quote, 'name', ''),
-                'price': getattr(realtime_quote, 'price', None),
-                'volume_ratio': volume_ratio,
-                'volume_ratio_desc': self._describe_volume_ratio(volume_ratio) if volume_ratio else '无数据',
-                'turnover_rate': getattr(realtime_quote, 'turnover_rate', None),
-                'pe_ratio': getattr(realtime_quote, 'pe_ratio', None),
-                'pb_ratio': getattr(realtime_quote, 'pb_ratio', None),
-                'total_mv': getattr(realtime_quote, 'total_mv', None),
-                'circ_mv': getattr(realtime_quote, 'circ_mv', None),
-                'change_60d': getattr(realtime_quote, 'change_60d', None),
-                'source': getattr(realtime_quote, 'source', None),
-            }
-            # 移除 None 值以减少上下文大小
-            enhanced['realtime'] = {k: v for k, v in enhanced['realtime'].items() if v is not None}
-        
-        # 添加筹码分布
-        if chip_data:
-            current_price = getattr(realtime_quote, 'price', 0) if realtime_quote else 0
-            enhanced['chip'] = {
-                'profit_ratio': chip_data.profit_ratio,
-                'avg_cost': chip_data.avg_cost,
-                'concentration_90': chip_data.concentration_90,
-                'concentration_70': chip_data.concentration_70,
-                'chip_status': chip_data.get_chip_status(current_price or 0),
-            }
-        
-        # 添加趋势分析结果
-        if trend_result:
-            enhanced['trend_analysis'] = {
-                'trend_status': trend_result.trend_status.value,
-                'ma_alignment': trend_result.ma_alignment,
-                'trend_strength': trend_result.trend_strength,
-                'bias_ma5': trend_result.bias_ma5,
-                'bias_ma10': trend_result.bias_ma10,
-                'volume_status': trend_result.volume_status.value,
-                'volume_trend': trend_result.volume_trend,
-                'buy_signal': trend_result.buy_signal.value,
-                'signal_score': trend_result.signal_score,
-                'signal_reasons': trend_result.signal_reasons,
-                'risk_factors': trend_result.risk_factors,
-            }
-        
-        return enhanced
-    
-    def _describe_volume_ratio(self, volume_ratio: float) -> str:
-        """
-        量比描述
-        
-        量比 = 当前成交量 / 过去5日平均成交量
-        """
-        if volume_ratio < 0.5:
-            return "极度萎缩"
-        elif volume_ratio < 0.8:
-            return "明显萎缩"
-        elif volume_ratio < 1.2:
-            return "正常"
-        elif volume_ratio < 2.0:
-            return "温和放量"
-        elif volume_ratio < 3.0:
-            return "明显放量"
-        else:
-            return "巨量"
 
-    def _build_context_snapshot(
-        self,
-        enhanced_context: Dict[str, Any],
-        news_content: Optional[str],
-        realtime_quote: Any,
-        chip_data: Optional[ChipDistribution]
-    ) -> Dict[str, Any]:
-        """
-        构建分析上下文快照
-        """
-        return {
-            "enhanced_context": enhanced_context,
-            "news_content": news_content,
-            "realtime_quote_raw": self._safe_to_dict(realtime_quote),
-            "chip_distribution_raw": self._safe_to_dict(chip_data),
-        }
-
-    @staticmethod
-    def _safe_to_dict(value: Any) -> Optional[Dict[str, Any]]:
-        """
-        安全转换为字典
-        """
-        if value is None:
-            return None
-        if hasattr(value, "to_dict"):
-            try:
-                return value.to_dict()
-            except Exception:
-                return None
-        if hasattr(value, "__dict__"):
-            try:
-                return dict(value.__dict__)
-            except Exception:
-                return None
-        return None
-
-    def _resolve_query_source(self, query_source: Optional[str]) -> str:
-        """
-        解析请求来源。
-
-        优先级（从高到低）：
-        1. 显式传入的 query_source：调用方明确指定时优先使用，便于覆盖推断结果或兼容未来 source_message 来自非 bot 的场景
-        2. 存在 source_message 时推断为 "bot"：当前约定为机器人会话上下文
-        3. 存在 query_id 时推断为 "web"：Web 触发的请求会带上 query_id
-        4. 默认 "system"：定时任务或 CLI 等无上述上下文时
-
-        Args:
-            query_source: 调用方显式指定的来源，如 "bot" / "web" / "cli" / "system"
-
-        Returns:
-            归一化后的来源标识字符串，如 "bot" / "web" / "cli" / "system"
-        """
-        if query_source:
-            return query_source
-        if self.source_message:
-            return "bot"
-        if self.query_id:
-            return "web"
-        return "system"
-
-    def _build_query_context(self) -> Dict[str, str]:
-        """
-        生成用户查询关联信息
-        """
-        context: Dict[str, str] = {
-            "query_id": self.query_id or "",
-            "query_source": self.query_source or "",
-        }
-
-        if self.source_message:
-            context.update({
-                "requester_platform": self.source_message.platform or "",
-                "requester_user_id": self.source_message.user_id or "",
-                "requester_user_name": self.source_message.user_name or "",
-                "requester_chat_id": self.source_message.chat_id or "",
-                "requester_message_id": self.source_message.message_id or "",
-                "requester_query": self.source_message.content or "",
-            })
-
-        return context
-    
-    def process_single_stock(
-        self,
-        code: str,
-        skip_analysis: bool = False,
-        single_stock_notify: bool = False,
-        report_type: ReportType = ReportType.SIMPLE
-    ) -> Optional[AnalysisResult]:
-        """
-        处理单只股票的完整流程
-
-        包括：
-        1. 获取数据
-        2. 保存数据
-        3. AI 分析
-        4. 单股推送（可选，#55）
-
-        此方法会被线程池调用，需要处理好异常
-
-        Args:
-            code: 股票代码
-            skip_analysis: 是否跳过 AI 分析
-            single_stock_notify: 是否启用单股推送模式（每分析完一只立即推送）
-            report_type: 报告类型枚举（从配置读取，Issue #119）
-
-        Returns:
-            AnalysisResult 或 None
-        """
-        logger.info(f"========== 开始处理 {code} ==========")
-        
+    def _send_notifications(self, results: List[AnalysisResult]):
+        logger.info("正在生成汇总日报...")
         try:
-            # Step 1: 获取并保存数据
-            success, error = self.fetch_and_save_stock_data(code)
-            
-            if not success:
-                logger.warning(f"[{code}] 数据获取失败: {error}")
-                # 即使获取失败，也尝试用已有数据分析
-            
-            # Step 2: AI 分析
-            if skip_analysis:
-                logger.info(f"[{code}] 跳过 AI 分析（dry-run 模式）")
-                return None
-            
-            result = self.analyze_stock(code, report_type)
-            
-            if result:
-                logger.info(
-                    f"[{code}] 分析完成: {result.operation_advice}, "
-                    f"评分 {result.sentiment_score}"
-                )
-                
-                # 单股推送模式（#55）：每分析完一只股票立即推送
-                if single_stock_notify and self.notifier.is_available():
-                    try:
-                        # 根据报告类型选择生成方法
-                        if report_type == ReportType.FULL:
-                            # 完整报告：使用决策仪表盘格式
-                            report_content = self.notifier.generate_dashboard_report([result])
-                            logger.info(f"[{code}] 使用完整报告格式")
-                        else:
-                            # 精简报告：使用单股报告格式（默认）
-                            report_content = self.notifier.generate_single_stock_report(result)
-                            logger.info(f"[{code}] 使用精简报告格式")
-                        
-                        if self.notifier.send(report_content):
-                            logger.info(f"[{code}] 单股推送成功")
-                        else:
-                            logger.warning(f"[{code}] 单股推送失败")
-                    except Exception as e:
-                        logger.error(f"[{code}] 单股推送异常: {e}")
-            
-            return result
-            
+            daily_report = self.notifier.generate_dashboard_report(results)
+            self.notifier.send(daily_report)
+            self.notifier.save_report_to_file(daily_report)
         except Exception as e:
-            # 捕获所有异常，确保单股失败不影响整体
-            logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
-            return None
-    
-    def run(
-        self, 
-        stock_codes: Optional[List[str]] = None,
-        dry_run: bool = False,
-        send_notification: bool = True
-    ) -> List[AnalysisResult]:
+            logger.error(f"汇总推送失败: {e}")
+
+    def run(self, stock_codes: Optional[List[str]] = None, dry_run: bool = False, send_notification: bool = True) -> List[AnalysisResult]:
         """
-        运行完整的分析流程
-        
-        流程：
-        1. 获取待分析的股票列表
-        2. 使用线程池并发处理
-        3. 收集分析结果
-        4. 发送通知
-        
-        Args:
-            stock_codes: 股票代码列表（可选，默认使用配置中的自选股）
-            dry_run: 是否仅获取数据不分析
-            send_notification: 是否发送推送通知
-            
-        Returns:
-            分析结果列表
+        主执行入口 (由 main.py 调用)
         """
         start_time = time.time()
-        
-        # 使用配置中的股票列表
         if stock_codes is None:
             self.config.refresh_stock_list()
             stock_codes = self.config.stock_list
-        
         if not stock_codes:
-            logger.error("未配置自选股列表，请在 .env 文件中设置 STOCK_LIST")
+            logger.error("未配置自选股列表")
             return []
         
-        logger.info(f"===== 开始分析 {len(stock_codes)} 只股票 =====")
-        logger.info(f"股票列表: {', '.join(stock_codes)}")
-        logger.info(f"并发数: {self.max_workers}, 模式: {'仅获取数据' if dry_run else '完整分析'}")
-        
-        # === 批量预取实时行情（优化：避免每只股票都触发全量拉取）===
-        # 只有股票数量 >= 5 时才进行预取，少量股票直接逐个查询更高效
-        if len(stock_codes) >= 5:
-            prefetch_count = self.fetcher_manager.prefetch_realtime_quotes(stock_codes)
-            if prefetch_count > 0:
-                logger.info(f"已启用批量预取架构：一次拉取全市场数据，{len(stock_codes)} 只股票共享缓存")
-        
-        # 单股推送模式（#55）：从配置读取
-        single_stock_notify = getattr(self.config, 'single_stock_notify', False)
-        # Issue #119: 从配置读取报告类型
-        report_type_str = getattr(self.config, 'report_type', 'simple').lower()
-        report_type = ReportType.FULL if report_type_str == 'full' else ReportType.SIMPLE
-        # Issue #128: 从配置读取分析间隔
-        analysis_delay = getattr(self.config, 'analysis_delay', 0)
+        total_stocks = len(stock_codes)
+        logger.info(f"===== 启动分析任务: 共 {total_stocks} 只股票 =====")
 
-        if single_stock_notify:
-            logger.info(f"已启用单股推送模式：每分析完一只股票立即推送（报告类型: {report_type_str}）")
+        # === 阶段一：串行获取数据 ===
+        logger.info("🐢 阶段一：串行获取数据 (防封控 & 预加载)...")
+        valid_stocks = [] 
         
+        for i, code in enumerate(stock_codes):
+            try:
+                success, msg = self.fetch_and_save_stock_data(code)
+                
+                # 尝试预取筹码数据（避开交易高峰）
+                try:
+                    import datetime
+                    now = datetime.datetime.now()
+                    # 简单判断非交易时间才大量预取
+                    is_trading = ((now.hour == 9 and now.minute >= 15) or (9 < now.hour < 15))
+                    if not is_trading:
+                        if hasattr(self.fetcher_manager, 'get_chip_distribution'):
+                            self.fetcher_manager.get_chip_distribution(code)
+                except Exception:
+                    pass 
+
+                if success:
+                    valid_stocks.append(code)
+                    logger.info(f"[{i+1}/{total_stocks}] ✅ {code} 数据就绪")
+                    # 串行阶段也稍微休息一下，防止数据源封IP
+                    if not dry_run:
+                        time.sleep(0.5)
+                else:
+                    logger.warning(f"[{i+1}/{total_stocks}] ❌ {code} 数据失败: {msg}")
+                
+            except Exception as e:
+                logger.error(f"[{code}] 数据预取异常: {e}")
+
+        # === 阶段二：并发分析 ===
+        workers = self.max_workers if self.max_workers is not None else 1
+        logger.info(f"🐰 阶段二：开启 {workers} 线程进行 AI 并发分析（多线程时日志会交错，若需顺序输出请使用 --workers 1）...")
+        single_stock_notify = getattr(self.config, 'single_stock_notify', False)
+        report_type = ReportType.FULL if getattr(self.config, 'report_type', 'simple') == 'full' else ReportType.SIMPLE
         results: List[AnalysisResult] = []
         
-        # 使用线程池并发处理
-        # 注意：max_workers 设置较低（默认3）以避免触发反爬
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # 提交任务
+        if not valid_stocks:
+            logger.error("没有获取到任何有效数据，终止分析")
+            return []
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_code = {
                 executor.submit(
-                    self.process_single_stock,
-                    code,
-                    skip_analysis=dry_run,
-                    single_stock_notify=single_stock_notify and send_notification,
-                    report_type=report_type  # Issue #119: 传递报告类型
-                ): code
-                for code in stock_codes
+                    self.process_single_stock, 
+                    code, 
+                    skip_analysis=dry_run, 
+                    single_stock_notify=single_stock_notify and send_notification, 
+                    report_type=report_type, 
+                    skip_data_fetch=True
+                ): code for code in valid_stocks
             }
             
-            # 收集结果
-            for idx, future in enumerate(as_completed(future_to_code)):
+            for future in as_completed(future_to_code):
                 code = future_to_code[future]
                 try:
-                    result = future.result()
-                    if result:
-                        results.append(result)
-
-                    # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
-                    if idx < len(stock_codes) - 1 and analysis_delay > 0:
-                        logger.debug(f"等待 {analysis_delay} 秒后继续下一只股票...")
-                        time.sleep(analysis_delay)
-
+                    res = future.result()
+                    if res: results.append(res)
                 except Exception as e:
-                    logger.error(f"[{code}] 任务执行失败: {e}")
+                    logger.error(f"[{code}] AI 分析任务失败: {e}")
         
-        # 统计
-        elapsed_time = time.time() - start_time
+        logger.info(f"===== 分析完成，总耗时 {time.time() - start_time:.2f}s =====")
         
-        # dry-run 模式下，数据获取成功即视为成功
-        if dry_run:
-            # 检查哪些股票的数据今天已存在
-            success_count = sum(1 for code in stock_codes if self.db.has_today_data(code))
-            fail_count = len(stock_codes) - success_count
-        else:
-            success_count = len(results)
-            fail_count = len(stock_codes) - success_count
-        
-        logger.info("===== 分析完成 =====")
-        logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
-        
-        # 发送通知（单股推送模式下跳过汇总推送，避免重复）
-        if results and send_notification and not dry_run:
-            if single_stock_notify:
-                # 单股推送模式：只保存汇总报告，不再重复推送
-                logger.info("单股推送模式：跳过汇总推送，仅保存报告到本地")
-                self._send_notifications(results, skip_push=True)
-            else:
-                self._send_notifications(results)
-        
+        # 汇总推送 (如果没开单股推送)
+        if results and send_notification and not dry_run and not single_stock_notify:
+            self._send_notifications(results)
+            
         return results
-    
-    def _send_notifications(self, results: List[AnalysisResult], skip_push: bool = False) -> None:
-        """
-        发送分析结果通知
-        
-        生成决策仪表盘格式的报告
-        
-        Args:
-            results: 分析结果列表
-            skip_push: 是否跳过推送（仅保存到本地，用于单股推送模式）
-        """
-        try:
-            logger.info("生成决策仪表盘日报...")
-            
-            # 生成决策仪表盘格式的详细日报
-            report = self.notifier.generate_dashboard_report(results)
-            
-            # 保存到本地
-            filepath = self.notifier.save_report_to_file(report)
-            logger.info(f"决策仪表盘日报已保存: {filepath}")
-            
-            # 跳过推送（单股推送模式）
-            if skip_push:
-                return
-            
-            # 推送通知
-            if self.notifier.is_available():
-                channels = self.notifier.get_available_channels()
-                context_success = self.notifier.send_to_context(report)
-
-                # 企业微信：只发精简版（平台限制）
-                wechat_success = False
-                if NotificationChannel.WECHAT in channels:
-                    dashboard_content = self.notifier.generate_wechat_dashboard(results)
-                    logger.info(f"企业微信仪表盘长度: {len(dashboard_content)} 字符")
-                    logger.debug(f"企业微信推送内容:\n{dashboard_content}")
-                    wechat_success = self.notifier.send_to_wechat(dashboard_content)
-
-                # 其他渠道：发完整报告（避免自定义 Webhook 被 wechat 截断逻辑污染）
-                non_wechat_success = False
-                for channel in channels:
-                    if channel == NotificationChannel.WECHAT:
-                        continue
-                    if channel == NotificationChannel.FEISHU:
-                        non_wechat_success = self.notifier.send_to_feishu(report) or non_wechat_success
-                    elif channel == NotificationChannel.TELEGRAM:
-                        non_wechat_success = self.notifier.send_to_telegram(report) or non_wechat_success
-                    elif channel == NotificationChannel.EMAIL:
-                        non_wechat_success = self.notifier.send_to_email(report) or non_wechat_success
-                    elif channel == NotificationChannel.CUSTOM:
-                        non_wechat_success = self.notifier.send_to_custom(report) or non_wechat_success
-                    elif channel == NotificationChannel.PUSHPLUS:
-                        non_wechat_success = self.notifier.send_to_pushplus(report) or non_wechat_success
-                    elif channel == NotificationChannel.DISCORD:
-                        non_wechat_success = self.notifier.send_to_discord(report) or non_wechat_success
-                    elif channel == NotificationChannel.PUSHOVER:
-                        non_wechat_success = self.notifier.send_to_pushover(report) or non_wechat_success
-                    elif channel == NotificationChannel.ASTRBOT:
-                        non_wechat_success = self.notifier.send_to_astrbot(report) or non_wechat_success
-                    else:
-                        logger.warning(f"未知通知渠道: {channel}")
-
-                success = wechat_success or non_wechat_success or context_success
-                if success:
-                    logger.info("决策仪表盘推送成功")
-                else:
-                    logger.warning("决策仪表盘推送失败")
-            else:
-                logger.info("通知渠道未配置，跳过推送")
-                
-        except Exception as e:
-            logger.error(f"发送通知失败: {e}")
