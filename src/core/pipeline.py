@@ -3,6 +3,7 @@ import logging
 import time
 import random
 import os
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -65,6 +66,10 @@ class StockAnalysisPipeline:
         self.query_source = query_source
         self.save_context_snapshot = save_context_snapshot
         self.source_message = source_message
+
+        # 阶段一预取缓存：避免阶段二重复拉取/重复拼接
+        # 结构：{ code: {"df": <DataFrame>, "quote": <RealtimeQuote>} }
+        self._prefetch_cache: Dict[str, Dict[str, Any]] = {}
         
         # === 1. 默认顺序执行（workers=1），避免多线程日志交错 ===
         if max_workers is None:
@@ -113,13 +118,16 @@ class StockAnalysisPipeline:
         else:
             logger.warning("📊 [大盘监控] 未加载，个股分析将不注入大盘环境（请检查 data_provider.market_monitor 与 akshare）")
 
-    def fetch_and_save_stock_data(self, code: str) -> (bool, str):
-        """获取数据并落库，保证下次可做「历史+实时」拼接"""
+    def fetch_and_save_stock_data(self, code: str) -> (bool, str, Any, Any):
+        """获取数据并落库，保证下次可做「历史+实时」拼接。
+
+        返回: (success, msg, df, quote)
+        """
         try:
             # 120天数据用于计算趋势（有历史则 DB+实时缝合，无历史则全量抓取）
             df = self.fetcher_manager.get_merged_data(code, days=120)
             if df is None or df.empty:
-                return False, "获取数据为空"
+                return False, "获取数据为空", None, None
             # 写入/更新日线到 DB，后续 run 才能用历史做缝合，技术面才和现实一致
             try:
                 n = self.storage.save_daily_data(df, code, data_source="pipeline")
@@ -129,21 +137,46 @@ class StockAnalysisPipeline:
                 logger.warning(f"[{code}] 日线落库失败(继续分析): {e}")
             quote = self.fetcher_manager.get_realtime_quote(code)
             if not quote:
-                return False, "实时行情获取失败"
-            return True, "Success"
+                return False, "实时行情获取失败", df, None
+            return True, "Success", df, quote
         except Exception as e:
-            return False, str(e)
+            return False, str(e), None, None
+
+    def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6, limit: int = 5) -> str:
+        """优先复用 news_intel 缓存，命中则减少外部搜索与 token。"""
+        try:
+            items = self.storage.get_recent_news(code, days=1, limit=limit)
+            if not items:
+                return ""
+            cutoff = datetime.now() - timedelta(hours=hours)
+            fresh = [n for n in items if getattr(n, "fetched_at", None) and n.fetched_at >= cutoff]
+            if not fresh:
+                return ""
+            lines = []
+            for i, n in enumerate(fresh[:limit]):
+                title = (getattr(n, "title", "") or "").strip()
+                snippet = (getattr(n, "snippet", "") or "").strip()
+                source = (getattr(n, "source", "") or "").strip()
+                pub = getattr(n, "published_date", None)
+                pub_str = f" ({pub})" if pub else ""
+                head = f"{i+1}. 【{source}】{title}{pub_str}".strip()
+                body = snippet
+                lines.append(f"{head}\n{body}".strip())
+            return "\n".join(lines) if lines else ""
+        except Exception:
+            return ""
 
     def _prepare_stock_context(self, code: str) -> Optional[Dict[str, Any]]:
         """准备 AI 分析所需的上下文数据"""
-        quote = self.fetcher_manager.get_realtime_quote(code)
+        prefetched = self._prefetch_cache.get(code) if hasattr(self, "_prefetch_cache") else None
+        quote = (prefetched or {}).get("quote") or self.fetcher_manager.get_realtime_quote(code)
         if not quote:
             logger.warning(f"[{code}] 无法获取实时行情，跳过")
             return None
         stock_name = quote.name
         
         try:
-            daily_df = self.fetcher_manager.get_merged_data(code, days=120)
+            daily_df = (prefetched or {}).get("df") or self.fetcher_manager.get_merged_data(code, days=120)
         except Exception as e:
             logger.warning(f"[{code}] 获取合并数据失败: {e}")
             daily_df = None
@@ -190,7 +223,15 @@ class StockAnalysisPipeline:
         }
         return context
 
-    def process_single_stock(self, code: str, skip_analysis: bool = False, single_stock_notify: bool = False, report_type: ReportType = ReportType.SIMPLE, skip_data_fetch: bool = False) -> Optional[AnalysisResult]:
+    def process_single_stock(
+        self,
+        code: str,
+        skip_analysis: bool = False,
+        single_stock_notify: bool = False,
+        report_type: ReportType = ReportType.SIMPLE,
+        skip_data_fetch: bool = False,
+        market_overview_override: Optional[str] = None,
+    ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
             context = self._prepare_stock_context(code)
@@ -203,7 +244,13 @@ class StockAnalysisPipeline:
 
             # === 1. 搜索舆情 (增加随机延迟防封号) ===
             search_content = ""
-            if self.search_service:
+            # 1) 优先复用 DB 缓存（命中则不外部搜索、不 sleep）
+            cached = self._get_cached_news_context(code, stock_name)
+            if cached:
+                search_content = cached
+                logger.info(f"♻️  [{stock_name}] 命中舆情缓存，跳过外部搜索")
+            # 2) 无缓存再走外部搜索
+            elif self.search_service:
                 # 随机休眠 2.0 - 5.0 秒
                 sleep_time = random.uniform(2.0, 5.0)
                 time.sleep(sleep_time)
@@ -231,8 +278,8 @@ class StockAnalysisPipeline:
                     logger.warning(f"[{stock_name}] 搜索服务异常: {e}")
 
             # === 2. 获取大盘环境（前置滤网：大盘定仓位上限，个股逻辑定买卖方向）===
-            market_overview = None
-            if self._market_monitor:
+            market_overview = market_overview_override
+            if market_overview is None and self._market_monitor:
                 try:
                     snapshot = self._market_monitor.get_market_snapshot()
                     if snapshot.get('success'):
@@ -303,7 +350,7 @@ class StockAnalysisPipeline:
         
         for i, code in enumerate(stock_codes):
             try:
-                success, msg = self.fetch_and_save_stock_data(code)
+                success, msg, df, quote = self.fetch_and_save_stock_data(code)
                 
                 # 尝试预取筹码数据（避开交易高峰）
                 try:
@@ -319,6 +366,9 @@ class StockAnalysisPipeline:
 
                 if success:
                     valid_stocks.append(code)
+                    # 缓存阶段一结果，阶段二复用避免重复取数/拼接
+                    if df is not None and quote is not None:
+                        self._prefetch_cache[code] = {"df": df, "quote": quote}
                     logger.info(f"[{i+1}/{total_stocks}] ✅ {code} 数据就绪")
                     # 串行阶段也稍微休息一下，防止数据源封IP
                     if not dry_run:
@@ -340,6 +390,20 @@ class StockAnalysisPipeline:
             logger.error("没有获取到任何有效数据，终止分析")
             return []
 
+        # 阶段二：大盘快照只取一次（更快、更一致），传入每只股票
+        market_overview_once: Optional[str] = None
+        if self._market_monitor:
+            try:
+                snapshot = self._market_monitor.get_market_snapshot()
+                if snapshot.get("success"):
+                    vol = snapshot.get('total_volume', 'N/A')
+                    indices = snapshot.get('indices', [])
+                    idx_str = " / ".join([f"{i['name']} {i['change_pct']}%" for i in indices])
+                    market_overview_once = f"今日两市成交额: {vol}亿。指数表现: {idx_str}。"
+                    logger.info(f"📊 [阶段二] 大盘快照已获取（全局复用）: 成交额{vol}亿 | {idx_str}")
+            except Exception as e:
+                logger.warning(f"📊 [阶段二] 获取大盘快照失败(降级为逐股/不注入): {e}")
+
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_code = {
                 executor.submit(
@@ -348,7 +412,8 @@ class StockAnalysisPipeline:
                     skip_analysis=dry_run, 
                     single_stock_notify=single_stock_notify and send_notification, 
                     report_type=report_type, 
-                    skip_data_fetch=True
+                    skip_data_fetch=True,
+                    market_overview_override=market_overview_once
                 ): code for code in valid_stocks
             }
             
