@@ -139,6 +139,19 @@
 
 ---
 
+### Q5.1: 如何防止误提交 .env 或含 API Key 的文件？（pre-commit）
+
+**做法**：使用项目自带的 `check-no-secrets` 脚本作为 Git pre-commit 钩子，在每次 `git commit` 前检查暂存区是否包含敏感关键词（如 `API_KEY`、`SECRET` 等），若包含则拒绝提交。
+
+**步骤**：
+1. 确保脚本可执行：`chmod +x .github/scripts/check-no-secrets.sh`
+2. 链接为 pre-commit 钩子：`ln -sf ../../.github/scripts/check-no-secrets.sh .git/hooks/pre-commit`
+3. 之后执行 `git commit` 时会自动运行该脚本；若检测到敏感内容会提示并中止提交。
+
+更多说明见 [SECURITY_KEYS.md](./SECURITY_KEYS.md)。
+
+---
+
 ### Q6: 修改 .env 文件后配置没有生效？
 
 **解决方案**：

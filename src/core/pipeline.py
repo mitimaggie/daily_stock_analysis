@@ -5,7 +5,7 @@ import random
 import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 
 # === 导入数据模块 (保持健壮性) ===
 try:
@@ -195,12 +195,16 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.error(f"[{code}] 技术分析生成失败: {e}")
 
-        # 筹码数据（先查 DB/内存缓存，在有效期内直接用；否则按配置决定是否实时拉取）
+        # 筹码数据（先查 DB/内存缓存；失败时明确标记「暂不可用」避免模型瞎编）
         chip_data = {}
+        chip_note = "未启用"
         if getattr(self.config, 'enable_chip_distribution', False) or getattr(self.config, 'chip_fetch_only_from_cache', False):
             chip = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
             if chip:
                 chip_data = chip.to_dict()
+                chip_note = "见下数据"
+            else:
+                chip_note = "暂不可用（接口失败或未拉取）"
         
         # F10 基本面数据
         fundamental_data = {}
@@ -241,11 +245,17 @@ class StockAnalysisPipeline:
             'price': quote.price,
             'realtime': quote.to_dict(),
             'chip': chip_data,
+            'chip_note': chip_note,
             'technical_analysis_report': tech_report,
             'fundamental': fundamental_data,
             'history_summary': history_summary
         }
         return context
+
+    def _log(self, msg: str, *args, **kwargs) -> None:
+        """带 query_id 的日志前缀，便于链路追踪"""
+        prefix = f"[query_id={self.query_id}] " if self.query_id else ""
+        logger.info(prefix + msg, *args, **kwargs)
 
     def process_single_stock(
         self,
@@ -261,6 +271,7 @@ class StockAnalysisPipeline:
             context = self._prepare_stock_context(code)
             if not context: return None
             stock_name = context['stock_name']
+            self._log(f"[{code}] {stock_name} 开始分析")
             
             if skip_analysis:
                 logger.info(f"[{code}] Dry-run 模式，跳过 AI 分析")
@@ -317,19 +328,32 @@ class StockAnalysisPipeline:
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 获取大盘数据微瑕: {e}")
 
-            logger.info(f"🤖 [{stock_name}] 调用 LLM 进行分析...")
-            
-            # === 3. 执行分析（命中舆情缓存时若配置了轻量模型则用之，省成本）===
-            result = self.analyzer.analyze(
-                context=context,
-                news_context=search_content,
-                role="trader",
-                market_overview=market_overview,
-                use_light_model=used_news_cache,
-            )
+            self._log(f"🤖 [{stock_name}] 调用 LLM 进行分析...")
+            # 无舆情时也用轻量模型，省成本
+            use_light = used_news_cache or (not search_content or not search_content.strip())
+            # === 3. 执行分析（带超时，默认 180 秒）===
+            analysis_timeout = getattr(self.config, 'analysis_timeout_seconds', 180) or 180
+            def _run_analyze():
+                return self.analyzer.analyze(
+                    context=context,
+                    news_context=search_content,
+                    role="trader",
+                    market_overview=market_overview,
+                    use_light_model=use_light,
+                )
+            try:
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_run_analyze)
+                    result = fut.result(timeout=analysis_timeout)
+            except FuturesTimeoutError:
+                logger.warning(f"[{stock_name}] 分析超时 ({analysis_timeout}s)，跳过")
+                return None
+            except Exception as e:
+                logger.exception(f"[{stock_name}] 分析异常: {e}")
+                return None
             
             if not result: return None
-            logger.info(f"\n[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score}")
+            self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score}")
             
             try:
                 self.storage.save_analysis_history(result=result, query_id=self.query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None)

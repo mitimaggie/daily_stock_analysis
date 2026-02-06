@@ -133,10 +133,22 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         description="用于负载均衡器或监控系统检查服务状态"
     )
     async def health_check() -> HealthResponse:
-        """健康检查接口"""
+        """健康检查接口（含 DB 连通性与最近分析时间）"""
+        db_ok: Optional[bool] = None
+        last_analysis_at: Optional[str] = None
+        try:
+            from src.storage import DatabaseManager
+            db = DatabaseManager.get_instance()
+            ts = db.get_last_analysis_timestamp()
+            db_ok = True
+            last_analysis_at = ts.isoformat() if ts else None
+        except Exception:
+            db_ok = False
         return HealthResponse(
             status="ok",
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now().isoformat(),
+            db_ok=db_ok,
+            last_analysis_at=last_analysis_at,
         )
     
     # ============================================================

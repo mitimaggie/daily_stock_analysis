@@ -252,9 +252,13 @@ class GeminiAnalyzer:
         # D. 大盘环境 (第零维度：前置滤网/仓位因子，不掩盖个股内生逻辑)
         market_str = market_overview if market_overview else "未提供具体大盘数据，请默认市场环境为【中性/震荡】，主要依据个股逻辑。"
         market_rule = (
-            "【重要】大盘环境仅用于：① 设定仓位上限（顺势可重仓、逆势严控仓位）；② 极端行情时的风险滤网（如系统性风险时降档操作）。"
+            "【重要】先看大盘再定仓位，再看个股定买卖方向。"
+            "大盘环境仅用于：① 设定仓位上限（顺势可重仓、逆势严控仓位）；② 极端行情时的风险滤网（如系统性风险时降档操作）。"
             "**买卖方向必须由个股基本面(F10)+技术面(Quant)决定**，不得用大盘替代个股逻辑。"
         )
+        # 筹码（若启用但拉取失败，明确写暂不可用，避免模型瞎编）
+        chip_note = context.get('chip_note') or "未启用"
+        chip_line = f"\n## 筹码分布\n{chip_note}\n" if context.get('chip_note') else ""
 
         # 组装最终 Prompt (Markdown 表格增强版)
         return f"""# 深度复盘任务：{name} ({code})
@@ -279,8 +283,8 @@ class GeminiAnalyzer:
 {f10_str}
 
 ## 第四维度：舆情与驱动力 (Drivers)
-{news_context if news_context else "暂无重大新闻"}
-
+{news_context if news_context else "暂无重大新闻（搜索未配置或拉取失败）"}
+{chip_line}
 ## ⚠️ JSON输出协议
 你必须且只能输出标准 JSON，包含以下字段：
 stock_name, sentiment_score (0-100), trend_prediction, operation_advice (买入/持有/卖出),

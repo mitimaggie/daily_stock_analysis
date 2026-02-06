@@ -16,7 +16,7 @@ import { useTaskStream } from '../hooks';
  * 顶部输入 + 左侧历史 + 右侧报告
  */
 const HomePage: React.FC = () => {
-  const { setLoading, setError: setStoreError } = useAnalysisStore();
+  const { setLoading, setError: setStoreError, error: storeError } = useAnalysisStore();
 
   // 输入状态
   const [stockCode, setStockCode] = useState('');
@@ -224,6 +224,20 @@ const HomePage: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* 分析失败时顶部 toast 提示 */}
+      {storeError && (
+        <div className="flex-shrink-0 px-4 py-2 bg-danger/15 border-b border-danger/30 flex items-center justify-between gap-2">
+          <span className="text-sm text-danger">{storeError}</span>
+          <button
+            type="button"
+            onClick={() => setStoreError(null)}
+            className="text-danger hover:opacity-80 text-xs px-2 py-1 rounded"
+            aria-label="关闭"
+          >
+            关闭
+          </button>
+        </div>
+      )}
       {/* 顶部输入栏 */}
       <header className="flex-shrink-0 px-4 py-3 border-b border-white/5">
         <div className="flex items-center gap-2 max-w-2xl">

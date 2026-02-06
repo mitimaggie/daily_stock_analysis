@@ -143,6 +143,7 @@ class Config:
     schedule_time: str = "18:00"              # 每日分析/推送时间（HH:MM）
     chip_schedule_time: str = "16:00"        # 每日筹码拉取时间（收盘后建议 16:00，与 schedule_time 同时启用定时时自动注册）
     market_review_enabled: bool = True        # 是否启用大盘复盘
+    analysis_timeout_seconds: int = 180       # 单股分析超时（秒），超时后跳过该股
 
     # === 实时行情增强数据配置 ===
     # 实时行情开关（关闭后使用历史收盘价进行分析）
@@ -374,6 +375,7 @@ class Config:
             schedule_time=os.getenv('SCHEDULE_TIME', '18:00'),
             chip_schedule_time=os.getenv('CHIP_SCHEDULE_TIME', '16:00'),
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
+            analysis_timeout_seconds=int(os.getenv('ANALYSIS_TIMEOUT_SECONDS', '180')),
             webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',
             webui_host=os.getenv('WEBUI_HOST', '127.0.0.1'),
             webui_port=int(os.getenv('WEBUI_PORT', '8000')),

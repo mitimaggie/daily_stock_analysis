@@ -404,6 +404,14 @@ class DatabaseManager:
             results = session.execute(data_query).scalars().all()
             return list(results), total
 
+    def get_last_analysis_timestamp(self) -> Optional[datetime]:
+        """返回最近一次分析记录的创建时间，用于健康检查"""
+        with self.get_session() as session:
+            row = session.execute(
+                select(AnalysisHistory).order_by(desc(AnalysisHistory.created_at)).limit(1)
+            ).scalar_one_or_none()
+            return row.created_at if row and row.created_at else None
+
     def save_daily_data(self, df: pd.DataFrame, code: str, data_source: str = "Unknown") -> int:
         if df is None or df.empty: return 0
         saved_count = 0
@@ -579,7 +587,7 @@ class DatabaseManager:
                 return {
                     'date': result.created_at.strftime('%Y-%m-%d'),
                     'trend': result.trend_prediction,
-                    'view': result.analysis_summary[:100] + "..." if result.analysis_summary else "", # 截取前100字作为摘要
+                    'view': (result.analysis_summary[:80] + "..." if result.analysis_summary and len(result.analysis_summary) > 80 else (result.analysis_summary or "")),  # 最近1条，限80字
                     'advice': result.operation_advice
                 }
             return None

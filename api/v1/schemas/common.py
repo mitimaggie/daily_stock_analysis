@@ -34,12 +34,16 @@ class HealthResponse(BaseModel):
     
     status: str = Field(..., description="服务状态", example="ok")
     timestamp: Optional[str] = Field(None, description="时间戳")
+    db_ok: Optional[bool] = Field(None, description="数据库连接是否正常")
+    last_analysis_at: Optional[str] = Field(None, description="最近一次分析完成时间(ISO)")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "status": "ok",
-                "timestamp": "2024-01-01T12:00:00"
+                "timestamp": "2024-01-01T12:00:00",
+                "db_ok": True,
+                "last_analysis_at": "2024-01-01T18:05:00"
             }
         }
 
