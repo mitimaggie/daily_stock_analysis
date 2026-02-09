@@ -616,7 +616,9 @@ class StockAnalysisPipeline:
             self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score} (时间={result.analysis_time})")
             
             try:
-                self.storage.save_analysis_history(result=result, query_id=self.query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None)
+                # 每只股票用独立的 query_id（batch_id + code），确保 WebUI 历史记录能正确定位
+                per_stock_query_id = f"{self.query_id}_{code}" if self.query_id else None
+                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None)
             except Exception as e:
                 logger.error(f"保存分析历史失败: {e}")
             
