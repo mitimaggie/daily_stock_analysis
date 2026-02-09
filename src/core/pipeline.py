@@ -232,11 +232,33 @@ class StockAnalysisPipeline:
         trend_analysis_dict = {}
         if daily_df is not None and not daily_df.empty:
             try:
-                trend_result = self.trend_analyzer.analyze(daily_df, code)
+                from src.stock_analyzer import StockTrendAnalyzer as _STA, MarketRegime
+                # 检测市场环境（用于动态评分权重）
+                idx_pct = 0.0
+                if self._market_monitor:
+                    try:
+                        snap = self._market_monitor.get_market_snapshot()
+                        for idx in snap.get('indices', []):
+                            if idx.get('name') == '上证指数':
+                                idx_pct = float(idx.get('change_pct', 0))
+                                break
+                    except Exception:
+                        pass
+                regime = _STA.detect_market_regime(daily_df, idx_pct)
+                # 获取指数收益率序列（供 Beta 计算）
+                idx_ret = None
+                try:
+                    idx_ret = self.storage.get_index_returns("上证指数", days=120)
+                    if idx_ret.empty:
+                        idx_ret = None
+                except Exception:
+                    pass
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret)
                 if quote.price:
                     trend_result.current_price = quote.price
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
                 trend_analysis_dict = trend_result.to_dict()
+                trend_analysis_dict['market_regime'] = regime.value
             except Exception as e:
                 logger.error(f"[{code}] 技术分析生成失败: {e}")
 
@@ -479,6 +501,53 @@ class StockAnalysisPipeline:
                 return None
             
             if not result: return None
+
+            # ===== Quant Override: 硬决策由量化模型主导，LLM 只负责解释 =====
+            trend = context.get('trend_analysis', {})
+            if trend and isinstance(trend, dict):
+                quant_score = trend.get('signal_score')
+                quant_signal = trend.get('buy_signal')
+                if quant_score is not None:
+                    result.sentiment_score = int(quant_score)
+                if quant_signal:
+                    result.operation_advice = str(quant_signal)
+                # 止损/买点：用量化锚点覆盖 LLM 输出
+                dashboard = result.dashboard or {}
+                battle = dashboard.get('battle_plan', {})
+                sniper = battle.get('sniper_points', {})
+                if trend.get('stop_loss_short'):
+                    sniper['stop_loss'] = trend['stop_loss_short']
+                if trend.get('ideal_buy_anchor'):
+                    sniper['ideal_buy'] = trend['ideal_buy_anchor']
+                if trend.get('stop_loss_intraday'):
+                    sniper['stop_loss_intraday'] = trend['stop_loss_intraday']
+                if trend.get('stop_loss_mid'):
+                    sniper['stop_loss_mid'] = trend['stop_loss_mid']
+                battle['sniper_points'] = sniper
+                dashboard['battle_plan'] = battle
+                result.dashboard = dashboard
+                # 仓位
+                if trend.get('suggested_position_pct') is not None:
+                    # 写入 dashboard 供报告使用
+                    core = dashboard.get('core_conclusion', {})
+                    pos = core.get('position_advice', {})
+                    pct = trend['suggested_position_pct']
+                    if pct == 0:
+                        pos['no_position'] = "不建议介入"
+                    else:
+                        pos['no_position'] = f"建议仓位 {pct}%"
+                    core['position_advice'] = pos
+                    dashboard['core_conclusion'] = core
+
+                # 决策类型
+                advice = result.operation_advice
+                if '买' in advice or '加仓' in advice:
+                    result.decision_type = 'buy'
+                elif '卖' in advice or '减仓' in advice:
+                    result.decision_type = 'sell'
+                else:
+                    result.decision_type = 'hold'
+
             # 标注分析时间戳（盘中多次分析时可区分）
             result.analysis_time = datetime.now().strftime('%H:%M')
             self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score} (时间={result.analysis_time})")
@@ -566,6 +635,20 @@ class StockAnalysisPipeline:
                 
             except Exception as e:
                 logger.error(f"[{code}] 数据预取异常: {e}")
+
+        # === 阶段1.5：保存今日指数数据（供 Beta 计算） ===
+        if self._market_monitor:
+            try:
+                snap = self._market_monitor.get_market_snapshot()
+                if snap.get('success'):
+                    for idx in snap.get('indices', []):
+                        name = idx.get('name', '')
+                        close_val = float(idx.get('close', 0))
+                        pct = float(idx.get('change_pct', 0))
+                        if name and close_val > 0:
+                            self.storage.save_index_daily(name, close_val, pct)
+            except Exception as e:
+                logger.debug(f"保存指数日线跳过: {e}")
 
         # === 阶段二：并发分析 ===
         # 预取实时行情（批量预热，可选）

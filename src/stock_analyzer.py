@@ -54,6 +54,11 @@ class BuySignal(Enum):
     WAIT = "观望"
     SELL = "卖出"
 
+class MarketRegime(Enum):
+    BULL = "bull"
+    SIDEWAYS = "sideways"
+    BEAR = "bear"
+
 @dataclass
 class TrendAnalysisResult:
     code: str
@@ -102,8 +107,13 @@ class TrendAnalysisResult:
     macd_dea: float = 0.0
     macd_bar: float = 0.0
     # 量化锚点（供 LLM 参考，避免拍脑袋）
-    stop_loss_anchor: float = 0.0
+    stop_loss_anchor: float = 0.0       # 保留兼容 (= stop_loss_short)
+    stop_loss_intraday: float = 0.0     # 日内止损 (0.7 ATR, 紧)
+    stop_loss_short: float = 0.0        # 短线止损 (1.0 ATR)
+    stop_loss_mid: float = 0.0          # 中线止损 (1.5 ATR + MA20*0.98)
     ideal_buy_anchor: float = 0.0
+    # 仓位管理（量化硬规则，不交给 LLM）
+    suggested_position_pct: int = 0     # 建议仓位占比 (0-30%)
 
     # Bollinger Bands
     bb_upper: float = 0.0
@@ -153,7 +163,11 @@ class TrendAnalysisResult:
             "volatility_20d": self.volatility_20d, "beta_vs_index": self.beta_vs_index,
             "max_drawdown_60d": self.max_drawdown_60d,
             "stop_loss_anchor": self.stop_loss_anchor,
+            "stop_loss_intraday": self.stop_loss_intraday,
+            "stop_loss_short": self.stop_loss_short,
+            "stop_loss_mid": self.stop_loss_mid,
             "ideal_buy_anchor": self.ideal_buy_anchor,
+            "suggested_position_pct": self.suggested_position_pct,
             "support_levels": self.support_levels,
             "resistance_levels": self.resistance_levels,
             "advice_for_empty": self.advice_for_empty,
@@ -162,8 +176,18 @@ class TrendAnalysisResult:
         }
 
 class StockTrendAnalyzer:
-    
-    def analyze(self, df: pd.DataFrame, code: str) -> TrendAnalysisResult:
+
+    # === 动态评分权重表（按市场环境调整） ===
+    # 牛市：趋势和 MACD 权重高（顺势为王）
+    # 震荡：乖离和支撑权重高（做波段）
+    # 熊市：量能、支撑、RSI 权重高（防守优先）
+    REGIME_WEIGHTS = {
+        MarketRegime.BULL:     {"trend": 35, "bias": 15, "volume": 15, "support": 5,  "macd": 20, "rsi": 10},
+        MarketRegime.SIDEWAYS: {"trend": 20, "bias": 25, "volume": 15, "support": 15, "macd": 15, "rsi": 10},
+        MarketRegime.BEAR:     {"trend": 15, "bias": 20, "volume": 20, "support": 15, "macd": 15, "rsi": 15},
+    }
+
+    def analyze(self, df: pd.DataFrame, code: str, market_regime: MarketRegime = MarketRegime.SIDEWAYS, index_returns: pd.Series = None) -> TrendAnalysisResult:
         result = TrendAnalysisResult(code=code)
         
         if df is None or df.empty or len(df) < 30:
@@ -216,11 +240,34 @@ class StockTrendAnalyzer:
                 if high_60d > 0:
                     result.max_drawdown_60d = round((result.current_price - high_60d) / high_60d * 100, 2)
 
-            # --- 止损/买点锚 ---
-            sl_atr = result.current_price - 1.5 * result.atr14 if result.atr14 > 0 else 0
-            sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else 0
-            result.stop_loss_anchor = round(min(sl_atr, sl_ma20) if (sl_atr > 0 and sl_ma20 > 0) else (sl_atr or sl_ma20 or 0), 2)
+            # --- 分层止损锚点 ---
+            atr = result.atr14
+            price = result.current_price
+            if atr > 0:
+                result.stop_loss_intraday = round(price - 0.7 * atr, 2)   # 日内：紧止损
+                result.stop_loss_short = round(price - 1.0 * atr, 2)      # 短线：1 ATR
+                sl_atr_mid = price - 1.5 * atr
+                sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else sl_atr_mid
+                result.stop_loss_mid = round(min(sl_atr_mid, sl_ma20) if sl_ma20 > 0 else sl_atr_mid, 2)
+            result.stop_loss_anchor = result.stop_loss_short  # 默认兼容
             result.ideal_buy_anchor = round(result.ma5 if result.ma5 > 0 else result.ma10, 2)
+
+            # --- Beta (如有大盘收益率序列) ---
+            if index_returns is not None and len(df) >= 60:
+                try:
+                    stock_ret = df['close'].pct_change().dropna().tail(60)
+                    idx_ret = index_returns.tail(60)
+                    if len(stock_ret) >= 30 and len(idx_ret) >= 30:
+                        # 对齐长度
+                        min_len = min(len(stock_ret), len(idx_ret))
+                        s = stock_ret.values[-min_len:]
+                        m = idx_ret.values[-min_len:]
+                        cov = np.cov(s, m)[0][1]
+                        var = np.var(m)
+                        if var > 0:
+                            result.beta_vs_index = round(cov / var, 2)
+                except Exception:
+                    pass  # 保持默认 1.0
 
             # =============== 1. 量比 & VolumeStatus (5-state, price-volume) ===============
             vol_ma5 = df['volume'].iloc[-6:-1].mean()
@@ -419,14 +466,18 @@ class StockTrendAnalyzer:
             }
             rsi_score = rsi_scores.get(result.rsi_status, 5)
 
-            result.score_breakdown = {
-                "trend": min(30, trend_score),
-                "bias": min(20, bias_score),
-                "volume": min(15, vol_score),
-                "support": min(10, support_score),
-                "macd": min(15, macd_score),
-                "rsi": min(10, rsi_score),
+            # =============== 10. 动态加权评分 ===============
+            # 各维度的原始得分率（0.0~1.0），与权重无关
+            raw = {
+                "trend": trend_score / 30,
+                "bias": bias_score / 20,
+                "volume": vol_score / 15,
+                "support": support_score / 10,
+                "macd": macd_score / 15,
+                "rsi": rsi_score / 10,
             }
+            weights = self.REGIME_WEIGHTS.get(market_regime, self.REGIME_WEIGHTS[MarketRegime.SIDEWAYS])
+            result.score_breakdown = {k: min(weights[k], round(raw[k] * weights[k])) for k in raw}
             score = sum(result.score_breakdown.values())
             score = min(100, max(0, score))
             result.signal_score = int(score)
@@ -436,6 +487,18 @@ class StockTrendAnalyzer:
             elif score >= 50: result.buy_signal = BuySignal.HOLD
             elif score >= 35: result.buy_signal = BuySignal.WAIT
             else: result.buy_signal = BuySignal.SELL
+
+            # =============== 11. 仓位管理（量化硬规则） ===============
+            if score >= 85:
+                base_pos = 30
+            elif score >= 70:
+                base_pos = 20
+            elif score >= 50:
+                base_pos = 10
+            else:
+                base_pos = 0
+            regime_mult = {MarketRegime.BULL: 1.2, MarketRegime.SIDEWAYS: 1.0, MarketRegime.BEAR: 0.6}
+            result.suggested_position_pct = min(30, int(base_pos * regime_mult.get(market_regime, 1.0)))
             
             # === 核心逻辑：生成分情况建议 ===
             self._generate_detailed_advice(result)
@@ -518,6 +581,28 @@ class StockTrendAnalyzer:
             res.advice_for_empty = "⚖️ 趋势不明，建议观望，若突破箱体再跟随"
             res.advice_for_holding = "⚖️ 做T为主，高抛低吸，降低成本"
 
+    @staticmethod
+    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0) -> 'MarketRegime':
+        """根据个股 MA20 斜率 + 大盘涨跌幅判断市场环境"""
+        if df is None or df.empty or len(df) < 30:
+            return MarketRegime.SIDEWAYS
+        try:
+            ma20 = df['close'].rolling(20).mean()
+            if len(ma20) < 10:
+                return MarketRegime.SIDEWAYS
+            ma20_now = ma20.iloc[-1]
+            ma20_10d_ago = ma20.iloc[-10]
+            if ma20_now <= 0 or ma20_10d_ago <= 0:
+                return MarketRegime.SIDEWAYS
+            ma20_slope = (ma20_now - ma20_10d_ago) / ma20_10d_ago * 100
+            if ma20_slope > 1.0 and index_change_pct >= 0:
+                return MarketRegime.BULL
+            elif ma20_slope < -1.0 and index_change_pct <= 0:
+                return MarketRegime.BEAR
+            return MarketRegime.SIDEWAYS
+        except Exception:
+            return MarketRegime.SIDEWAYS
+
     # RSI 参数
     RSI_SHORT = 6
     RSI_MID = 12
@@ -589,12 +674,15 @@ class StockTrendAnalyzer:
             levels_str = f"\n【支撑/阻力】支撑: {sup} | 阻力: {res}"
 
         anchor_line = ""
-        if result.stop_loss_anchor > 0 or result.ideal_buy_anchor > 0:
+        if result.stop_loss_short > 0 or result.ideal_buy_anchor > 0:
             anchor_line = f"""
-【量化锚点 (battle_plan 须参考)】
-● 建议止损参考: {result.stop_loss_anchor:.2f} (现价-1.5*ATR 与 MA20*0.98 取低，stop_loss 不得偏离过远)
-● 理想买点参考: {result.ideal_buy_anchor:.2f} (MA5/MA10 支撑，ideal_buy 可微调)
-● ATR14: {result.atr14:.2f} | MA60: {result.ma60:.2f}"""
+【量化锚点 (硬规则，LLM 不得覆盖)】
+● 止损(日内): {result.stop_loss_intraday:.2f} (0.7*ATR)
+● 止损(短线): {result.stop_loss_short:.2f} (1.0*ATR)
+● 止损(中线): {result.stop_loss_mid:.2f} (1.5*ATR+MA20)
+● 理想买点: {result.ideal_buy_anchor:.2f} (MA5/MA10 支撑)
+● ATR14: {result.atr14:.2f} | MA60: {result.ma60:.2f}
+● 建议仓位: {result.suggested_position_pct}%"""
 
         # 布林带
         bb_str = ""

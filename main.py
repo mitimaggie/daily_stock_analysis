@@ -94,6 +94,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--no-context-snapshot', action='store_true', help='不保存快照')
     parser.add_argument('--chip-only', action='store_true', help='仅拉取筹码分布并落库（供定时任务在固定时间跑，分析时用缓存）')
     parser.add_argument('--fast', action='store_true', help='盘中快速模式：跳过外部搜索、用缓存舆情、强制轻量模型、跳过F10')
+    parser.add_argument('--backtest', action='store_true', help='回测模式：回填历史分析的实际收益率并输出胜率统计')
     return parser.parse_args()
 
 def start_api_server(host: str, port: int, config: Config) -> None:
@@ -299,6 +300,15 @@ def main() -> int:
         except KeyboardInterrupt: return 0
 
     try:
+        # 模式-1: 回测
+        if getattr(args, 'backtest', False):
+            logger.info("模式: 回测分析")
+            from src.backtest import BacktestRunner
+            runner = BacktestRunner()
+            report = runner.run(lookback_days=60)
+            print(report)
+            return 0
+
         # 模式0: 仅拉取筹码并落库（定时在固定时间跑，分析时 CHIP_FETCH_ONLY_FROM_CACHE=true 用缓存）
         if getattr(args, 'chip_only', False):
             logger.info("模式: 仅拉取筹码分布并落库")

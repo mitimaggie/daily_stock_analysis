@@ -431,20 +431,22 @@ class GeminiAnalyzer:
 {news_context if news_context else "暂无重大新闻（搜索未配置或拉取失败）"}
 {chip_line}
 ## ⚠️ JSON输出协议
+**重要**：sentiment_score 和 operation_advice 已由量化模型确定（见上方评分和信号），你不得覆盖。
+你的职责是：解释量化结论的原因，补充舆情/基本面视角，输出风险提示和催化剂。
+
 你必须且只能输出标准 JSON，包含以下字段：
-stock_name, sentiment_score (0-100), trend_prediction, operation_advice (买入/持有/卖出),
+stock_name, trend_prediction,
 time_horizon (建议适用周期: {"'短线(日内)' | '短线(1-3日)'" if is_intraday else "'短线(1-5日)' | '中线(1-4周)' | '长线(1-3月)'"}),
-suggested_position_pct (可选, 0-100 建议仓位占比),
 dashboard: {{
     core_conclusion: {{
-        one_sentence: "{'盘中实时研判结论，侧重当前是否介入/离场' if is_intraday else '核心结论 (个股F10+技术面定方向，大盘定仓位/滤网)，可注明适用周期'}",
-        position_advice: {{ no_position: "空仓建议(含半定量如「轻仓10%」)", has_position: "持仓建议" }}
+        one_sentence: "{'盘中实时研判结论' if is_intraday else '核心结论，解释量化模型给出该评分/建议的原因'}",
+        position_advice: {{ no_position: "空仓者操作建议", has_position: "持仓者操作建议" }}
     }},
-    intelligence: {{ risk_alerts: [], positive_catalysts: [] }},
+    intelligence: {{ risk_alerts: [], positive_catalysts: [], sentiment_summary: "", earnings_outlook: "" }},
     battle_plan: {{ sniper_points: {{ ideal_buy: number, stop_loss: number }} }}
 }},
-**battle_plan 约束**：ideal_buy、stop_loss 须参考【量化锚点】中的建议止损参考、理想买点参考，可微调但不得偏离过远。
-analysis_summary, risk_warning
+**battle_plan 约束**：ideal_buy、stop_loss 须直接使用【量化锚点】中的数值，不得自行编造。
+analysis_summary (解释量化结论的逻辑), risk_warning
 
 ---
 现在，开始你的分析：

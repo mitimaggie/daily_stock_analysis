@@ -156,6 +156,11 @@ class AnalysisHistory(Base):
     secondary_buy = Column(Float)
     stop_loss = Column(Float)
     take_profit = Column(Float)
+    # 回测字段（由 --backtest 回填）
+    actual_pct_5d = Column(Float)        # 5个交易日后实际收益率(%)
+    hit_stop_loss = Column(Integer)      # 5日内是否触发止损 (0/1)
+    hit_take_profit = Column(Integer)    # 5日内是否触发止盈 (0/1)
+    backtest_filled = Column(Integer, default=0)  # 是否已回填 (0/1)
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -197,6 +202,22 @@ class ChipCache(Base):
 
     __table_args__ = (
         Index('ix_chip_code_fetched', 'code', 'fetched_at'),
+    )
+
+
+class IndexDaily(Base):
+    """大盘指数日线（用于计算个股 Beta）"""
+    __tablename__ = 'index_daily'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(20), nullable=False, index=True)   # 如 '上证指数'
+    date = Column(Date, nullable=False, index=True)
+    close = Column(Float)
+    pct_chg = Column(Float)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('code', 'date', name='uix_index_code_date'),
     )
 
 
@@ -625,6 +646,44 @@ class DatabaseManager:
             try: return datetime.strptime(text, fmt)
             except ValueError: continue
         return None
+
+    # === 指数日线（Beta 计算） ===
+    def save_index_daily(self, index_name: str, close_price: float, pct_chg: float, target_date: Optional[date] = None) -> None:
+        """保存指数日线数据（用于后续 Beta 计算）"""
+        if target_date is None:
+            target_date = date.today()
+        with self.get_session() as session:
+            try:
+                existing = session.execute(
+                    select(IndexDaily).where(
+                        and_(IndexDaily.code == index_name, IndexDaily.date == target_date)
+                    )
+                ).scalar_one_or_none()
+                if existing:
+                    existing.close = close_price
+                    existing.pct_chg = pct_chg
+                else:
+                    session.add(IndexDaily(code=index_name, date=target_date, close=close_price, pct_chg=pct_chg))
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.debug(f"保存指数日线失败: {e}")
+
+    def get_index_returns(self, index_name: str = "上证指数", days: int = 120) -> pd.Series:
+        """获取指数收益率序列（供 Beta 计算），返回 pct_chg 的 Series"""
+        try:
+            sql = text("""
+                SELECT date, pct_chg FROM index_daily
+                WHERE code = :code ORDER BY date DESC LIMIT :limit
+            """)
+            with self.engine.connect() as conn:
+                df = pd.read_sql(sql, conn, params={"code": index_name, "limit": days})
+            if df.empty:
+                return pd.Series(dtype=float)
+            df = df.sort_values('date').reset_index(drop=True)
+            return df['pct_chg'].astype(float) / 100  # 百分比 -> 小数
+        except Exception:
+            return pd.Series(dtype=float)
 
     @staticmethod
     def _safe_json_dumps(data: Any) -> str:
