@@ -330,6 +330,18 @@ def main() -> int:
         if getattr(config, 'chip_schedule_time', None) and config.chip_schedule_time != config.schedule_time:
             scheduler.add_daily_job(config.chip_schedule_time, lambda: run_chip_only(config))
             logger.info(f"已注册每日筹码拉取任务，执行时间: {config.chip_schedule_time}")
+        # 4. 后台新闻抓取（每 2 小时，9:00-22:00 窗口内）
+        try:
+            from data_provider.news_fetcher import run_news_fetch_job
+            scheduler.add_periodic_job(
+                interval_hours=2,
+                task=lambda: run_news_fetch_job(config),
+                start_hour=9,
+                end_hour=22,
+                run_immediately=True,  # 启动时立即抓一次
+            )
+        except Exception as e:
+            logger.warning(f"新闻抓取任务注册失败（可忽略）: {e}")
         logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
         logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
         logger.info("按 Ctrl+C 退出")
@@ -386,7 +398,7 @@ def main() -> int:
             run_market_review(notifier=notifier, analyzer=analyzer, search_service=search_service)
             return 0
         
-        # 模式2: 定时任务（可同时注册：每日固定时间拉取筹码 + 每日分析/推送）
+        # 模式2: 定时任务（可同时注册：每日固定时间拉取筹码 + 每日分析/推送 + 后台新闻）
         if args.schedule or config.schedule_enabled:
             from src.scheduler import Scheduler
             scheduler = Scheduler(schedule_time=config.schedule_time)
@@ -398,6 +410,17 @@ def main() -> int:
             if getattr(config, 'chip_schedule_time', None) and config.chip_schedule_time != config.schedule_time:
                 scheduler.add_daily_job(config.chip_schedule_time, lambda: run_chip_only(config))
                 logger.info(f"已注册每日筹码拉取任务，执行时间: {config.chip_schedule_time}")
+            # 后台新闻抓取（每 2 小时）
+            try:
+                from data_provider.news_fetcher import run_news_fetch_job
+                scheduler.add_periodic_job(
+                    interval_hours=2,
+                    task=lambda: run_news_fetch_job(config),
+                    start_hour=9, end_hour=22,
+                    run_immediately=False,  # schedule 模式首次已跑分析，不重复抓新闻
+                )
+            except Exception as e:
+                logger.warning(f"新闻抓取任务注册失败: {e}")
             scheduler.run()
             return 0
         

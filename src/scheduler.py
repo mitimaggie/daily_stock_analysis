@@ -112,6 +112,33 @@ class Scheduler:
             self._safe_run_task_with(task)
         self.schedule.every().day.at(time_str).do(run_job)
         logger.info(f"已添加每日任务，执行时间: {time_str}")
+
+    def add_periodic_job(self, interval_hours: int, task: Callable,
+                         start_hour: int = 9, end_hour: int = 22,
+                         run_immediately: bool = True):
+        """
+        添加周期性任务（每 N 小时执行一次，仅在 start_hour ~ end_hour 之间触发）
+
+        Args:
+            interval_hours: 执行间隔（小时）
+            task: 要执行的任务函数（无参数）
+            start_hour: 每日允许执行的起始小时（含），默认 9
+            end_hour: 每日允许执行的结束小时（含），默认 22
+            run_immediately: 是否在注册后立即执行一次
+        """
+        def guarded_task():
+            hour = datetime.now().hour
+            if start_hour <= hour <= end_hour:
+                self._safe_run_task_with(task)
+            else:
+                logger.debug(f"周期任务跳过（当前 {hour}:xx 不在 {start_hour}-{end_hour} 窗口内）")
+
+        self.schedule.every(interval_hours).hours.do(guarded_task)
+        logger.info(f"已添加周期任务: 每 {interval_hours}h 执行，窗口 {start_hour}:00-{end_hour}:00")
+
+        if run_immediately:
+            logger.info("立即执行一次周期任务...")
+            self._safe_run_task_with(task)
     
     def _safe_run_task(self):
         """安全执行主任务（带异常捕获）"""

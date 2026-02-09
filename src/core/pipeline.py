@@ -179,15 +179,30 @@ class StockAnalysisPipeline:
         except Exception as e:
             return False, str(e), None, None
 
-    def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6, limit: int = 5) -> str:
-        """优先复用 news_intel 缓存，命中则减少外部搜索与 token。"""
+    def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6,
+                                  limit: int = 5, provider: str = None,
+                                  min_count: int = 1) -> str:
+        """
+        从 news_intel 缓存中获取新闻上下文。
+
+        Args:
+            code: 股票代码
+            stock_name: 股票名称（仅用于日志）
+            hours: 缓存时间窗口（小时）
+            limit: 最多返回条数
+            provider: 数据来源过滤（'akshare', 'perplexity', None=不限）
+            min_count: 最少命中条数，低于此数视为未命中
+
+        Returns:
+            格式化的新闻上下文字符串，未命中返回空字符串
+        """
         try:
-            items = self.storage.get_recent_news(code, days=1, limit=limit)
+            items = self.storage.get_recent_news(code, days=1, limit=limit, provider=provider)
             if not items:
                 return ""
             cutoff = datetime.now() - timedelta(hours=hours)
             fresh = [n for n in items if getattr(n, "fetched_at", None) and n.fetched_at >= cutoff]
-            if not fresh:
+            if len(fresh) < min_count:
                 return ""
             lines = []
             for i, n in enumerate(fresh[:limit]):
@@ -400,28 +415,56 @@ class StockAnalysisPipeline:
                 logger.info(f"[{code}] Dry-run 模式，跳过 AI 分析")
                 return AnalysisResult(code=code, name=stock_name, sentiment_score=50, trend_prediction="测试", operation_advice="观望", analysis_summary="Dry Run 测试", success=True)
 
-            # === 1. 搜索舆情 (增加随机延迟防封号) ===
+            # === 1. 三层舆情获取 ===
+            # 第 1 层: Akshare 免费新闻缓存 (后台定时抓取，24h 窗口，>=2 条命中)
+            # 第 2 层: Perplexity 缓存 (6h 窗口)
+            # 第 3 层: Perplexity 实时搜索 (最后手段)
             search_content = ""
             used_news_cache = False
+            news_source = ""
             fast_mode = getattr(self.config, 'fast_mode', False)
 
-            # 1) 优先复用 DB 缓存（命中则不外部搜索、不 sleep）
-            cached = self._get_cached_news_context(code, stock_name)
-            if cached:
-                search_content = cached
+            # 层 1: Akshare 免费新闻（后台已抓取入库）
+            akshare_news = self._get_cached_news_context(
+                code, stock_name, hours=24, limit=10, provider='akshare', min_count=2
+            )
+            if akshare_news:
+                search_content = akshare_news
                 used_news_cache = True
-                logger.info(f"♻️  [{stock_name}] 命中舆情缓存，跳过外部搜索")
-            # 2) 快速模式：即使无缓存也不搜索
-            elif fast_mode:
+                news_source = "akshare"
+                logger.info(f"📰 [{stock_name}] 命中 Akshare 新闻缓存，跳过外部搜索")
+
+            # 层 2: Perplexity 缓存（之前搜索过的结果）
+            if not search_content:
+                pplx_cache = self._get_cached_news_context(
+                    code, stock_name, hours=6, limit=5, provider='perplexity'
+                )
+                if pplx_cache:
+                    search_content = pplx_cache
+                    used_news_cache = True
+                    news_source = "perplexity_cache"
+                    logger.info(f"♻️  [{stock_name}] 命中 Perplexity 缓存，跳过外部搜索")
+
+            # 层 2.5: 不限 provider 的通用缓存（兼容旧数据）
+            if not search_content:
+                any_cache = self._get_cached_news_context(code, stock_name, hours=6, limit=5)
+                if any_cache:
+                    search_content = any_cache
+                    used_news_cache = True
+                    news_source = "cache_legacy"
+                    logger.info(f"♻️  [{stock_name}] 命中舆情缓存，跳过外部搜索")
+
+            # 快速模式：即使无缓存也不搜索
+            if not search_content and fast_mode:
                 logger.info(f"⚡ [{stock_name}] 快速模式，跳过外部搜索")
-                used_news_cache = True  # 强制走轻量模型
-            # 3) 无缓存再走外部搜索
-            elif self.search_service:
-                # 随机休眠 2.0 - 5.0 秒
+                used_news_cache = True
+
+            # 层 3: Perplexity 实时搜索（最后手段）
+            if not search_content and not fast_mode and self.search_service:
                 sleep_time = random.uniform(2.0, 5.0)
                 time.sleep(sleep_time)
-                
-                logger.info(f"🔎 [{stock_name}] 正在侦查舆情 (延迟 {sleep_time:.1f}s)...")
+
+                logger.info(f"🔎 [{stock_name}] 无缓存新闻，调用 Perplexity 搜索 (延迟 {sleep_time:.1f}s)...")
                 try:
                     if hasattr(self.search_service, 'search_comprehensive_intel'):
                         resp = self.search_service.search_comprehensive_intel(code, stock_name)
@@ -429,11 +472,11 @@ class StockAnalysisPipeline:
                         resp = self.search_service.search_stock_news(code, stock_name)
                     else:
                         resp = self.search_service.search(f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报")
-                        
+
                     if resp and getattr(resp, 'success', False):
                         search_content = resp.to_context()
+                        news_source = "perplexity_live"
                         query = f"{stock_name} ({code}) 综合分析 风险 业绩 行业"
-                        # 舆情落库，便于后续复用与审计
                         if getattr(resp, 'results', None):
                             try:
                                 self.storage.save_news_intel(
@@ -442,8 +485,16 @@ class StockAnalysisPipeline:
                                 )
                             except Exception as e:
                                 logger.debug(f"[{stock_name}] 舆情落库跳过: {e}")
+                        else:
+                            logger.warning(f"⚠️  [{stock_name}] Perplexity 返回空结果")
+                    else:
+                        reason = getattr(resp, 'error', '未知') if resp else '响应为空'
+                        logger.warning(f"⚠️  [{stock_name}] Perplexity 搜索失败 (原因: {reason})")
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 搜索服务异常: {e}")
+
+            if not search_content and not fast_mode:
+                logger.info(f"📭 [{stock_name}] 无舆情数据，将仅基于技术面+基本面分析")
 
             # === 2. 获取大盘环境（前置滤网：大盘定仓位上限，个股逻辑定买卖方向）===
             # 盘中模式：若大盘快照由上层传入但市场仍在交易，刷新一次以获取最新数据

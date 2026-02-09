@@ -375,15 +375,27 @@ class DatabaseManager:
                 logger.error(f"保存新闻情报失败: {e}")
         return saved_count
 
-    def get_recent_news(self, code: str, days: int = 7, limit: int = 20) -> List[NewsIntel]:
+    def get_recent_news(self, code: str, days: int = 7, limit: int = 20,
+                        provider: Optional[str] = None) -> List[NewsIntel]:
+        """
+        获取指定股票的近期新闻
+
+        Args:
+            code: 股票代码
+            days: 回溯天数
+            limit: 最多返回条数
+            provider: 可选，按数据来源过滤（如 'akshare', 'perplexity'）
+        """
         cutoff_date = datetime.now() - timedelta(days=days)
         with self.get_session() as session:
-            results = session.execute(
+            stmt = (
                 select(NewsIntel)
                 .where(and_(NewsIntel.code == code, NewsIntel.fetched_at >= cutoff_date))
-                .order_by(desc(NewsIntel.fetched_at))
-                .limit(limit)
-            ).scalars().all()
+            )
+            if provider:
+                stmt = stmt.where(NewsIntel.provider == provider)
+            stmt = stmt.order_by(desc(NewsIntel.fetched_at)).limit(limit)
+            results = session.execute(stmt).scalars().all()
             return list(results)
 
     def get_news_intel_by_query_id(self, query_id: str, limit: int = 20) -> List[NewsIntel]:
