@@ -24,21 +24,28 @@ class TrendStatus(Enum):
     STRONG_BEAR = "强势空头"
 
 class VolumeStatus(Enum):
-    AMPLIFY = "放量"
+    HEAVY_VOLUME_UP = "放量上涨"       # 量价齐升
+    HEAVY_VOLUME_DOWN = "放量下跌"     # 放量杀跌
+    SHRINK_VOLUME_UP = "缩量上涨"      # 无量上涨
+    SHRINK_VOLUME_DOWN = "缩量回调"    # 缩量回调（好）
     NORMAL = "量能正常"
-    SHRINK = "缩量"
 
 class MACDStatus(Enum):
-    GOLDEN_CROSS = "金叉"
-    DEATH_CROSS = "死叉"
-    BULLISH = "多头"
-    BEARISH = "空头"
+    GOLDEN_CROSS_ZERO = "零轴上金叉"   # DIF上穿DEA，且在零轴上方（最强买入）
+    GOLDEN_CROSS = "金叉"              # DIF上穿DEA
+    CROSSING_UP = "上穿零轴"           # DIF上穿零轴，趋势转强
+    BULLISH = "多头"                   # DIF>DEA>0
     NEUTRAL = "中性"
+    BEARISH = "空头"                   # DIF<DEA<0
+    CROSSING_DOWN = "下穿零轴"         # DIF下穿零轴，趋势转弱
+    DEATH_CROSS = "死叉"               # DIF下穿DEA
 
 class RSIStatus(Enum):
-    OVERSOLD = "超卖"
-    NEUTRAL = "中性"
-    OVERBOUGHT = "超买"
+    OVERBOUGHT = "超买"        # RSI > 70
+    STRONG_BUY = "强势"        # 50 < RSI < 70
+    NEUTRAL = "中性"           # 40 <= RSI <= 60
+    WEAK = "弱势"              # 30 < RSI < 40
+    OVERSOLD = "超卖"          # RSI < 30
 
 class BuySignal(Enum):
     STRONG_BUY = "强烈买入"
@@ -61,11 +68,17 @@ class TrendAnalysisResult:
     advice_for_empty: str = ""    # 给空仓者的建议
     advice_for_holding: str = ""  # 给持仓者的建议
     
+    # 趋势强度 (0-100, 基于均线间距扩张/收缩)
+    trend_strength: float = 50.0
+    ma_alignment: str = ""           # 均线排列描述
+
     # 基础数据
     ma5: float = 0.0
     ma10: float = 0.0
     ma20: float = 0.0
     bias_ma5: float = 0.0
+    bias_ma10: float = 0.0
+    bias_ma20: float = 0.0
     volume_ratio: float = 0.0
     volume_trend: str = "量能正常"
     
@@ -78,13 +91,32 @@ class TrendAnalysisResult:
     # 扩展指标（波动率/长周期/超买超卖）
     atr14: float = 0.0
     ma60: float = 0.0
-    rsi: float = 50.0
+    # 多周期 RSI (短/中/长)
+    rsi_6: float = 50.0
+    rsi_12: float = 50.0
+    rsi_24: float = 50.0
+    rsi: float = 50.0          # 保留兼容（= rsi_12）
     rsi_signal: str = ""
+    # MACD 数值
+    macd_dif: float = 0.0
+    macd_dea: float = 0.0
+    macd_bar: float = 0.0
     # 量化锚点（供 LLM 参考，避免拍脑袋）
     stop_loss_anchor: float = 0.0
     ideal_buy_anchor: float = 0.0
 
-    # 枚举化状态（上游风格）
+    # Bollinger Bands
+    bb_upper: float = 0.0
+    bb_lower: float = 0.0
+    bb_width: float = 0.0       # (upper - lower) / middle, 衡量波动率
+    bb_pct_b: float = 0.5       # (close - lower) / (upper - lower), 价格在带内位置
+
+    # 风险指标
+    volatility_20d: float = 0.0  # 20日年化波动率
+    beta_vs_index: float = 1.0   # 相对大盘 Beta
+    max_drawdown_60d: float = 0.0  # 近60日最大回撤(%)
+
+    # 枚举化状态
     volume_status: VolumeStatus = VolumeStatus.NORMAL
     macd_status: MACDStatus = MACDStatus.NEUTRAL
     rsi_status: RSIStatus = RSIStatus.NEUTRAL
@@ -102,15 +134,24 @@ class TrendAnalysisResult:
             "code": self.code,
             "current_price": self.current_price,
             "trend_status": self.trend_status.value,
+            "trend_strength": self.trend_strength,
+            "ma_alignment": self.ma_alignment,
             "buy_signal": self.buy_signal.value,
             "signal_score": self.signal_score,
             "score_breakdown": self.score_breakdown,
             "volume_status": self.volume_status.value,
             "macd_status": self.macd_status.value,
+            "macd_dif": self.macd_dif, "macd_dea": self.macd_dea, "macd_bar": self.macd_bar,
             "rsi_status": self.rsi_status.value,
             "ma5": self.ma5, "ma10": self.ma10, "ma20": self.ma20, "ma60": self.ma60,
-            "bias_ma5": self.bias_ma5, "volume_ratio": self.volume_ratio,
-            "atr14": self.atr14, "rsi": self.rsi,
+            "bias_ma5": self.bias_ma5, "bias_ma10": self.bias_ma10, "bias_ma20": self.bias_ma20,
+            "volume_ratio": self.volume_ratio,
+            "atr14": self.atr14,
+            "rsi_6": self.rsi_6, "rsi_12": self.rsi_12, "rsi_24": self.rsi_24,
+            "bb_upper": self.bb_upper, "bb_lower": self.bb_lower,
+            "bb_width": self.bb_width, "bb_pct_b": self.bb_pct_b,
+            "volatility_20d": self.volatility_20d, "beta_vs_index": self.beta_vs_index,
+            "max_drawdown_60d": self.max_drawdown_60d,
             "stop_loss_anchor": self.stop_loss_anchor,
             "ideal_buy_anchor": self.ideal_buy_anchor,
             "support_levels": self.support_levels,
@@ -141,78 +182,179 @@ class StockTrendAnalyzer:
             result.ma20 = float(latest['MA20'])
             result.ma60 = float(latest.get('MA60', 0) or 0)
             result.atr14 = float(latest.get('ATR14', 0) or 0)
-            result.rsi = float(latest.get('RSI', 50) or 50)
-            if result.rsi > 70:
-                result.rsi_signal = "超买"
-            elif result.rsi < 30:
-                result.rsi_signal = "超卖"
-            else:
-                result.rsi_signal = ""
 
+            # --- 多周期 RSI ---
+            result.rsi_6 = float(latest.get(f'RSI_{self.RSI_SHORT}', 50) or 50)
+            result.rsi_12 = float(latest.get(f'RSI_{self.RSI_MID}', 50) or 50)
+            result.rsi_24 = float(latest.get(f'RSI_{self.RSI_LONG}', 50) or 50)
+            result.rsi = result.rsi_12  # 向后兼容
+
+            # --- MACD 数值 ---
+            result.macd_dif = float(latest['MACD_DIF'])
+            result.macd_dea = float(latest['MACD_DEA'])
+            result.macd_bar = float(latest.get('MACD_BAR', 0) or 0)
+
+            # --- Bollinger Bands ---
+            result.bb_upper = round(float(latest.get('BB_UPPER', 0) or 0), 2)
+            result.bb_lower = round(float(latest.get('BB_LOWER', 0) or 0), 2)
+            result.bb_width = round(float(latest.get('BB_WIDTH', 0) or 0), 4)
+            result.bb_pct_b = round(float(latest.get('BB_PCT_B', 0.5) or 0.5), 4)
+
+            # --- 20日年化波动率 ---
+            if len(df) >= 21:
+                daily_ret = df['close'].pct_change().dropna().tail(20)
+                result.volatility_20d = round(float(daily_ret.std() * np.sqrt(252) * 100), 2)
+
+            # --- Beta vs 大盘 (使用 pct_chg 如有) ---
+            # Beta 需要大盘收益率序列；若 pipeline 未注入则默认 1.0
+            # 此处先用个股波动率 / 市场典型波动率做粗估 (后续可由 pipeline 传入大盘数据)
+            # 保留默认 1.0，等 pipeline 层注入
+
+            # --- 近60日最大回撤 ---
+            if len(df) >= 60:
+                high_60d = float(df['high'].tail(60).max())
+                if high_60d > 0:
+                    result.max_drawdown_60d = round((result.current_price - high_60d) / high_60d * 100, 2)
+
+            # --- 止损/买点锚 ---
             sl_atr = result.current_price - 1.5 * result.atr14 if result.atr14 > 0 else 0
             sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else 0
             result.stop_loss_anchor = round(min(sl_atr, sl_ma20) if (sl_atr > 0 and sl_ma20 > 0) else (sl_atr or sl_ma20 or 0), 2)
             result.ideal_buy_anchor = round(result.ma5 if result.ma5 > 0 else result.ma10, 2)
 
-            # 量比处理
+            # =============== 1. 量比 & VolumeStatus (5-state, price-volume) ===============
             vol_ma5 = df['volume'].iloc[-6:-1].mean()
             result.volume_ratio = float(latest['volume'] / vol_ma5) if vol_ma5 > 0 else 1.0
             if 'volume_ratio' in latest and latest['volume_ratio'] > 0:
                 result.volume_ratio = float(latest['volume_ratio'])
-            # VolumeStatus
+            prev_close_price = float(prev['close'])
+            price_change_pct = (result.current_price - prev_close_price) / prev_close_price * 100 if prev_close_price > 0 else 0
             vr = result.volume_ratio
-            result.volume_status = VolumeStatus.AMPLIFY if vr >= 1.5 else (VolumeStatus.SHRINK if vr < 0.8 else VolumeStatus.NORMAL)
-            result.volume_trend = result.volume_status.value
+            if vr >= self.VOLUME_HEAVY_RATIO:
+                if price_change_pct > 0:
+                    result.volume_status = VolumeStatus.HEAVY_VOLUME_UP
+                    result.volume_trend = "放量上涨，多头力量强劲"
+                else:
+                    result.volume_status = VolumeStatus.HEAVY_VOLUME_DOWN
+                    result.volume_trend = "放量下跌，注意风险"
+            elif vr <= self.VOLUME_SHRINK_RATIO:
+                if price_change_pct > 0:
+                    result.volume_status = VolumeStatus.SHRINK_VOLUME_UP
+                    result.volume_trend = "缩量上涨，上攻动能不足"
+                else:
+                    result.volume_status = VolumeStatus.SHRINK_VOLUME_DOWN
+                    result.volume_trend = "缩量回调，洗盘特征明显"
+            else:
+                result.volume_status = VolumeStatus.NORMAL
+                result.volume_trend = "量能正常"
 
-            # MACDStatus
-            dif, dea = latest['MACD_DIF'], latest['MACD_DEA']
-            pdif, pdea = prev['MACD_DIF'], prev['MACD_DEA']
-            if dif > dea and pdif <= pdea:
+            # =============== 2. MACD 7-state (含零轴交叉) ===============
+            dif, dea = result.macd_dif, result.macd_dea
+            pdif, pdea = float(prev['MACD_DIF']), float(prev['MACD_DEA'])
+            is_golden_cross = (pdif - pdea) <= 0 and (dif - dea) > 0
+            is_death_cross = (pdif - pdea) >= 0 and (dif - dea) < 0
+            is_crossing_up = pdif <= 0 and dif > 0
+            is_crossing_down = pdif >= 0 and dif < 0
+
+            if is_golden_cross and dif > 0:
+                result.macd_status = MACDStatus.GOLDEN_CROSS_ZERO
+                result.macd_signal = "零轴上金叉，强烈买入信号"
+            elif is_crossing_up:
+                result.macd_status = MACDStatus.CROSSING_UP
+                result.macd_signal = "DIF上穿零轴，趋势转强"
+            elif is_golden_cross:
                 result.macd_status = MACDStatus.GOLDEN_CROSS
-                result.macd_signal = "金叉"
-            elif dif < dea and pdif >= pdea:
+                result.macd_signal = "金叉，趋势向上"
+            elif is_death_cross:
                 result.macd_status = MACDStatus.DEATH_CROSS
-                result.macd_signal = "死叉"
-            elif dif > dea:
+                result.macd_signal = "死叉，趋势向下"
+            elif is_crossing_down:
+                result.macd_status = MACDStatus.CROSSING_DOWN
+                result.macd_signal = "DIF下穿零轴，趋势转弱"
+            elif dif > 0 and dea > 0:
                 result.macd_status = MACDStatus.BULLISH
-            elif dif < dea:
+                result.macd_signal = "多头排列"
+            elif dif < 0 and dea < 0:
                 result.macd_status = MACDStatus.BEARISH
+                result.macd_signal = "空头排列"
             else:
                 result.macd_status = MACDStatus.NEUTRAL
+                result.macd_signal = "MACD中性"
 
-            # RSIStatus
-            if result.rsi > 70:
+            # =============== 3. RSI 5-level (基于 RSI_12 中期) ===============
+            rsi_mid = result.rsi_12
+            if rsi_mid > 70:
                 result.rsi_status = RSIStatus.OVERBOUGHT
-                result.rsi_signal = "超买"
-            elif result.rsi < 30:
-                result.rsi_status = RSIStatus.OVERSOLD
-                result.rsi_signal = "超卖"
-            else:
+                result.rsi_signal = f"RSI超买({rsi_mid:.1f}>70)，短期回调风险高"
+            elif rsi_mid > 60:
+                result.rsi_status = RSIStatus.STRONG_BUY
+                result.rsi_signal = f"RSI强势({rsi_mid:.1f})，多头力量充足"
+            elif rsi_mid >= 40:
                 result.rsi_status = RSIStatus.NEUTRAL
-                result.rsi_signal = ""
+                result.rsi_signal = f"RSI中性({rsi_mid:.1f})，震荡整理"
+            elif rsi_mid >= 30:
+                result.rsi_status = RSIStatus.WEAK
+                result.rsi_signal = f"RSI弱势({rsi_mid:.1f})，关注反弹"
+            else:
+                result.rsi_status = RSIStatus.OVERSOLD
+                result.rsi_signal = f"RSI超卖({rsi_mid:.1f}<30)，反弹机会大"
 
             # 支撑/阻力位（近 20 日高低点 + 均线）
             result.support_levels, result.resistance_levels = self._compute_levels(df, result)
 
-            # 1. 趋势判定
+            # =============== 4. 趋势判定 (含 spread expansion) ===============
             ma5, ma10, ma20 = result.ma5, result.ma10, result.ma20
-            trend_score = 15
+            trend_score = 12
             if ma5 > ma10 > ma20:
-                result.trend_status = TrendStatus.BULL
-                trend_score = 22
-                if ma20 > 0 and (ma5 - ma20) / ma20 > 0.05:
+                # 检查均线间距是否在扩大 (趋势强度)
+                prev5 = df.iloc[-5] if len(df) >= 5 else prev
+                prev_spread = (float(prev5['MA5']) - float(prev5['MA20'])) / float(prev5['MA20']) * 100 if float(prev5['MA20']) > 0 else 0
+                curr_spread = (ma5 - ma20) / ma20 * 100 if ma20 > 0 else 0
+                if curr_spread > prev_spread and curr_spread > 5:
                     result.trend_status = TrendStatus.STRONG_BULL
+                    result.ma_alignment = "强势多头排列，均线发散上行"
+                    result.trend_strength = 90
                     trend_score = 30
+                else:
+                    result.trend_status = TrendStatus.BULL
+                    result.ma_alignment = "多头排列 MA5>MA10>MA20"
+                    result.trend_strength = 75
+                    trend_score = 26
+            elif ma5 > ma10 and ma10 <= ma20:
+                result.trend_status = TrendStatus.WEAK_BULL
+                result.ma_alignment = "弱势多头，MA5>MA10 但 MA10<=MA20"
+                result.trend_strength = 55
+                trend_score = 18
             elif ma5 < ma10 < ma20:
-                result.trend_status = TrendStatus.BEAR
-                trend_score = 5
+                prev5 = df.iloc[-5] if len(df) >= 5 else prev
+                prev_spread = (float(prev5['MA20']) - float(prev5['MA5'])) / float(prev5['MA5']) * 100 if float(prev5['MA5']) > 0 else 0
+                curr_spread = (ma20 - ma5) / ma5 * 100 if ma5 > 0 else 0
+                if curr_spread > prev_spread and curr_spread > 5:
+                    result.trend_status = TrendStatus.STRONG_BEAR
+                    result.ma_alignment = "强势空头排列，均线发散下行"
+                    result.trend_strength = 10
+                    trend_score = 0
+                else:
+                    result.trend_status = TrendStatus.BEAR
+                    result.ma_alignment = "空头排列 MA5<MA10<MA20"
+                    result.trend_strength = 25
+                    trend_score = 4
+            elif ma5 < ma10 and ma10 >= ma20:
+                result.trend_status = TrendStatus.WEAK_BEAR
+                result.ma_alignment = "弱势空头，MA5<MA10 但 MA10>=MA20"
+                result.trend_strength = 40
+                trend_score = 8
             else:
                 result.trend_status = TrendStatus.CONSOLIDATION
-                trend_score = 15
+                result.ma_alignment = "均线缠绕，趋势不明"
+                result.trend_strength = 50
+                trend_score = 12
 
-            # 2. 乖离率 (bias 0-20)
-            bias = (result.current_price - ma5) / ma5 * 100 if ma5 > 0 else 0
-            result.bias_ma5 = bias
+            # =============== 5. 多周期乖离率 ===============
+            result.bias_ma5 = (result.current_price - ma5) / ma5 * 100 if ma5 > 0 else 0
+            result.bias_ma10 = (result.current_price - ma10) / ma10 * 100 if ma10 > 0 else 0
+            result.bias_ma20 = (result.current_price - ma20) / ma20 * 100 if ma20 > 0 else 0
+            bias = result.bias_ma5
             bias_score = 10
             if bias > 8:
                 bias_score = 0
@@ -220,23 +362,26 @@ class StockTrendAnalyzer:
                 bias_score = 5
             elif 0 <= bias <= 3 and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
                 bias_score = 18
-            elif -5 <= bias < 0:
-                bias_score = 18 if result.volume_ratio < 0.8 else 15
+            elif -3 <= bias < 0:
+                bias_score = 20  # 回踩MA5，最佳买点区
+            elif -5 <= bias < -3:
+                bias_score = 16
             elif -10 <= bias < -5:
                 bias_score = 12 if result.trend_status != TrendStatus.BEAR else 5
             elif bias < -10:
                 bias_score = 8 if result.trend_status != TrendStatus.BEAR else 2
 
-            # 3. 量能 (volume 0-15)
-            vol_score = 8
-            if result.volume_status == VolumeStatus.AMPLIFY and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
-                vol_score = 15
-            elif result.volume_status == VolumeStatus.SHRINK and bias < 0 and result.trend_status in [TrendStatus.BULL]:
-                vol_score = 12  # 缩量回调可视为洗盘
-            elif result.volume_status == VolumeStatus.SHRINK and result.trend_status == TrendStatus.BEAR:
-                vol_score = 3
+            # =============== 6. 量能评分 (0-15) ===============
+            vol_scores = {
+                VolumeStatus.SHRINK_VOLUME_DOWN: 15,  # 缩量回调最佳
+                VolumeStatus.HEAVY_VOLUME_UP: 12,     # 放量上涨次之
+                VolumeStatus.NORMAL: 10,
+                VolumeStatus.SHRINK_VOLUME_UP: 6,     # 无量上涨较差
+                VolumeStatus.HEAVY_VOLUME_DOWN: 0,    # 放量下跌最差
+            }
+            vol_score = vol_scores.get(result.volume_status, 8)
 
-            # 4. 支撑接近度 (support 0-10)：现价距支撑越近越好
+            # =============== 7. 支撑接近度 (0-10) ===============
             support_score = 5
             if result.support_levels and result.current_price > 0:
                 nearest = min((s for s in result.support_levels if s > 0 and s < result.current_price), default=0) or result.ma20
@@ -247,29 +392,32 @@ class StockTrendAnalyzer:
                     elif dist_pct <= 5:
                         support_score = 7
 
-            # 5. MACD (0-15)
-            macd_score = 8
-            if result.macd_status == MACDStatus.GOLDEN_CROSS:
-                macd_score = 15
-            elif result.macd_status == MACDStatus.BULLISH:
-                macd_score = 12
-            elif result.macd_status == MACDStatus.DEATH_CROSS:
-                macd_score = 0
-            elif result.macd_status == MACDStatus.BEARISH:
-                macd_score = 3
+            # =============== 8. MACD 评分 (0-15) ===============
+            macd_scores = {
+                MACDStatus.GOLDEN_CROSS_ZERO: 15,
+                MACDStatus.GOLDEN_CROSS: 12,
+                MACDStatus.CROSSING_UP: 10,
+                MACDStatus.BULLISH: 8,
+                MACDStatus.NEUTRAL: 5,
+                MACDStatus.BEARISH: 2,
+                MACDStatus.CROSSING_DOWN: 0,
+                MACDStatus.DEATH_CROSS: 0,
+            }
+            macd_score = macd_scores.get(result.macd_status, 5)
             # KDJ 金叉加分（在 MACD 分内体现）
             if latest['K'] < 40 and latest['K'] > latest['D'] and prev['K'] <= prev['D']:
                 result.kdj_signal = "金叉"
                 macd_score = min(15, macd_score + 3)
 
-            # 6. RSI (0-10)
-            rsi_score = 5
-            if result.rsi_status == RSIStatus.OVERSOLD:
-                rsi_score = 8 if result.trend_status != TrendStatus.BEAR else 4
-            elif result.rsi_status == RSIStatus.OVERBOUGHT:
-                rsi_score = 2
-            elif 40 <= result.rsi <= 60:
-                rsi_score = 7
+            # =============== 9. RSI 评分 (0-10) ===============
+            rsi_scores = {
+                RSIStatus.OVERSOLD: 10,
+                RSIStatus.STRONG_BUY: 8,
+                RSIStatus.NEUTRAL: 5,
+                RSIStatus.WEAK: 3,
+                RSIStatus.OVERBOUGHT: 0,
+            }
+            rsi_score = rsi_scores.get(result.rsi_status, 5)
 
             result.score_breakdown = {
                 "trend": min(30, trend_score),
@@ -370,48 +518,65 @@ class StockTrendAnalyzer:
             res.advice_for_empty = "⚖️ 趋势不明，建议观望，若突破箱体再跟随"
             res.advice_for_holding = "⚖️ 做T为主，高抛低吸，降低成本"
 
+    # RSI 参数
+    RSI_SHORT = 6
+    RSI_MID = 12
+    RSI_LONG = 24
+    # 量能阈值
+    VOLUME_SHRINK_RATIO = 0.7
+    VOLUME_HEAVY_RATIO = 1.5
+
     def _calc_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+        # === 均线 ===
         df['MA5'] = df['close'].rolling(window=5).mean()
         df['MA10'] = df['close'].rolling(window=10).mean()
         df['MA20'] = df['close'].rolling(window=20).mean()
         df['MA60'] = df['close'].rolling(window=60).mean()
 
+        # === MACD (12/26/9) ===
         ema12 = df['close'].ewm(span=12, adjust=False).mean()
         ema26 = df['close'].ewm(span=26, adjust=False).mean()
         df['MACD_DIF'] = ema12 - ema26
         df['MACD_DEA'] = df['MACD_DIF'].ewm(span=9, adjust=False).mean()
+        df['MACD_BAR'] = (df['MACD_DIF'] - df['MACD_DEA']) * 2
 
+        # === KDJ ===
         low_min = df['low'].rolling(window=9).min()
         high_max = df['high'].rolling(window=9).max()
         rsv = (df['close'] - low_min) / (high_max - low_min) * 100
         df['K'] = rsv.ewm(com=2, adjust=False).mean()
         df['D'] = df['K'].ewm(com=2, adjust=False).mean()
 
+        # === ATR(14) ===
         tr = np.maximum(df['high'] - df['low'], np.maximum(abs(df['high'] - df['close'].shift(1)), abs(df['low'] - df['close'].shift(1))))
         df['ATR14'] = tr.rolling(window=14).mean()
 
+        # === 多周期 RSI (6/12/24) ===
         delta = df['close'].diff()
-        gain = delta.where(delta > 0, 0.0)
-        loss = (-delta).where(delta < 0, 0.0)
-        avg_gain = gain.ewm(span=14, adjust=False).mean()
-        avg_loss = loss.ewm(span=14, adjust=False).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        df['RSI'] = 100 - (100 / (1 + rs))
-        df['RSI'] = df['RSI'].fillna(50)
+        for period in [self.RSI_SHORT, self.RSI_MID, self.RSI_LONG]:
+            gain = delta.where(delta > 0, 0.0)
+            loss_s = (-delta).where(delta < 0, 0.0)
+            avg_gain = gain.rolling(window=period).mean()
+            avg_loss = loss_s.rolling(window=period).mean()
+            rs = avg_gain / avg_loss.replace(0, np.nan)
+            rsi = 100 - (100 / (1 + rs))
+            df[f'RSI_{period}'] = rsi.fillna(50)
+        # 保留向后兼容的 RSI 列 (= RSI_12)
+        df['RSI'] = df[f'RSI_{self.RSI_MID}']
+
+        # === Bollinger Bands (20, 2) ===
+        bb_mid = df['MA20']
+        bb_std = df['close'].rolling(window=20).std()
+        df['BB_UPPER'] = bb_mid + 2 * bb_std
+        df['BB_LOWER'] = bb_mid - 2 * bb_std
+        df['BB_WIDTH'] = ((df['BB_UPPER'] - df['BB_LOWER']) / bb_mid).replace([np.inf, -np.inf], 0)
+        band_range = (df['BB_UPPER'] - df['BB_LOWER']).replace(0, np.nan)
+        df['BB_PCT_B'] = ((df['close'] - df['BB_LOWER']) / band_range).fillna(0.5)
 
         return df.fillna(0)
 
     def format_analysis(self, result: TrendAnalysisResult) -> str:
-        rsi_line = f" | RSI {result.rsi:.0f}{'(' + result.rsi_signal + ')' if result.rsi_signal else ''}" if result.rsi else ""
-        anchor_line = ""
-        if result.stop_loss_anchor > 0 or result.ideal_buy_anchor > 0:
-            anchor_line = f"""
-【量化锚点 (battle_plan 须参考)】
-● 建议止损参考: {result.stop_loss_anchor:.2f} (现价-1.5*ATR 与 MA20*0.98 取低，stop_loss 不得偏离过远)
-● 理想买点参考: {result.ideal_buy_anchor:.2f} (MA5/MA10 支撑，ideal_buy 可微调)
-● ATR14: {result.atr14:.2f} | MA60: {result.ma60:.2f}
-"""
         breakdown = result.score_breakdown
         breakdown_str = ""
         if breakdown:
@@ -421,18 +586,44 @@ class StockTrendAnalyzer:
         if result.support_levels or result.resistance_levels:
             sup = ",".join(f"{x:.2f}" for x in result.support_levels[:3]) if result.support_levels else "无"
             res = ",".join(f"{x:.2f}" for x in result.resistance_levels[:3]) if result.resistance_levels else "无"
-            levels_str = f"""
-【支撑/阻力】支撑: {sup} | 阻力: {res}
-"""
+            levels_str = f"\n【支撑/阻力】支撑: {sup} | 阻力: {res}"
+
+        anchor_line = ""
+        if result.stop_loss_anchor > 0 or result.ideal_buy_anchor > 0:
+            anchor_line = f"""
+【量化锚点 (battle_plan 须参考)】
+● 建议止损参考: {result.stop_loss_anchor:.2f} (现价-1.5*ATR 与 MA20*0.98 取低，stop_loss 不得偏离过远)
+● 理想买点参考: {result.ideal_buy_anchor:.2f} (MA5/MA10 支撑，ideal_buy 可微调)
+● ATR14: {result.atr14:.2f} | MA60: {result.ma60:.2f}"""
+
+        # 布林带
+        bb_str = ""
+        if result.bb_upper > 0:
+            bb_str = f"\n● 布林带: 上轨{result.bb_upper:.2f} 下轨{result.bb_lower:.2f} | 带宽{result.bb_width:.4f} | %B={result.bb_pct_b:.2f}"
+
+        # 风险指标
+        risk_str = ""
+        risk_parts = []
+        if result.volatility_20d > 0:
+            risk_parts.append(f"20日年化波动率{result.volatility_20d:.1f}%")
+        if result.max_drawdown_60d != 0:
+            risk_parts.append(f"60日最大回撤{result.max_drawdown_60d:.1f}%")
+        if risk_parts:
+            risk_str = "\n● 风险: " + " | ".join(risk_parts)
+
         return f"""
 【量化技术报告】
 ---------------------------
 ● 综合评分: {result.signal_score}{breakdown_str} ({result.buy_signal.value})
-● 趋势状态: {result.trend_status.value} | 量能: {result.volume_status.value} | MACD: {result.macd_status.value} | RSI: {result.rsi_status.value}
-● 关键数据: 现价{result.current_price:.2f} | MA5乖离率 {result.bias_ma5:.2f}% | 量比 {result.volume_ratio:.2f}{rsi_line}
-{levels_str}
+● 趋势状态: {result.trend_status.value} (强度{result.trend_strength:.0f}) | {result.ma_alignment}
+● 量能: {result.volume_status.value} ({result.volume_trend}) | 量比 {result.volume_ratio:.2f}
+● MACD: {result.macd_status.value} ({result.macd_signal}) | DIF={result.macd_dif:.4f} DEA={result.macd_dea:.4f}
+● RSI: {result.rsi_status.value} | RSI6={result.rsi_6:.1f} RSI12={result.rsi_12:.1f} RSI24={result.rsi_24:.1f} | {result.rsi_signal}
+● 关键数据: 现价{result.current_price:.2f} | 乖离MA5={result.bias_ma5:.2f}% MA10={result.bias_ma10:.2f}% MA20={result.bias_ma20:.2f}%{bb_str}{risk_str}{levels_str}
+
 【技术面操作指引 (硬规则)】
 👤 针对空仓者: {result.advice_for_empty}
 👥 针对持仓者: {result.advice_for_holding}
-{anchor_line}---------------------------
+{anchor_line}
+---------------------------
 """

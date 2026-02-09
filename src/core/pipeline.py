@@ -43,16 +43,40 @@ def _load_market_monitor():
 market_monitor = _load_market_monitor()
 
 
-def is_market_intraday() -> bool:
-    """判断当前是否为 A 股盘中（9:30-11:30, 13:00-15:00，含午休）"""
+class MarketPhase:
+    """A 股市场阶段，盘中分析时需区分"""
+    PRE_MARKET = "pre_market"          # 盘前 (< 9:30)
+    MORNING_SESSION = "morning"        # 上午交易 (9:30-11:30)
+    LUNCH_BREAK = "lunch_break"        # 午休 (11:30-13:00)，价格冻结
+    AFTERNOON_SESSION = "afternoon"    # 下午交易 (13:00-15:00)
+    POST_MARKET = "post_market"        # 盘后 (>= 15:00)
+
+
+def get_market_phase() -> str:
+    """返回当前 A 股市场阶段"""
     now = datetime.now()
-    if now.hour < 9:
-        return False
-    if now.hour >= 15:
-        return False
-    if now.hour == 9 and now.minute < 30:
-        return False
-    return True
+    t = now.hour * 60 + now.minute  # 转分钟方便比较
+    if t < 9 * 60 + 30:
+        return MarketPhase.PRE_MARKET
+    if t < 11 * 60 + 30:
+        return MarketPhase.MORNING_SESSION
+    if t < 13 * 60:
+        return MarketPhase.LUNCH_BREAK
+    if t < 15 * 60:
+        return MarketPhase.AFTERNOON_SESSION
+    return MarketPhase.POST_MARKET
+
+
+def is_market_intraday() -> bool:
+    """判断当前是否为 A 股盘中（含午休，因为尚未收盘）"""
+    phase = get_market_phase()
+    return phase in (MarketPhase.MORNING_SESSION, MarketPhase.LUNCH_BREAK, MarketPhase.AFTERNOON_SESSION)
+
+
+def is_market_trading() -> bool:
+    """判断当前是否正在交易（不含午休）"""
+    phase = get_market_phase()
+    return phase in (MarketPhase.MORNING_SESSION, MarketPhase.AFTERNOON_SESSION)
 
 
 # === 内部模块导入 ===
@@ -227,12 +251,14 @@ class StockAnalysisPipeline:
             else:
                 chip_note = "暂不可用（接口失败或未拉取）"
         
-        # F10 基本面数据
+        # F10 基本面数据（快速模式跳过，日内不变，用缓存即可）
         fundamental_data = {}
-        try:
-            fundamental_data = get_fundamental_data(code)
-        except Exception as e:
-            pass
+        fast_mode = getattr(self.config, 'fast_mode', False)
+        if not fast_mode:
+            try:
+                fundamental_data = get_fundamental_data(code)
+            except Exception as e:
+                pass
         # 补充估值：从实时行情注入 PE/PB/总市值（供基本面判断贵/便宜）
         if quote:
             val = fundamental_data.setdefault('valuation', {}) or {}
@@ -244,6 +270,18 @@ class StockAnalysisPipeline:
                 val['pb'] = quote.pb_ratio
             if getattr(quote, 'total_mv', None) is not None:
                 val['total_mv'] = quote.total_mv
+
+            # PEG = PE / 净利润增速（此处两者都已可用，比 fundamental_fetcher 里更可靠）
+            if 'peg' not in val:
+                try:
+                    pe = val.get('pe')
+                    growth_str = fundamental_data.get('financial', {}).get('net_profit_growth', 'N/A')
+                    if pe and isinstance(pe, (int, float)) and pe > 0 and growth_str not in ('N/A', '', '0', None):
+                        growth_val = float(str(growth_str).replace('%', ''))
+                        if growth_val > 0:
+                            val['peg'] = round(pe / growth_val, 2)
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
 
         # 板块相对强弱
         sector_context = None
@@ -292,6 +330,8 @@ class StockAnalysisPipeline:
             'history_summary': history_summary,
             'sector_context': sector_context,
             'is_intraday': is_market_intraday(),
+            'market_phase': get_market_phase(),
+            'analysis_time': datetime.now().strftime('%H:%M'),
         }
         context = self._enhance_context(context)
         return context
@@ -328,13 +368,19 @@ class StockAnalysisPipeline:
             # === 1. 搜索舆情 (增加随机延迟防封号) ===
             search_content = ""
             used_news_cache = False
+            fast_mode = getattr(self.config, 'fast_mode', False)
+
             # 1) 优先复用 DB 缓存（命中则不外部搜索、不 sleep）
             cached = self._get_cached_news_context(code, stock_name)
             if cached:
                 search_content = cached
                 used_news_cache = True
                 logger.info(f"♻️  [{stock_name}] 命中舆情缓存，跳过外部搜索")
-            # 2) 无缓存再走外部搜索
+            # 2) 快速模式：即使无缓存也不搜索
+            elif fast_mode:
+                logger.info(f"⚡ [{stock_name}] 快速模式，跳过外部搜索")
+                used_news_cache = True  # 强制走轻量模型
+            # 3) 无缓存再走外部搜索
             elif self.search_service:
                 # 随机休眠 2.0 - 5.0 秒
                 sleep_time = random.uniform(2.0, 5.0)
@@ -365,7 +411,18 @@ class StockAnalysisPipeline:
                     logger.warning(f"[{stock_name}] 搜索服务异常: {e}")
 
             # === 2. 获取大盘环境（前置滤网：大盘定仓位上限，个股逻辑定买卖方向）===
+            # 盘中模式：若大盘快照由上层传入但市场仍在交易，刷新一次以获取最新数据
             market_overview = market_overview_override
+            if market_overview is not None and is_market_trading() and self._market_monitor:
+                try:
+                    snapshot = self._market_monitor.get_market_snapshot()  # 内部有 60s 缓存，不会打爆接口
+                    if snapshot.get('success'):
+                        vol = snapshot.get('total_volume', 'N/A')
+                        indices = snapshot.get('indices', [])
+                        idx_str = " / ".join([f"{i['name']} {i['change_pct']}%" for i in indices])
+                        market_overview = f"今日两市成交额: {vol}亿。指数表现: {idx_str}。（以上为**盘中数据**，截至当前。）"
+                except Exception:
+                    pass  # 刷新失败则沿用上层传入的旧快照
             if market_overview is None and self._market_monitor:
                 try:
                     snapshot = self._market_monitor.get_market_snapshot()
@@ -409,7 +466,9 @@ class StockAnalysisPipeline:
                 return None
             
             if not result: return None
-            self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score}")
+            # 标注分析时间戳（盘中多次分析时可区分）
+            result.analysis_time = datetime.now().strftime('%H:%M')
+            self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score} (时间={result.analysis_time})")
             
             try:
                 self.storage.save_analysis_history(result=result, query_id=self.query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None)
@@ -486,9 +545,9 @@ class StockAnalysisPipeline:
                     if df is not None and quote is not None:
                         self._prefetch_cache[code] = {"df": df, "quote": quote}
                     logger.info(f"[{i+1}/{total_stocks}] ✅ {code} 数据就绪")
-                    # 串行阶段也稍微休息一下，防止数据源封IP
+                    # 串行阶段也稍微休息一下，防止数据源封IP（快速模式缩短）
                     if not dry_run:
-                        time.sleep(0.5)
+                        time.sleep(0.2 if getattr(self.config, 'fast_mode', False) else 0.5)
                 else:
                     logger.warning(f"[{i+1}/{total_stocks}] ❌ {code} 数据失败: {msg}")
                 

@@ -134,6 +134,7 @@ class Config:
     
     # === 系统配置 ===
     max_workers: int = 1  # 默认顺序执行，日志一条一条输出
+    fast_mode: bool = False  # 盘中快速模式：跳过搜索、强制轻量模型、跳过F10
     debug: bool = False
     http_proxy: Optional[str] = None  # HTTP 代理 (例如: http://127.0.0.1:10809)
     https_proxy: Optional[str] = None # HTTPS 代理

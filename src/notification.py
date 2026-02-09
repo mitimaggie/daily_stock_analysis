@@ -1052,10 +1052,13 @@ class NotificationService:
         # 股票名称
         stock_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
         
+        # 分析时间标注（盘中多次分析时可快速区分）
+        time_tag = f" | 分析于 {result.analysis_time}" if getattr(result, 'analysis_time', '') else ""
+        
         lines = [
             f"## {signal_emoji} {stock_name} ({result.code})",
             "",
-            f"> {report_date} | 评分: **{result.sentiment_score}** | {result.trend_prediction}",
+            f"> {report_date} | 评分: **{result.sentiment_score}** | {result.trend_prediction}{time_tag}",
             "",
         ]
         self._append_market_snapshot(lines, result)

@@ -185,50 +185,66 @@ class DataFetcherManager:
         # 如果无需缝合，直接返回历史
         return df_history
 
+    # A 股日内成交量分布权重 (U 型曲线，每 30 分钟一段，共 8 段)
+    # 数据来源：万得统计 A 股典型交易日分钟级成交量分布
+    # 早盘集合竞价+前 30min 占比高、午后缩量、尾盘冲量
+    _VOLUME_WEIGHT_SLOTS = [
+        (9*60+30,  10*60,  0.18),   # 09:30-10:00  开盘冲量 18%
+        (10*60,    10*60+30, 0.13), # 10:00-10:30  13%
+        (10*60+30, 11*60,  0.10),   # 10:30-11:00  10%
+        (11*60,    11*60+30, 0.09), # 11:00-11:30  尾盘 9%
+        (13*60,    13*60+30, 0.10), # 13:00-13:30  午后 10%
+        (13*60+30, 14*60,  0.10),   # 13:30-14:00  10%
+        (14*60,    14*60+30, 0.12), # 14:00-14:30  12%
+        (14*60+30, 15*60,  0.18),   # 14:30-15:00  尾盘冲量 18%
+    ]
+
+    def _calc_elapsed_weight(self) -> float:
+        """计算当前时间点已消耗的成交量权重占比 (0.0~1.0)"""
+        now = datetime.now()
+        t = now.hour * 60 + now.minute
+        total_w = 0.0
+        for start, end, w in self._VOLUME_WEIGHT_SLOTS:
+            if t >= end:
+                total_w += w       # 整段已过
+            elif t > start:
+                # 段内按线性插值
+                total_w += w * (t - start) / (end - start)
+            # t < start 说明这段还没开始
+        return min(total_w, 1.0)
+
     def _create_mock_bar(self, quote, df_history: pd.DataFrame) -> Optional[pd.DataFrame]:
         """
         构造"虚拟 K 线" (Mock Bar)
-        在此处解决盘中成交量失真的问题
+        使用 U 型曲线权重预测全天成交量，解决盘中量比失真问题
         """
         try:
-            # 1. 基础数据映射
             now = datetime.now()
-            # 转换时间：如果现在是盘前(比如9:25前)，不要生成今天的K线
+            # 盘前不生成今天的 K 线
             if now.hour < 9 or (now.hour == 9 and now.minute < 25):
                 return None
 
-            # 2. 核心：成交量预测 (Virtual Volume)
-            # 公式：当前量 / (已开盘分钟数 / 240)
             current_volume = quote.volume if quote.volume else 0
-            predicted_volume = current_volume 
-            
-            # 计算开盘分钟数 (A股: 9:30-11:30, 13:00-15:00)
-            minutes_elapsed = 0
-            if 9 <= now.hour < 15:
-                # 这是一个简化的估算，足够用于量比分析
-                morning_minutes = max(0, min(120, (now.hour - 9) * 60 + now.minute - 30)) if now.hour < 12 else 120
-                afternoon_minutes = max(0, min(120, (now.hour - 13) * 60 + now.minute)) if now.hour >= 13 else 0
-                minutes_elapsed = morning_minutes + afternoon_minutes
-                
-                # 只有在开盘后超过10分钟才做预测，且防止除零
-                if minutes_elapsed > 10:
-                    projection_factor = 240 / minutes_elapsed
-                    predicted_volume = current_volume * projection_factor
-            
-            # 3. 构造 DataFrame 行
+            predicted_volume = current_volume
+
+            # U 型曲线成交量预测
+            elapsed_weight = self._calc_elapsed_weight()
+            if elapsed_weight > 0.03:  # 至少交易了 ~4 分钟才做预测
+                predicted_volume = current_volume / elapsed_weight
+
             data = {
                 'date': [pd.Timestamp(now.date())],
                 'open': [quote.open_price],
                 'high': [quote.high],
                 'low': [quote.low],
                 'close': [quote.price],
-                'volume': [predicted_volume], # 使用预测量用于指标计算
+                'volume': [predicted_volume],
                 'amount': [quote.amount],
                 'pct_chg': [quote.change_pct],
-                'volume_ratio': [quote.volume_ratio if quote.volume_ratio else 0.0] # 显式传递量比
+                'volume_ratio': [quote.volume_ratio if quote.volume_ratio else 0.0]
             }
             return pd.DataFrame(data)
-            
+
         except Exception as e:
             logger.error(f"构造虚拟K线失败: {e}")
             return None

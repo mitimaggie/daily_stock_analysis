@@ -88,6 +88,17 @@ class FundamentalFetcher:
             except Exception as e:
                 pass # 预测数据没有也无所谓
 
+            # --- C. 计算 PEG (PE / 净利润增速) ---
+            try:
+                pe_val = data.get("valuation", {}).get("pe")
+                growth_str = data.get("financial", {}).get("net_profit_growth", "N/A")
+                if pe_val and growth_str and growth_str not in ("N/A", "", "0"):
+                    growth_val = float(str(growth_str).replace("%", ""))
+                    if growth_val > 0 and isinstance(pe_val, (int, float)) and pe_val > 0:
+                        data["valuation"]["peg"] = round(pe_val / growth_val, 2)
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass  # PEG 计算失败不影响流程
+
             # 存入缓存
             _fundamental_cache[code] = data
             logger.info(f"✅ [{code}] F10 基本面数据获取成功")

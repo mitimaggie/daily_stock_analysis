@@ -64,6 +64,7 @@ class AnalysisResult:
     buy_reason: str = ""
     data_sources: str = ""
     change_pct: Optional[float] = None
+    analysis_time: str = ""       # 分析时间 (HH:MM)，盘中多次分析时区分
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -323,6 +324,8 @@ class GeminiAnalyzer:
             total_mv = val.get('total_mv')
             pe_str = f"{pe:.1f}" if isinstance(pe, (int, float)) and pe > 0 else "N/A"
             pb_str = f"{pb:.2f}" if isinstance(pb, (int, float)) and pb > 0 else "N/A"
+            peg = val.get('peg')
+            peg_str = f"{peg:.2f}" if isinstance(peg, (int, float)) and peg > 0 else "N/A"
             mv_str = "N/A"
             if isinstance(total_mv, (int, float)) and total_mv > 0:
                 mv_str = f"{total_mv/1e8:.1f}亿" if total_mv >= 1e8 else f"{total_mv/1e4:.1f}万"
@@ -331,6 +334,7 @@ class GeminiAnalyzer:
 |---|---|---|
 | 市盈率(PE) | {pe_str} | 估值锚定 |
 | 市净率(PB) | {pb_str} | 估值锚定 |
+| PEG | {peg_str} | PE/增速，<1偏低估，>2偏贵 |
 | 总市值 | {mv_str} | 规模 |
 | 净利润增速 | {fin.get('net_profit_growth', 'N/A')}% | 成长性 |
 | ROE | {fin.get('roe', 'N/A')}% | 盈利能力 |
@@ -378,18 +382,33 @@ class GeminiAnalyzer:
         else:
             sector_section = ""
 
-        # 盘中数据说明（仅盘中时插入，避免 AI 将即时数据当收盘结论）
+        # 盘中 / 盘后差异化 prompt
         is_intraday = context.get('is_intraday', False)
+        market_phase = context.get('market_phase', '')
+        analysis_time = context.get('analysis_time', '')
+
         intraday_notice = ""
+        task_title = f"# 深度复盘任务：{name} ({code})"
+        task_instruction = "请综合以下多维情报，像一位顶级基金经理那样思考，基于数据与逻辑给出客观结论与操作建议：**大盘决定仓位上限，个股逻辑决定买卖方向**。输出时使用客观、专业的分析语言，不要使用「我作为…」等人称表述。"
+
         if is_intraday:
-            intraday_notice = """
-【重要】以下为**盘中数据**，非收盘数据。当前价、涨跌幅、成交量、大盘成交额与指数等均为**截至当前**的即时数据。请按盘中逻辑分析，勿将「收盘价」「当日成交额」当作已确定的收盘结果；结论应为「截至当前」的研判，而非当日收盘结论。
+            phase_label = {"morning": "上午盘中", "lunch_break": "午休（上午收盘价）", "afternoon": "下午盘中"}.get(market_phase, "盘中")
+            time_label = f"（分析时间: {analysis_time}）" if analysis_time else ""
+            task_title = f"# 盘中实时研判：{name} ({code}) {time_label}"
+            task_instruction = (
+                "请综合以下多维情报，像一位**盘中交易员**那样思考，给出**短线操作建议**。"
+                "重点关注：当前是否是介入/离场时机？关键阻力/支撑是否有效？量能配合如何？"
+                "输出时使用客观、专业的分析语言，不要使用「我作为…」等人称表述。"
+            )
+            intraday_notice = f"""
+【重要 - {phase_label}数据】以下为**盘中即时数据**，非收盘数据。当前价、涨跌幅、成交量、大盘成交额与指数等均为**截至当前**的即时数据。
+请按盘中逻辑分析：① 不要将成交量/成交额当作全天确定值；② 结论应为「截至当前」的研判；③ 侧重短线（日内/1-3日）操作建议。
 
 """
         # 组装最终 Prompt (Markdown 表格增强版)
-        return f"""# 深度复盘任务：{name} ({code})
+        return f"""{task_title}
 {intraday_notice}
-请综合以下多维情报，像一位顶级基金经理那样思考，基于数据与逻辑给出客观结论与操作建议：**大盘决定仓位上限，个股逻辑决定买卖方向**。输出时使用客观、专业的分析语言，不要使用「我作为…」等人称表述。
+{task_instruction}
 
 ## 第零维度：大盘环境 (Market Context) — 前置滤网 / 仓位因子
 {market_rule}
@@ -414,11 +433,11 @@ class GeminiAnalyzer:
 ## ⚠️ JSON输出协议
 你必须且只能输出标准 JSON，包含以下字段：
 stock_name, sentiment_score (0-100), trend_prediction, operation_advice (买入/持有/卖出),
-time_horizon (建议适用周期: "短线(1-5日)" | "中线(1-4周)" | "长线(1-3月)"),
+time_horizon (建议适用周期: {"'短线(日内)' | '短线(1-3日)'" if is_intraday else "'短线(1-5日)' | '中线(1-4周)' | '长线(1-3月)'"}),
 suggested_position_pct (可选, 0-100 建议仓位占比),
 dashboard: {{
     core_conclusion: {{
-        one_sentence: "核心结论 (个股F10+技术面定方向，大盘定仓位/滤网)，可注明适用周期",
+        one_sentence: "{'盘中实时研判结论，侧重当前是否介入/离场' if is_intraday else '核心结论 (个股F10+技术面定方向，大盘定仓位/滤网)，可注明适用周期'}",
         position_advice: {{ no_position: "空仓建议(含半定量如「轻仓10%」)", has_position: "持仓建议" }}
     }},
     intelligence: {{ risk_alerts: [], positive_catalysts: [] }},

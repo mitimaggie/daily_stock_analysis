@@ -93,6 +93,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--port', type=int, default=8000, help='FastAPI 服务端口')
     parser.add_argument('--no-context-snapshot', action='store_true', help='不保存快照')
     parser.add_argument('--chip-only', action='store_true', help='仅拉取筹码分布并落库（供定时任务在固定时间跑，分析时用缓存）')
+    parser.add_argument('--fast', action='store_true', help='盘中快速模式：跳过外部搜索、用缓存舆情、强制轻量模型、跳过F10')
     return parser.parse_args()
 
 def start_api_server(host: str, port: int, config: Config) -> None:
@@ -149,6 +150,8 @@ def run_full_analysis(config: Config, args: argparse.Namespace, stock_codes: Opt
     try:
         if getattr(args, 'single_notify', False):
             config.single_stock_notify = True
+        if getattr(args, 'fast', False):
+            config.fast_mode = True
         
         save_context_snapshot = None
         if getattr(args, 'no_context_snapshot', False):
