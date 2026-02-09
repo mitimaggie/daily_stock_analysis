@@ -264,9 +264,17 @@ class GeminiAnalyzer:
         chip_note = context.get('chip_note') or "未启用"
         chip_line = f"\n## 筹码分布\n{chip_note}\n" if context.get('chip_note') else ""
 
+        # 盘中数据说明（仅盘中时插入，避免 AI 将即时数据当收盘结论）
+        is_intraday = context.get('is_intraday', False)
+        intraday_notice = ""
+        if is_intraday:
+            intraday_notice = """
+【重要】以下为**盘中数据**，非收盘数据。当前价、涨跌幅、成交量、大盘成交额与指数等均为**截至当前**的即时数据。请按盘中逻辑分析，勿将「收盘价」「当日成交额」当作已确定的收盘结果；结论应为「截至当前」的研判，而非当日收盘结论。
+
+"""
         # 组装最终 Prompt (Markdown 表格增强版)
         return f"""# 深度复盘任务：{name} ({code})
-
+{intraday_notice}
 请综合以下多维情报，像一位顶级基金经理那样思考，基于数据与逻辑给出客观结论与操作建议：**大盘决定仓位上限，个股逻辑决定买卖方向**。输出时使用客观、专业的分析语言，不要使用「我作为…」等人称表述。
 
 ## 第零维度：大盘环境 (Market Context) — 前置滤网 / 仓位因子
@@ -397,8 +405,10 @@ analysis_summary, risk_warning
             except (TypeError, ValueError):
                 change_amount = None
 
+        is_intraday = context.get('is_intraday', False)
         snapshot = {
             "date": context.get('date', '未知'),
+            "is_intraday": is_intraday,
             "close": self._format_price(close),
             "open": self._format_price(today.get('open')),
             "high": self._format_price(high),

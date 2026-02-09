@@ -1147,10 +1147,15 @@ class NotificationService:
         snapshot = getattr(result, 'market_snapshot', None)
         if not snapshot:
             return
+        is_intraday = snapshot.get('is_intraday', False)
+        section_title = "### 📈 当日行情（盘中）" if is_intraday else "### 📈 当日行情"
+        close_header = "最新价" if is_intraday else "收盘"
+        vol_header = "成交量(截至当前)" if is_intraday else "成交量"
+        amount_header = "成交额(截至当前)" if is_intraday else "成交额"
         lines.extend([
-            "### 📈 当日行情",
+            section_title,
             "",
-            "| 收盘 | 昨收 | 开盘 | 最高 | 最低 | 涨跌幅 | 涨跌额 | 振幅 | 成交量 | 成交额 |",
+            f"| {close_header} | 昨收 | 开盘 | 最高 | 最低 | 涨跌幅 | 涨跌额 | 振幅 | {vol_header} | {amount_header} |",
             "|------|------|------|------|------|-------|-------|------|--------|--------|",
             f"| {snapshot.get('close', 'N/A')} | {snapshot.get('prev_close', 'N/A')} | "
             f"{snapshot.get('open', 'N/A')} | {snapshot.get('high', 'N/A')} | "

@@ -42,6 +42,19 @@ def _load_market_monitor():
 
 market_monitor = _load_market_monitor()
 
+
+def is_market_intraday() -> bool:
+    """判断当前是否为 A 股盘中（9:30-11:30, 13:00-15:00，含午休）"""
+    now = datetime.now()
+    if now.hour < 9:
+        return False
+    if now.hour >= 15:
+        return False
+    if now.hour == 9 and now.minute < 30:
+        return False
+    return True
+
+
 # === 内部模块导入 ===
 from src.stock_analyzer import StockTrendAnalyzer
 from src.analyzer import GeminiAnalyzer, AnalysisResult
@@ -254,7 +267,8 @@ class StockAnalysisPipeline:
             'chip_note': chip_note,
             'technical_analysis_report': tech_report,
             'fundamental': fundamental_data,
-            'history_summary': history_summary
+            'history_summary': history_summary,
+            'is_intraday': is_market_intraday(),
         }
         return context
 
@@ -330,6 +344,8 @@ class StockAnalysisPipeline:
                         indices = snapshot.get('indices', [])
                         idx_str = " / ".join([f"{i['name']} {i['change_pct']}%" for i in indices])
                         market_overview = f"今日两市成交额: {vol}亿。指数表现: {idx_str}。"
+                        if is_market_intraday():
+                            market_overview += "（以上为**盘中数据**，非收盘；成交额与涨跌幅均为截至当前。）"
                         logger.info(f"📊 [{stock_name}] 大盘环境已注入（滤网）: 成交额{vol}亿 | {idx_str}")
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 获取大盘数据微瑕: {e}")
@@ -466,6 +482,8 @@ class StockAnalysisPipeline:
                     indices = snapshot.get('indices', [])
                     idx_str = " / ".join([f"{i['name']} {i['change_pct']}%" for i in indices])
                     market_overview_once = f"今日两市成交额: {vol}亿。指数表现: {idx_str}。"
+                    if is_market_intraday():
+                        market_overview_once += "（以上为**盘中数据**，非收盘；成交额与涨跌幅均为截至当前。）"
                     logger.info(f"📊 [阶段二] 大盘快照已获取（全局复用）: 成交额{vol}亿 | {idx_str}")
             except Exception as e:
                 logger.warning(f"📊 [阶段二] 获取大盘快照失败(降级为逐股/不注入): {e}")
