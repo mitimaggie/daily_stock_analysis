@@ -247,7 +247,20 @@ class StockAnalysisPipeline:
             chip = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
             if chip:
                 chip_data = chip.to_dict()
-                chip_note = "见下数据"
+                # 筹码缓存年龄告警：超过 48h 提示数据可能过时
+                chip_age_note = ""
+                try:
+                    fetched_at = getattr(chip, 'fetched_at', None) or chip_data.get('fetched_at')
+                    if fetched_at:
+                        from datetime import datetime as _dt
+                        if isinstance(fetched_at, str):
+                            fetched_at = _dt.fromisoformat(fetched_at)
+                        age_hours = (datetime.now() - fetched_at).total_seconds() / 3600
+                        if age_hours > 48:
+                            chip_age_note = f"（注意：筹码数据已缓存 {age_hours:.0f} 小时，可能过时）"
+                except Exception:
+                    pass
+                chip_note = f"见下数据{chip_age_note}"
             else:
                 chip_note = "暂不可用（接口失败或未拉取）"
         
