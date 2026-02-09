@@ -205,12 +205,14 @@ class StockAnalysisPipeline:
             daily_df = None
 
         tech_report = "数据不足，无法进行技术分析"
+        trend_analysis_dict = {}
         if daily_df is not None and not daily_df.empty:
             try:
                 trend_result = self.trend_analyzer.analyze(daily_df, code)
                 if quote.price:
                     trend_result.current_price = quote.price
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
+                trend_analysis_dict = trend_result.to_dict()
             except Exception as e:
                 logger.error(f"[{code}] 技术分析生成失败: {e}")
 
@@ -285,11 +287,17 @@ class StockAnalysisPipeline:
             'chip': chip_data,
             'chip_note': chip_note,
             'technical_analysis_report': tech_report,
+            'trend_analysis': trend_analysis_dict,
             'fundamental': fundamental_data,
             'history_summary': history_summary,
             'sector_context': sector_context,
             'is_intraday': is_market_intraday(),
         }
+        context = self._enhance_context(context)
+        return context
+
+    def _enhance_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """增强 context：预留扩展点，未来可注入额外结构化信息"""
         return context
 
     def _log(self, msg: str, *args, **kwargs) -> None:
@@ -315,7 +323,7 @@ class StockAnalysisPipeline:
             
             if skip_analysis:
                 logger.info(f"[{code}] Dry-run 模式，跳过 AI 分析")
-                return AnalysisResult(code=code, name=stock_name, reasoning="Dry Run 测试", operation_advice="观望", sentiment_score=50, trend_prediction="测试", success=True)
+                return AnalysisResult(code=code, name=stock_name, sentiment_score=50, trend_prediction="测试", operation_advice="观望", analysis_summary="Dry Run 测试", success=True)
 
             # === 1. 搜索舆情 (增加随机延迟防封号) ===
             search_content = ""
@@ -334,14 +342,16 @@ class StockAnalysisPipeline:
                 
                 logger.info(f"🔎 [{stock_name}] 正在侦查舆情 (延迟 {sleep_time:.1f}s)...")
                 try:
-                    query = f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报"
-                    if hasattr(self.search_service, 'search_stock_news'):
+                    if hasattr(self.search_service, 'search_comprehensive_intel'):
+                        resp = self.search_service.search_comprehensive_intel(code, stock_name)
+                    elif hasattr(self.search_service, 'search_stock_news'):
                         resp = self.search_service.search_stock_news(code, stock_name)
                     else:
-                        resp = self.search_service.search(query)
+                        resp = self.search_service.search(f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报")
                         
-                    if resp and getattr(resp, 'success', False): 
+                    if resp and getattr(resp, 'success', False):
                         search_content = resp.to_context()
+                        query = f"{stock_name} ({code}) 综合分析 风险 业绩 行业"
                         # 舆情落库，便于后续复用与审计
                         if getattr(resp, 'results', None):
                             try:
@@ -370,6 +380,10 @@ class StockAnalysisPipeline:
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 获取大盘数据微瑕: {e}")
 
+            # 分析前延迟（可配置，用于等待数据落定或降低 API 压力）
+            delay = getattr(self.config, 'analysis_delay', 0) or 0
+            if delay > 0:
+                time.sleep(delay)
             self._log(f"🤖 [{stock_name}] 调用 LLM 进行分析...")
             # 无舆情时也用轻量模型，省成本
             use_light = used_news_cache or (not search_content or not search_content.strip())
@@ -482,6 +496,12 @@ class StockAnalysisPipeline:
                 logger.error(f"[{code}] 数据预取异常: {e}")
 
         # === 阶段二：并发分析 ===
+        # 预取实时行情（批量预热，可选）
+        if valid_stocks and hasattr(self.fetcher_manager, 'prefetch_realtime_quotes'):
+            try:
+                self.fetcher_manager.prefetch_realtime_quotes(valid_stocks)
+            except Exception as e:
+                logger.debug(f"prefetch_realtime_quotes 跳过: {e}")
         workers = self.max_workers if self.max_workers is not None else 1
         logger.info(f"🐰 阶段二：开启 {workers} 线程进行 AI 并发分析（多线程时日志会交错，若需顺序输出请使用 --workers 1）...")
         single_stock_notify = getattr(self.config, 'single_stock_notify', False)

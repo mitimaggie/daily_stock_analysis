@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from src.config import get_config
 import warnings
 
@@ -16,10 +16,15 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# 股票名称映射
+# 股票名称映射（扩展：A/港/美股）
 STOCK_NAME_MAP = {
-    '600519': '贵州茅台', '000001': '平安银行', '300750': '宁德时代', 
-    '002594': '比亚迪', '00700': '腾讯控股'
+    '600519': '贵州茅台', '000001': '平安银行', '300750': '宁德时代',
+    '002594': '比亚迪', '600036': '招商银行', '601318': '中国平安',
+    '000858': '五粮液', '600276': '恒瑞医药', '601012': '隆基绿能',
+    '002475': '立讯精密', '300059': '东方财富', '002415': '海康威视',
+    '600900': '长江电力', '601166': '兴业银行', '600028': '中国石化',
+    'AAPL': '苹果', 'TSLA': '特斯拉', 'MSFT': '微软', 'NVDA': '英伟达',
+    '00700': '腾讯控股', '03690': '美团', '01810': '小米集团', '09988': '阿里巴巴',
 }
 
 @dataclass
@@ -39,8 +44,27 @@ class AnalysisResult:
     success: bool = True
     error_message: Optional[str] = None
     current_price: float = 0.0
-    market_snapshot: Optional[Dict[str, Any]] = None  # 当日行情快照（推送中展示用）
-    
+    market_snapshot: Optional[Dict[str, Any]] = None
+
+    # 扩展字段（决策仪表盘 v2，兼容上游）
+    trend_analysis: str = ""
+    short_term_outlook: str = ""
+    medium_term_outlook: str = ""
+    technical_analysis: str = ""
+    ma_analysis: str = ""
+    volume_analysis: str = ""
+    pattern_analysis: str = ""
+    fundamental_analysis: str = ""
+    sector_position: str = ""
+    company_highlights: str = ""
+    news_summary: str = ""
+    market_sentiment: str = ""
+    hot_topics: str = ""
+    key_points: str = ""
+    buy_reason: str = ""
+    data_sources: str = ""
+    change_pct: Optional[float] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'code': self.code, 'name': self.name,
@@ -55,16 +79,48 @@ class AnalysisResult:
             'success': self.success,
             'price': self.current_price
         }
-    
-    def get_emoji(self) -> str:
-        return {'买入': '🟢', '加仓': '🟢', '强烈买入': '💚', '持有': '🟡', 
-                '观望': '⚪', '减仓': '🟠', '卖出': '🔴'}.get(self.operation_advice, '🟡')
-    
-    # 兼容性方法
+
+    def get_core_conclusion(self) -> str:
+        if self.dashboard and 'core_conclusion' in self.dashboard:
+            return self.dashboard['core_conclusion'].get('one_sentence', self.analysis_summary)
+        return self.analysis_summary
+
+    def get_position_advice(self, has_position: bool = False) -> str:
+        if self.dashboard and 'core_conclusion' in self.dashboard:
+            pos = self.dashboard['core_conclusion'].get('position_advice', {})
+            return pos.get('has_position', self.operation_advice) if has_position else pos.get('no_position', self.operation_advice)
+        return self.operation_advice
+
     def get_sniper_points(self) -> Dict[str, str]:
         if self.dashboard and 'battle_plan' in self.dashboard:
             return self.dashboard['battle_plan'].get('sniper_points', {})
         return {}
+
+    def get_checklist(self) -> List[str]:
+        if self.dashboard and 'battle_plan' in self.dashboard:
+            return self.dashboard['battle_plan'].get('action_checklist', [])
+        return []
+
+    def get_risk_alerts(self) -> List[str]:
+        if self.dashboard and 'intelligence' in self.dashboard:
+            return self.dashboard['intelligence'].get('risk_alerts', [])
+        return []
+
+    def get_emoji(self) -> str:
+        emoji_map = {'买入': '🟢', '加仓': '🟢', '强烈买入': '💚', '持有': '🟡',
+                     '观望': '⚪', '减仓': '🟠', '卖出': '🔴', '强烈卖出': '❌'}
+        advice = (self.operation_advice or '').strip()
+        if advice in emoji_map:
+            return emoji_map[advice]
+        for part in advice.replace('/', '|').split('|'):
+            part = part.strip()
+            if part in emoji_map:
+                return emoji_map[part]
+        s = self.sentiment_score
+        return '💚' if s >= 80 else '🟢' if s >= 65 else '🟡' if s >= 55 else '⚪' if s >= 45 else '🟠' if s >= 35 else '🔴'
+
+    def get_confidence_stars(self) -> str:
+        return {'高': '⭐⭐⭐', '中': '⭐⭐', '低': '⭐'}.get(self.confidence_level, '⭐⭐')
 
 class GeminiAnalyzer:
     # ==========================
@@ -121,12 +177,16 @@ class GeminiAnalyzer:
         self._openai_client = None
         self._use_openai = False
 
-        # 初始化 Gemini（主模型 + 可选「缓存时轻量模型」）
+        # 初始化 Gemini（主模型 + 备选模型 + 可选「缓存时轻量模型」）
+        self._model_fallback = None
         if self._api_key and "your_" not in self._api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self._api_key)
                 self._model = genai.GenerativeModel(model_name=config.gemini_model)
+                fb = getattr(config, "gemini_model_fallback", None)
+                if fb and str(fb).strip() and str(fb).strip() != config.gemini_model:
+                    self._model_fallback = genai.GenerativeModel(model_name=str(fb).strip())
                 when_cached = getattr(config, "gemini_model_when_cached", None)
                 if when_cached and when_cached.strip() and when_cached != config.gemini_model:
                     self._model_light = genai.GenerativeModel(model_name=when_cached.strip())
@@ -175,40 +235,11 @@ class GeminiAnalyzer:
             
             response_text = ""
             
-            # 3. 调用 API（temperature 从 config 读取，.env 中 GEMINI_TEMPERATURE / OPENAI_TEMPERATURE）
+            # 3. 调用 API（Gemini 优先，失败时尝试备选模型和 OpenAI）
             cfg = get_config()
-            if self._use_openai:
-                response = self._openai_client.chat.completions.create(
-                    model=cfg.openai_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=getattr(cfg, "openai_temperature", 0.7),
-                )
-                response_text = response.choices[0].message.content
-            else:
-                # Gemini（带重试：499/超时等可重试，temperature 用 config.gemini_temperature）
-                model = (self._model_light if use_light_model and self._model_light else self._model)
-                full_prompt = f"{system_prompt}\n\n{prompt}"
-                max_retries = max(1, getattr(cfg, "gemini_max_retries", 5))
-                retry_delay = getattr(cfg, "gemini_retry_delay", 5.0)
-                gemini_temp = getattr(cfg, "gemini_temperature", 0.7)
-                generation_config = {"temperature": gemini_temp}
-                response_text = ""
-                for attempt in range(max_retries):
-                    try:
-                        response_text = model.generate_content(full_prompt, generation_config=generation_config).text
-                        break
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        is_retryable = "499" in err_str or "timeout" in err_str or "deadline" in err_str or "closed" in err_str
-                        if attempt < max_retries - 1 and is_retryable:
-                            wait = retry_delay * (attempt + 1)
-                            logger.warning(f"Gemini 请求异常 (499/超时等)，{wait:.0f}s 后重试 ({attempt + 1}/{max_retries}): {e}")
-                            time.sleep(wait)
-                        else:
-                            raise
+            response_text = self._call_api_with_fallback(
+                system_prompt, prompt, use_light_model, cfg
+            )
 
             # 4. 解析结果
             result = self._parse_response(response_text, code, name)
@@ -221,6 +252,58 @@ class GeminiAnalyzer:
         except Exception as e:
             logger.error(f"AI分析失败: {e}")
             return AnalysisResult(code, name, 50, "错误", "分析出错", success=False, error_message=str(e))
+
+    def _call_api_with_fallback(
+        self, system_prompt: str, prompt: str, use_light_model: bool, cfg: Any
+    ) -> str:
+        """优先 Gemini，失败时依次尝试备选模型、OpenAI"""
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        max_retries = max(1, getattr(cfg, "gemini_max_retries", 5))
+        retry_delay = getattr(cfg, "gemini_retry_delay", 5.0)
+        gemini_temp = getattr(cfg, "gemini_temperature", 0.7)
+        gen_cfg = {"temperature": gemini_temp}
+
+        def _is_retryable(e: Exception) -> bool:
+            s = str(e).lower()
+            return "499" in s or "timeout" in s or "deadline" in s or "closed" in s or "429" in s or "rate" in s or "resource" in s
+
+        models_to_try = []
+        if self._model and not self._use_openai:
+            m = self._model_light if (use_light_model and self._model_light) else self._model
+            models_to_try.append(("gemini", m, "主模型"))
+            if self._model_fallback and m != self._model_fallback:
+                models_to_try.append(("gemini", self._model_fallback, "备选模型"))
+        if self._openai_client:
+            models_to_try.append(("openai", None, "OpenAI"))
+
+        last_err = None
+        for i, (api_type, model, label) in enumerate(models_to_try):
+            for attempt in range(max_retries):
+                try:
+                    if api_type == "openai":
+                        r = self._openai_client.chat.completions.create(
+                            model=cfg.openai_model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=getattr(cfg, "openai_temperature", 0.7),
+                        )
+                        return r.choices[0].message.content
+                    else:
+                        return model.generate_content(full_prompt, generation_config=gen_cfg).text
+                except Exception as e:
+                    last_err = e
+                    if attempt < max_retries - 1 and _is_retryable(e):
+                        wait = retry_delay * (attempt + 1)
+                        logger.warning(f"Gemini {label} 异常，{wait:.0f}s 后重试 ({attempt + 1}/{max_retries}): {e}")
+                        time.sleep(wait)
+                    else:
+                        logger.warning(f"{label} 失败，尝试下一可用模型: {e}")
+                        break
+        if last_err:
+            raise last_err
+        raise RuntimeError("无可用 AI 模型")
 
     def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None) -> str:
         code = context.get('code', 'Unknown')
@@ -349,22 +432,26 @@ analysis_summary, risk_warning
 """
 
     def _parse_response(self, response_text: str, code: str, name: str) -> AnalysisResult:
+        def _s(v: Any) -> str:
+            return str(v).strip() if v is not None else ""
+
         try:
             clean_text = response_text.replace('```json', '').replace('```', '').strip()
-            # 兼容处理：有时候 AI 会在 JSON 前后说废话
             start = clean_text.find('{')
             end = clean_text.rfind('}') + 1
             if start >= 0 and end > start:
                 clean_text = clean_text[start:end]
 
             data = json.loads(repair_json(clean_text) if repair_json else clean_text)
-            
+
             op_advice = data.get('operation_advice', '观望')
             decision = 'hold'
-            if '买' in op_advice or '加仓' in op_advice: decision = 'buy'
-            elif '卖' in op_advice or '减仓' in op_advice: decision = 'sell'
-            
-            return AnalysisResult(
+            if '买' in op_advice or '加仓' in op_advice:
+                decision = 'buy'
+            elif '卖' in op_advice or '减仓' in op_advice:
+                decision = 'sell'
+
+            result = AnalysisResult(
                 code=code, name=data.get('stock_name', name),
                 sentiment_score=int(data.get('sentiment_score', 50)),
                 trend_prediction=data.get('trend_prediction', '震荡'),
@@ -374,6 +461,26 @@ analysis_summary, risk_warning
                 analysis_summary=data.get('analysis_summary', ''),
                 risk_warning=data.get('risk_warning', ''), success=True
             )
+            # 扩展字段（仪表盘 v2，LLM 若返回则填充）
+            result.trend_analysis = _s(data.get('trend_analysis'))
+            result.short_term_outlook = _s(data.get('short_term_outlook'))
+            result.medium_term_outlook = _s(data.get('medium_term_outlook'))
+            result.technical_analysis = _s(data.get('technical_analysis'))
+            result.ma_analysis = _s(data.get('ma_analysis'))
+            result.volume_analysis = _s(data.get('volume_analysis'))
+            result.pattern_analysis = _s(data.get('pattern_analysis'))
+            result.fundamental_analysis = _s(data.get('fundamental_analysis'))
+            result.sector_position = _s(data.get('sector_position'))
+            result.company_highlights = _s(data.get('company_highlights'))
+            result.news_summary = _s(data.get('news_summary'))
+            result.market_sentiment = _s(data.get('market_sentiment'))
+            result.hot_topics = _s(data.get('hot_topics'))
+            result.key_points = _s(data.get('key_points'))
+            result.buy_reason = _s(data.get('buy_reason'))
+            result.data_sources = _s(data.get('data_sources'))
+            cp = data.get('change_pct')
+            result.change_pct = float(cp) if cp is not None and cp != '' else None
+            return result
         except Exception as e:
             return AnalysisResult(code, name, 50, "解析错", "人工核查", success=True, error_message=str(e))
 

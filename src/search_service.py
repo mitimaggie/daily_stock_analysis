@@ -232,6 +232,42 @@ class SearchService:
             error_message="Search Service Not Configured (Missing Perplexity Key)"
         )
 
+    def search_stock_news(self, code: str, stock_name: str) -> SearchResponse:
+        """个股舆情搜索：构建针对性 query 后调用 search"""
+        query = f"{stock_name} ({code}) 近期重大利好利空消息 机构观点 研报"
+        return self.search(query)
+
+    def search_comprehensive_intel(
+        self, code: str, stock_name: str, dimensions: Optional[List[str]] = None
+    ) -> SearchResponse:
+        """
+        多维情报搜索：风险、业绩、行业等多维度分别查询后合并
+        兼容单次 query 的 Perplexity 模式：多维度拼成一次深度 query
+        """
+        dims = dimensions or ["risk", "earnings", "industry"]
+        risk_q = f"{stock_name}({code}) 立案调查 监管函 减持 解禁 质押 暴雷 风险"
+        earn_q = f"{stock_name}({code}) 业绩预告 业绩快报 营收 净利润 超预期 暴雷"
+        ind_q = f"{stock_name}({code}) 行业政策 竞争格局 龙头地位 机构调研"
+        queries = []
+        if "risk" in dims:
+            queries.append(("风险与雷区", risk_q))
+        if "earnings" in dims:
+            queries.append(("业绩与预期", earn_q))
+        if "industry" in dims:
+            queries.append(("行业与竞争", ind_q))
+        if not queries:
+            return self.search_stock_news(code, stock_name)
+
+        # Perplexity 单次调用：合并为一条深度 query 以获得连贯研报
+        combined = (
+            f"{stock_name}({code}) 综合分析，请覆盖以下维度：\n"
+            "1. 风险与雷区：立案调查、监管函、减持解禁、高质押等\n"
+            "2. 业绩与预期：业绩预告、超预期/暴雷、机构预期\n"
+            "3. 行业与竞争：行业政策、竞争格局、机构调研\n"
+            "按【核心风险】【资金筹码】【催化剂】【重要新闻】输出，客观简洁，不编造。"
+        )
+        return self.search(combined)
+
     def search_news(self, query: str, max_results: int = 5) -> List[Dict]:
         """
         大盘分析用：搜索并返回列表形式的新闻条目 [{"title", "snippet", "content"}, ...]
