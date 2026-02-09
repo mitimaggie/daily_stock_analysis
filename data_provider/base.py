@@ -38,6 +38,7 @@ class BaseFetcher(ABC):
     def get_main_indices(self) -> Optional[List[Dict[str, Any]]]: return None
     def get_market_stats(self) -> Optional[Dict[str, Any]]: return None
     def get_sector_rankings(self, n: int = 5) -> Optional[Tuple[List[Dict], List[Dict]]]: return None
+    def get_stock_belong_board(self, stock_code: str): return None
     def get_chip_distribution(self, stock_code: str): return None
     def get_stock_name(self, stock_code: str): return None
     def get_stock_list(self): return None
@@ -397,3 +398,37 @@ class DataFetcherManager:
                 if res: return res
             except: continue
         return [], []
+
+    def get_stock_sector_context(self, stock_code: str, stock_pct_chg: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """获取个股所属板块及相对强弱（板块今日涨跌 vs 个股涨跌）"""
+        for f in self._fetchers:
+            try:
+                if not hasattr(f, 'get_stock_belong_board') and not hasattr(f, 'get_belong_board'):
+                    continue
+                get_board = getattr(f, 'get_stock_belong_board', None) or getattr(f, 'get_belong_board', None)
+                if not get_board:
+                    continue
+                df = get_board(stock_code)
+                if df is None or df.empty:
+                    continue
+                row = df.iloc[0]
+                name = None
+                for col in ['板块名称', '名称', 'name', '板块']:
+                    if col in row.index and pd.notna(row.get(col)):
+                        name = str(row[col]).strip()
+                        break
+                sector_pct = None
+                for col in ['涨跌幅', '涨跌幅度', 'change_pct', '日涨跌幅']:
+                    if col in row.index and pd.notna(row.get(col)):
+                        try:
+                            sector_pct = float(row[col])
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                rel = None
+                if stock_pct_chg is not None and sector_pct is not None:
+                    rel = round(stock_pct_chg - sector_pct, 2)
+                return {'sector_name': name or '未知', 'sector_pct': sector_pct, 'stock_pct': stock_pct_chg, 'relative': rel}
+            except Exception:
+                continue
+        return None

@@ -231,6 +231,25 @@ class StockAnalysisPipeline:
             fundamental_data = get_fundamental_data(code)
         except Exception as e:
             pass
+        # 补充估值：从实时行情注入 PE/PB/总市值（供基本面判断贵/便宜）
+        if quote:
+            val = fundamental_data.setdefault('valuation', {}) or {}
+            if not isinstance(val, dict):
+                fundamental_data['valuation'] = val = {}
+            if getattr(quote, 'pe_ratio', None) is not None:
+                val['pe'] = quote.pe_ratio
+            if getattr(quote, 'pb_ratio', None) is not None:
+                val['pb'] = quote.pb_ratio
+            if getattr(quote, 'total_mv', None) is not None:
+                val['total_mv'] = quote.total_mv
+
+        # 板块相对强弱
+        sector_context = None
+        try:
+            stock_pct = getattr(quote, 'change_pct', None) if quote else None
+            sector_context = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=stock_pct)
+        except Exception as e:
+            logger.debug(f"[{code}] 板块上下文获取失败: {e}")
 
         # 历史记忆
         history_summary = None
@@ -268,6 +287,7 @@ class StockAnalysisPipeline:
             'technical_analysis_report': tech_report,
             'fundamental': fundamental_data,
             'history_summary': history_summary,
+            'sector_context': sector_context,
             'is_intraday': is_market_intraday(),
         }
         return context

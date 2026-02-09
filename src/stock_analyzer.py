@@ -58,6 +58,15 @@ class TrendAnalysisResult:
     macd_signal: str = ""
     kdj_signal: str = ""
 
+    # 扩展指标（波动率/长周期/超买超卖）
+    atr14: float = 0.0
+    ma60: float = 0.0
+    rsi: float = 50.0
+    rsi_signal: str = ""
+    # 量化锚点（供 LLM 参考，避免拍脑袋）
+    stop_loss_anchor: float = 0.0
+    ideal_buy_anchor: float = 0.0
+
 class StockTrendAnalyzer:
     
     def analyze(self, df: pd.DataFrame, code: str) -> TrendAnalysisResult:
@@ -77,7 +86,21 @@ class StockTrendAnalyzer:
             result.ma5 = float(latest['MA5'])
             result.ma10 = float(latest['MA10'])
             result.ma20 = float(latest['MA20'])
-            
+            result.ma60 = float(latest.get('MA60', 0) or 0)
+            result.atr14 = float(latest.get('ATR14', 0) or 0)
+            result.rsi = float(latest.get('RSI', 50) or 50)
+            if result.rsi > 70:
+                result.rsi_signal = "超买"
+            elif result.rsi < 30:
+                result.rsi_signal = "超卖"
+            else:
+                result.rsi_signal = ""
+
+            sl_atr = result.current_price - 1.5 * result.atr14 if result.atr14 > 0 else 0
+            sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else 0
+            result.stop_loss_anchor = round(min(sl_atr, sl_ma20) if (sl_atr > 0 and sl_ma20 > 0) else (sl_atr or sl_ma20 or 0), 2)
+            result.ideal_buy_anchor = round(result.ma5 if result.ma5 > 0 else result.ma10, 2)
+
             # 量比处理
             vol_ma5 = df['volume'].iloc[-6:-1].mean()
             result.volume_ratio = float(latest['volume'] / vol_ma5) if vol_ma5 > 0 else 1.0
@@ -189,29 +212,52 @@ class StockTrendAnalyzer:
         df['MA5'] = df['close'].rolling(window=5).mean()
         df['MA10'] = df['close'].rolling(window=10).mean()
         df['MA20'] = df['close'].rolling(window=20).mean()
-        
+        df['MA60'] = df['close'].rolling(window=60).mean()
+
         ema12 = df['close'].ewm(span=12, adjust=False).mean()
         ema26 = df['close'].ewm(span=26, adjust=False).mean()
         df['MACD_DIF'] = ema12 - ema26
         df['MACD_DEA'] = df['MACD_DIF'].ewm(span=9, adjust=False).mean()
-        
+
         low_min = df['low'].rolling(window=9).min()
         high_max = df['high'].rolling(window=9).max()
         rsv = (df['close'] - low_min) / (high_max - low_min) * 100
         df['K'] = rsv.ewm(com=2, adjust=False).mean()
         df['D'] = df['K'].ewm(com=2, adjust=False).mean()
+
+        tr = np.maximum(df['high'] - df['low'], np.maximum(abs(df['high'] - df['close'].shift(1)), abs(df['low'] - df['close'].shift(1))))
+        df['ATR14'] = tr.rolling(window=14).mean()
+
+        delta = df['close'].diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = (-delta).where(delta < 0, 0.0)
+        avg_gain = gain.ewm(span=14, adjust=False).mean()
+        avg_loss = loss.ewm(span=14, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        df['RSI'] = 100 - (100 / (1 + rs))
+        df['RSI'] = df['RSI'].fillna(50)
+
         return df.fillna(0)
 
     def format_analysis(self, result: TrendAnalysisResult) -> str:
+        rsi_line = f" | RSI {result.rsi:.0f}{'(' + result.rsi_signal + ')' if result.rsi_signal else ''}" if result.rsi else ""
+        anchor_line = ""
+        if result.stop_loss_anchor > 0 or result.ideal_buy_anchor > 0:
+            anchor_line = f"""
+【量化锚点 (battle_plan 须参考)】
+● 建议止损参考: {result.stop_loss_anchor:.2f} (现价-1.5*ATR 与 MA20*0.98 取低，stop_loss 不得偏离过远)
+● 理想买点参考: {result.ideal_buy_anchor:.2f} (MA5/MA10 支撑，ideal_buy 可微调)
+● ATR14: {result.atr14:.2f} | MA60: {result.ma60:.2f}
+"""
         return f"""
 【量化技术报告】
 ---------------------------
 ● 综合评分: {result.signal_score} ({result.buy_signal.value})
 ● 趋势状态: {result.trend_status.value}
-● 关键数据: 现价{result.current_price:.2f} | MA5乖离率 {result.bias_ma5:.2f}% | 量比 {result.volume_ratio:.2f}
+● 关键数据: 现价{result.current_price:.2f} | MA5乖离率 {result.bias_ma5:.2f}% | 量比 {result.volume_ratio:.2f}{rsi_line}
 
 【技术面操作指引 (硬规则)】
 👤 针对空仓者: {result.advice_for_empty}
 👥 针对持仓者: {result.advice_for_holding}
----------------------------
+{anchor_line}---------------------------
 """

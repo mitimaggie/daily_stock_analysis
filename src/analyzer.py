@@ -108,6 +108,7 @@ class GeminiAnalyzer:
 - **当基本面优秀 + 技术面回调**：👉 **寻找左侧机会 (买入/持有)**，这是黄金坑。
 - **当基本面恶化 + 技术面破位**：👉 **坚决斩仓 (卖出)**，不抱幻想。
 - **当数据矛盾时**：👉 **尊重趋势，控制仓位**。
+- **估值约束**：若 PE/PB 显著偏高（如 PE>50 或显著高于行业中枢），需**降档操作**（强烈买入→持有，买入→观望）；估值合理/低估时才可重拳出击。
 
 请基于上述逻辑，生成【决策仪表盘】JSON。分析结论与 operation_advice、analysis_summary 等字段请用客观陈述句，勿出现「我」「作为…」等表述。
 """
@@ -227,15 +228,27 @@ class GeminiAnalyzer:
         # A. 技术面数据 (量化模型产出)
         tech_report = context.get('technical_analysis_report', '无数据')
         
-        # B. 基本面数据 (F10 - 新增)
+        # B. 基本面数据 (F10 - 含估值)
         f10 = context.get('fundamental', {})
         f10_str = "暂无详细 F10 数据"
         if f10:
             fin = f10.get('financial', {})
             fore = f10.get('forecast', {})
+            val = f10.get('valuation', {}) or {}
+            pe = val.get('pe')
+            pb = val.get('pb')
+            total_mv = val.get('total_mv')
+            pe_str = f"{pe:.1f}" if isinstance(pe, (int, float)) and pe > 0 else "N/A"
+            pb_str = f"{pb:.2f}" if isinstance(pb, (int, float)) and pb > 0 else "N/A"
+            mv_str = "N/A"
+            if isinstance(total_mv, (int, float)) and total_mv > 0:
+                mv_str = f"{total_mv/1e8:.1f}亿" if total_mv >= 1e8 else f"{total_mv/1e4:.1f}万"
             f10_str = f"""
 | 指标 | 数值 | 说明 |
 |---|---|---|
+| 市盈率(PE) | {pe_str} | 估值锚定 |
+| 市净率(PB) | {pb_str} | 估值锚定 |
+| 总市值 | {mv_str} | 规模 |
 | 净利润增速 | {fin.get('net_profit_growth', 'N/A')}% | 成长性 |
 | ROE | {fin.get('roe', 'N/A')}% | 盈利能力 |
 | 毛利率 | {fin.get('gross_margin', 'N/A')}% | 产品竞争力 |
@@ -263,6 +276,24 @@ class GeminiAnalyzer:
         # 筹码（若启用但拉取失败，明确写暂不可用，避免模型瞎编）
         chip_note = context.get('chip_note') or "未启用"
         chip_line = f"\n## 筹码分布\n{chip_note}\n" if context.get('chip_note') else ""
+
+        # 板块相对强弱（第四点五维）
+        sec = context.get('sector_context') or {}
+        sector_section = ""
+        if sec.get('sector_name'):
+            sp = sec.get('sector_pct')
+            stp = sec.get('stock_pct')
+            rel = sec.get('relative')
+            sp_str = f"{sp:+.2f}%" if isinstance(sp, (int, float)) else "N/A"
+            stp_str = f"{stp:+.2f}%" if isinstance(stp, (int, float)) else "N/A"
+            rel_str = f"{rel:+.2f}%" if isinstance(rel, (int, float)) else "N/A"
+            sector_section = f"""
+## 第三点五维度：板块相对强弱 (Sector Relative)
+**所属板块**: {sec.get('sector_name')} | 板块今日: {sp_str} | 个股今日: {stp_str} | **相对板块**: {rel_str}
+龙头强于板块可加分，弱于板块需警惕。
+"""
+        else:
+            sector_section = ""
 
         # 盘中数据说明（仅盘中时插入，避免 AI 将即时数据当收盘结论）
         is_intraday = context.get('is_intraday', False)
@@ -293,21 +324,24 @@ class GeminiAnalyzer:
 ## 第三维度：基本面与估值 (Fundamentals)
 **硬核财务数据 (F10)**：
 {f10_str}
-
+{sector_section}
 ## 第四维度：舆情与驱动力 (Drivers)
 {news_context if news_context else "暂无重大新闻（搜索未配置或拉取失败）"}
 {chip_line}
 ## ⚠️ JSON输出协议
 你必须且只能输出标准 JSON，包含以下字段：
 stock_name, sentiment_score (0-100), trend_prediction, operation_advice (买入/持有/卖出),
+time_horizon (建议适用周期: "短线(1-5日)" | "中线(1-4周)" | "长线(1-3月)"),
+suggested_position_pct (可选, 0-100 建议仓位占比),
 dashboard: {{
     core_conclusion: {{
-        one_sentence: "核心结论 (个股F10+技术面定方向，大盘定仓位/滤网)",
-        position_advice: {{ no_position: "空仓建议", has_position: "持仓建议" }}
+        one_sentence: "核心结论 (个股F10+技术面定方向，大盘定仓位/滤网)，可注明适用周期",
+        position_advice: {{ no_position: "空仓建议(含半定量如「轻仓10%」)", has_position: "持仓建议" }}
     }},
     intelligence: {{ risk_alerts: [], positive_catalysts: [] }},
     battle_plan: {{ sniper_points: {{ ideal_buy: number, stop_loss: number }} }}
 }},
+**battle_plan 约束**：ideal_buy、stop_loss 须参考【量化锚点】中的建议止损参考、理想买点参考，可微调但不得偏离过远。
 analysis_summary, risk_warning
 
 ---
