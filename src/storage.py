@@ -255,9 +255,38 @@ class DatabaseManager:
         )
         
         Base.metadata.create_all(self._engine)
+        self._migrate_schema()
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
         atexit.register(DatabaseManager._cleanup_engine, self._engine)
+    
+    def _migrate_schema(self):
+        """自动检测并补齐旧表缺失的列（轻量级迁移）"""
+        migrations = {
+            'analysis_history': {
+                'actual_pct_5d':    'FLOAT',
+                'hit_stop_loss':    'INTEGER',
+                'hit_take_profit':  'INTEGER',
+                'backtest_filled':  'INTEGER DEFAULT 0',
+            },
+        }
+        with self._engine.connect() as conn:
+            for table_name, columns in migrations.items():
+                try:
+                    result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+                    existing = {row[1] for row in result.fetchall()}
+                except Exception:
+                    continue
+                for col_name, col_type in columns.items():
+                    if col_name not in existing:
+                        try:
+                            conn.execute(text(
+                                f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                            ))
+                            conn.commit()
+                            logger.info(f"数据库迁移: {table_name} 新增列 {col_name}")
+                        except Exception as e:
+                            logger.warning(f"数据库迁移跳过 {table_name}.{col_name}: {e}")
     
     @classmethod
     def get_instance(cls) -> 'DatabaseManager':
