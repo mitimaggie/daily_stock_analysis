@@ -65,6 +65,10 @@ class AnalysisResult:
     data_sources: str = ""
     change_pct: Optional[float] = None
     analysis_time: str = ""       # 分析时间 (HH:MM)，盘中多次分析时区分
+    # LLM 独立判断（作为参考，不覆盖量化决策）
+    llm_score: Optional[int] = None       # LLM 自己给的评分 (0-100)
+    llm_advice: str = ""                  # LLM 自己的操作建议
+    llm_reasoning: str = ""               # LLM 给出上调/下调理由
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -431,22 +435,31 @@ class GeminiAnalyzer:
 {news_context if news_context else "暂无重大新闻（搜索未配置或拉取失败）"}
 {chip_line}
 ## ⚠️ JSON输出协议
-**重要**：sentiment_score 和 operation_advice 已由量化模型确定（见上方评分和信号），你不得覆盖。
-你的职责是：解释量化结论的原因，补充舆情/基本面视角，输出风险提示和催化剂。
+**架构说明**：最终决策（评分/操作建议/止损/仓位）由量化模型确定，你无法覆盖。
+但你需要给出自己的独立判断作为参考，让用户看到"量化 vs AI"两个视角。
 
 你必须且只能输出标准 JSON，包含以下字段：
+
+**量化辅助字段**（解释量化结论）：
 stock_name, trend_prediction,
 time_horizon (建议适用周期: {"'短线(日内)' | '短线(1-3日)'" if is_intraday else "'短线(1-5日)' | '中线(1-4周)' | '长线(1-3月)'"}),
+analysis_summary (解释量化模型给出该评分/建议的逻辑), risk_warning,
+
+**AI 独立判断**（你自己的观点，供用户参考）：
+llm_score (0-100, 你基于舆情+基本面+技术面综合给出的评分),
+llm_advice ("买入"/"持有"/"卖出"/"观望", 你自己的操作建议),
+llm_reasoning (一句话说明：如果你的判断与量化模型不同，原因是什么；相同则写"与量化结论一致"),
+
+**仪表盘**：
 dashboard: {{
     core_conclusion: {{
-        one_sentence: "{'盘中实时研判结论' if is_intraday else '核心结论，解释量化模型给出该评分/建议的原因'}",
+        one_sentence: "{'盘中研判' if is_intraday else '综合结论（结合量化信号和舆情/基本面）'}",
         position_advice: {{ no_position: "空仓者操作建议", has_position: "持仓者操作建议" }}
     }},
     intelligence: {{ risk_alerts: [], positive_catalysts: [], sentiment_summary: "", earnings_outlook: "" }},
     battle_plan: {{ sniper_points: {{ ideal_buy: number, stop_loss: number }} }}
 }},
 **battle_plan 约束**：ideal_buy、stop_loss 须直接使用【量化锚点】中的数值，不得自行编造。
-analysis_summary (解释量化结论的逻辑), risk_warning
 
 ---
 现在，开始你的分析：
@@ -501,6 +514,15 @@ analysis_summary (解释量化结论的逻辑), risk_warning
             result.data_sources = _s(data.get('data_sources'))
             cp = data.get('change_pct')
             result.change_pct = float(cp) if cp is not None and cp != '' else None
+            # LLM 独立判断字段
+            llm_s = data.get('llm_score')
+            if llm_s is not None:
+                try:
+                    result.llm_score = int(llm_s)
+                except (ValueError, TypeError):
+                    pass
+            result.llm_advice = _s(data.get('llm_advice'))
+            result.llm_reasoning = _s(data.get('llm_reasoning'))
             return result
         except Exception as e:
             return AnalysisResult(code, name, 50, "解析错", "人工核查", success=True, error_message=str(e))

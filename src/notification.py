@@ -1058,9 +1058,32 @@ class NotificationService:
         lines = [
             f"## {signal_emoji} {stock_name} ({result.code})",
             "",
-            f"> {report_date} | 评分: **{result.sentiment_score}** | {result.trend_prediction}{time_tag}",
+            f"> {report_date} | 量化评分: **{result.sentiment_score}** | {result.trend_prediction}{time_tag}",
             "",
         ]
+
+        # 量化 vs AI 双视角速览
+        llm_score = getattr(result, 'llm_score', None)
+        llm_advice = getattr(result, 'llm_advice', '')
+        llm_reasoning = getattr(result, 'llm_reasoning', '')
+        if llm_score is not None and llm_advice:
+            divergence = ""
+            diff = abs((llm_score or 0) - result.sentiment_score)
+            if diff >= 15:
+                divergence = " ⚠️ **分歧较大**"
+            lines.extend([
+                "| | 量化模型 | AI 研判 |",
+                "|---|---|---|",
+                f"| 评分 | **{result.sentiment_score}** | {llm_score}{divergence} |",
+                f"| 建议 | **{result.operation_advice}** | {llm_advice} |",
+                "",
+            ])
+            if llm_reasoning and llm_reasoning != "与量化结论一致":
+                lines.extend([
+                    f"💡 **AI 视角**: {llm_reasoning}",
+                    "",
+                ])
+
         self._append_market_snapshot(lines, result)
         # 核心决策（一句话）
         one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary

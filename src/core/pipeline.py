@@ -502,11 +502,18 @@ class StockAnalysisPipeline:
             
             if not result: return None
 
-            # ===== Quant Override: 硬决策由量化模型主导，LLM 只负责解释 =====
+            # ===== Quant Override: 硬决策由量化模型主导，LLM 意见保留作参考 =====
             trend = context.get('trend_analysis', {})
             if trend and isinstance(trend, dict):
                 quant_score = trend.get('signal_score')
                 quant_signal = trend.get('buy_signal')
+                # 保留 LLM 的原始评分和建议作为参考（在 _parse_response 里已赋值到 llm_score/llm_advice）
+                # 如果 LLM 没返回 llm_score，把 LLM 的 sentiment_score 存为参考
+                if not result.llm_score and result.sentiment_score:
+                    result.llm_score = result.sentiment_score
+                if not result.llm_advice and result.operation_advice:
+                    result.llm_advice = result.operation_advice
+                # 量化模型覆盖主决策
                 if quant_score is not None:
                     result.sentiment_score = int(quant_score)
                 if quant_signal:
