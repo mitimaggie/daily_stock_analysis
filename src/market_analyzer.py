@@ -129,10 +129,27 @@ class MarketAnalyzer:
         return overview
 
     def _get_market_statistics(self, overview: MarketOverview) -> None:
-        """获取涨跌家数、涨停跌停等市场广度数据"""
+        """获取涨跌家数、涨停跌停等市场广度数据
+        
+        复用 akshare_fetcher 的 _realtime_cache（1200s TTL），避免重复请求东财被断连。
+        """
         try:
-            import akshare as ak
-            df = ak.stock_zh_a_spot_em()
+            # 优先复用 akshare_fetcher 模块级缓存（stock_zh_a_spot_em 全量表）
+            from data_provider.akshare_fetcher import _realtime_cache
+            import time as _time
+            df = None
+            if _realtime_cache['data'] is not None and _time.time() - _realtime_cache['timestamp'] < _realtime_cache['ttl']:
+                df = _realtime_cache['data']
+                logger.debug("[大盘] 涨跌统计: 复用 EM 缓存")
+            else:
+                # 缓存过期才重新拉取
+                import akshare as ak
+                _time.sleep(1)  # 简单限流
+                df = ak.stock_zh_a_spot_em()
+                if df is not None and not df.empty:
+                    _realtime_cache['data'] = df
+                    _realtime_cache['timestamp'] = _time.time()
+
             if df is not None and not df.empty:
                 pct_col = '涨跌幅'
                 if pct_col in df.columns:

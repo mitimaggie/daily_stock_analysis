@@ -228,33 +228,57 @@ class AkshareFetcher(BaseFetcher):
             price=safe_float(row.get('最新价')), change_pct=safe_float(row.get('涨跌幅'))
         )
 
+    # 板块排行缓存（避免短时间内重复请求东财被断连）
+    _sector_cache: Dict[str, Any] = {'data': None, 'timestamp': 0, 'ttl': 600}
+
     def get_sector_rankings(self, n: int = 5):
         """获取行业板块涨跌排行（领涨 + 领跌）
         
         使用 ak.stock_board_industry_name_em() 获取东财行业板块数据。
+        带 600s 缓存 + 重试，降低被断连概率。
         返回: (top_list, bottom_list)，每个元素为 {"name": str, "change_pct": float}
         """
-        try:
-            import akshare as ak
-            self._enforce_rate_limit()
-            df = ak.stock_board_industry_name_em()
-            if df is None or df.empty:
-                return None
-            # 列名：板块名称, 涨跌幅 等
-            pct_col = '涨跌幅'
-            name_col = '板块名称'
-            if pct_col not in df.columns or name_col not in df.columns:
-                logger.warning(f"[板块] 列名不匹配，可用列: {list(df.columns)}")
-                return None
-            df = df[[name_col, pct_col]].dropna()
-            df[pct_col] = df[pct_col].astype(float)
-            df_sorted = df.sort_values(pct_col, ascending=False)
-            top = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.head(n).iterrows()]
-            bottom = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.tail(n).iterrows()]
-            return (top, bottom)
-        except Exception as e:
-            logger.warning(f"[板块] 板块涨跌榜获取失败: {e}")
+        import akshare as ak
+
+        # 1. 检查缓存
+        current_time = time.time()
+        if (self._sector_cache['data'] is not None 
+                and current_time - self._sector_cache['timestamp'] < self._sector_cache['ttl']):
+            df = self._sector_cache['data']
+        else:
+            # 2. 带重试的请求（东财接口不稳定，重试一次通常就好）
+            df = None
+            for attempt in range(2):
+                try:
+                    self._enforce_rate_limit()
+                    df = ak.stock_board_industry_name_em()
+                    if df is not None and not df.empty:
+                        self._sector_cache['data'] = df
+                        self._sector_cache['timestamp'] = current_time
+                        break
+                except Exception as e:
+                    if attempt == 0:
+                        logger.debug(f"[板块] 第1次请求失败，2s后重试: {e}")
+                        time.sleep(2)
+                    else:
+                        logger.warning(f"[板块] 板块涨跌榜获取失败(已重试): {e}")
+                        return None
+
+        if df is None or df.empty:
             return None
+
+        # 3. 解析
+        pct_col = '涨跌幅'
+        name_col = '板块名称'
+        if pct_col not in df.columns or name_col not in df.columns:
+            logger.warning(f"[板块] 列名不匹配，可用列: {list(df.columns)}")
+            return None
+        df = df[[name_col, pct_col]].dropna()
+        df[pct_col] = df[pct_col].astype(float)
+        df_sorted = df.sort_values(pct_col, ascending=False)
+        top = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.head(n).iterrows()]
+        bottom = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.tail(n).iterrows()]
+        return (top, bottom)
 
     def get_chip_distribution(self, stock_code: str, force_fetch: bool = False) -> Optional[ChipDistribution]:
         """获取筹码分布（force_fetch 时忽略 enable_chip_distribution，用于定时 --chip-only 拉取）"""
