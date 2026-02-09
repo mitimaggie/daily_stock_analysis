@@ -610,11 +610,37 @@ class NotificationService:
             # 股票名称（优先使用 dashboard 或 result 中的名称）
             stock_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
             
+            # 分析时间标注
+            time_tag = f" | 分析于 {result.analysis_time}" if getattr(result, 'analysis_time', '') else ""
             report_lines.extend([
                 f"## {signal_emoji} {stock_name} ({result.code})",
                 "",
+                f"> 量化评分: **{result.sentiment_score}** | {result.trend_prediction}{time_tag}",
+                "",
             ])
-            
+
+            # ========== 量化 vs AI 双视角速览 ==========
+            llm_score = getattr(result, 'llm_score', None)
+            llm_advice = getattr(result, 'llm_advice', '')
+            llm_reasoning = getattr(result, 'llm_reasoning', '')
+            if llm_score is not None and llm_advice:
+                divergence = ""
+                diff = abs((llm_score or 0) - result.sentiment_score)
+                if diff >= 15:
+                    divergence = " ⚠️ **分歧较大**"
+                report_lines.extend([
+                    "| | 量化模型 | AI 研判 |",
+                    "|---|---|---|",
+                    f"| 评分 | **{result.sentiment_score}** | {llm_score}{divergence} |",
+                    f"| 建议 | **{result.operation_advice}** | {llm_advice} |",
+                    "",
+                ])
+                if llm_reasoning and llm_reasoning != "与量化结论一致":
+                    report_lines.extend([
+                        f"💡 **AI 视角**: {llm_reasoning}",
+                        "",
+                    ])
+
             # ========== 舆情与基本面概览（放在最前面）==========
             intel = dashboard.get('intelligence', {}) if dashboard else {}
             if intel:

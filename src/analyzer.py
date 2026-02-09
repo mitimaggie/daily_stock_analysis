@@ -445,9 +445,11 @@ stock_name, trend_prediction,
 time_horizon (建议适用周期: {"'短线(日内)' | '短线(1-3日)'" if is_intraday else "'短线(1-5日)' | '中线(1-4周)' | '长线(1-3月)'"}),
 analysis_summary (解释量化模型给出该评分/建议的逻辑), risk_warning,
 
-**AI 独立判断**（你自己的观点，供用户参考）：
-llm_score (0-100, 你基于舆情+基本面+技术面综合给出的评分),
-llm_advice ("买入"/"持有"/"卖出"/"观望", 你自己的操作建议),
+**AI 独立判断**（必填！你自己的观点，供用户参考）：
+sentiment_score (0-100, 你综合技术面+舆情+基本面给出的评分，量化模型会在后端覆盖此值，但你必须给出),
+operation_advice ("买入"/"持有"/"卖出"/"观望", 你的操作建议，量化模型会覆盖此值，但你必须给出),
+llm_score (0-100, 与 sentiment_score 相同即可),
+llm_advice (与 operation_advice 相同即可),
 llm_reasoning (一句话说明：如果你的判断与量化模型不同，原因是什么；相同则写"与量化结论一致"),
 
 **仪表盘**：
