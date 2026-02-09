@@ -132,23 +132,32 @@ class MarketAnalyzer:
         """获取涨跌家数、涨停跌停等市场广度数据
         
         复用 akshare_fetcher 的 _realtime_cache（1200s TTL），避免重复请求东财被断连。
+        若缓存为空则带重试拉取。
         """
         try:
-            # 优先复用 akshare_fetcher 模块级缓存（stock_zh_a_spot_em 全量表）
             from data_provider.akshare_fetcher import _realtime_cache
             import time as _time
             df = None
+            # 1. 优先复用缓存
             if _realtime_cache['data'] is not None and _time.time() - _realtime_cache['timestamp'] < _realtime_cache['ttl']:
                 df = _realtime_cache['data']
                 logger.debug("[大盘] 涨跌统计: 复用 EM 缓存")
             else:
-                # 缓存过期才重新拉取
+                # 2. 缓存为空/过期：带重试拉取
                 import akshare as ak
-                _time.sleep(1)  # 简单限流
-                df = ak.stock_zh_a_spot_em()
-                if df is not None and not df.empty:
-                    _realtime_cache['data'] = df
-                    _realtime_cache['timestamp'] = _time.time()
+                for attempt in range(2):
+                    try:
+                        _time.sleep(1 + attempt)
+                        df = ak.stock_zh_a_spot_em()
+                        if df is not None and not df.empty:
+                            _realtime_cache['data'] = df
+                            _realtime_cache['timestamp'] = _time.time()
+                            break
+                    except Exception as e:
+                        if attempt == 0:
+                            logger.debug(f"[大盘] EM 接口第1次失败，重试: {e}")
+                        else:
+                            logger.warning(f"[大盘] EM 接口重试也失败: {e}")
 
             if df is not None and not df.empty:
                 pct_col = '涨跌幅'
@@ -166,13 +175,15 @@ class MarketAnalyzer:
     def _get_sector_rankings(self, overview: MarketOverview) -> None:
         """获取板块涨跌排行（领涨 + 领跌）"""
         try:
-            top_list, bottom_list = self.data_manager.get_sector_rankings(n=5)
-            if top_list:
-                overview.top_sectors = [{"name": item['name'], "change_pct": item['change_pct']} for item in top_list]
-                logger.info(f"[大盘] 领涨板块: {[s['name'] for s in overview.top_sectors]}")
-            if bottom_list:
-                overview.bottom_sectors = [{"name": item['name'], "change_pct": item['change_pct']} for item in bottom_list]
-                logger.info(f"[大盘] 领跌板块: {[s['name'] for s in overview.bottom_sectors]}")
+            result = self.data_manager.get_sector_rankings(n=5)
+            if result:
+                top_list, bottom_list = result
+                if top_list:
+                    overview.top_sectors = [{"name": item['name'], "change_pct": item['change_pct']} for item in top_list]
+                    logger.info(f"[大盘] 领涨板块: {[s['name'] for s in overview.top_sectors]}")
+                if bottom_list:
+                    overview.bottom_sectors = [{"name": item['name'], "change_pct": item['change_pct']} for item in bottom_list]
+                    logger.info(f"[大盘] 领跌板块: {[s['name'] for s in overview.bottom_sectors]}")
         except Exception as e:
             logger.warning(f"[大盘] 板块数据获取失败: {e}")
 
@@ -202,7 +213,7 @@ class MarketAnalyzer:
         return all_news
 
     def generate_market_review(self, overview: MarketOverview, news: List) -> str:
-        """AI 生成宏观策略报告"""
+        """AI 生成大盘复盘报告"""
         
         news_text = ""
         deduplicated_news = []
@@ -219,13 +230,16 @@ class MarketAnalyzer:
             content = n.get('content', n.get('snippet', ''))[:200]
             news_text += f"{i}. 【{title}】\n   {content}\n"
 
-        volume_desc = f"{overview.total_amount} 亿元" if overview.total_amount > 0 else "接口数据缺失"
-        indices_desc = overview.indices_text if overview.indices_text else "接口数据缺失"
-        top_sector_desc = ", ".join(f"{s['name']}({s['change_pct']}%)" for s in overview.top_sectors) if overview.top_sectors else "接口数据缺失"
-        bottom_sector_desc = ", ".join(f"{s['name']}({s['change_pct']}%)" for s in overview.bottom_sectors) if overview.bottom_sectors else "接口数据缺失"
+        volume_desc = f"{overview.total_amount} 亿元" if overview.total_amount > 0 else "暂无数据"
+        indices_desc = overview.indices_text if overview.indices_text else "暂无数据"
+        top_sector_desc = ", ".join(
+            f"{s['name']}({s['change_pct']}%)" for s in overview.top_sectors
+        ) if overview.top_sectors else "暂无数据"
+        bottom_sector_desc = ", ".join(
+            f"{s['name']}({s['change_pct']}%)" for s in overview.bottom_sectors
+        ) if overview.bottom_sectors else "暂无数据"
 
-        # 市场广度
-        breadth_desc = "接口数据缺失"
+        breadth_desc = "暂无数据"
         if overview.up_count > 0 or overview.down_count > 0:
             breadth_desc = (
                 f"上涨{overview.up_count}家 / 下跌{overview.down_count}家 / 平盘{overview.flat_count}家 | "
@@ -234,47 +248,55 @@ class MarketAnalyzer:
 
         from src.core.pipeline import is_market_intraday
         now = datetime.now()
-        time_context = "【盘中解盘】" if is_market_intraday() else "【收盘策略日报】"
+        time_label = "盘中快报" if is_market_intraday() else "收盘复盘"
+        news_block = news_text if news_text else "暂无新闻数据"
 
-        prompt = f"""请以【宏观策略师】的身份，撰写一份{time_context}。
-
-# 1. 市场核心数据
-- 时间: {now.strftime('%H:%M')}
-- 指数表现: {indices_desc}
-- 两市成交: {volume_desc}
-- **市场广度**: {breadth_desc}
-- **领涨板块**: {top_sector_desc}
-- **领跌板块**: {bottom_sector_desc}
-
-# 2. 宏观舆情与线索
-{news_text if news_text else "暂无新闻"}
-
----
-# 任务要求 (Markdown)
-请输出一份对冲基金风格的策略日报，直击痛点：
-
-## 📊 {overview.date} 市场全景
-### 1. 市场定调 (Market Sentiment)
-(用一个词定义今日市场：如“缩量阴跌”、“放量逼空”。简述理由)
-
-### 2. 资金与博弈 (Flows & Game)
-- **赚钱效应**: (结合涨跌家数、涨停跌停家数与领涨/领跌板块分析)
-- **主力意图**: (机构是在洗盘还是出货？)
-
-### 3. 宏观驱动 (Macro Drivers)
-(分析汇率、政策、美股映射等影响)
-
-### 4. 交易策略 (Actionable Advice)
-- **仓位建议**: (例如：建议半仓防守 / 建议积极进攻)
-- **方向指引**: (看好哪个风格？)
-"""
+        prompt = self._build_market_prompt(
+            overview.date, time_label, now.strftime('%H:%M'),
+            indices_desc, volume_desc, breadth_desc,
+            top_sector_desc, bottom_sector_desc, news_block
+        )
         try:
-            logger.info("[大盘] 正在生成宏观策略报告...")
+            logger.info("[大盘] 正在生成大盘复盘报告...")
             report = self.analyzer.chat(prompt)
             return report
         except Exception as e:
             logger.error(f"[大盘] AI 生成报告失败: {e}")
             return f"生成报告出错: {str(e)}"
+
+    @staticmethod
+    def _build_market_prompt(date, time_label, time_now, indices, volume,
+                             breadth, top_sectors, bottom_sectors, news_text):
+        """构建大盘分析 prompt"""
+        return (
+            f"基于以下 A 股市场数据，撰写一份 {date} {time_label}。\n\n"
+            "**严格要求**：\n"
+            "- 只基于下方提供的数据和新闻进行分析，没有的数据写\"暂无数据\"，绝对不得编造任何数字或事实。\n"
+            "- 不要使用第一人称，不要写\"致各位\"之类的开头，不要用天气/气象/风暴等比喻。\n"
+            "- 直接输出结构化分析，语言简洁专业。\n\n"
+            "# 市场数据\n"
+            f"- 时间: {time_now}\n"
+            f"- 指数表现: {indices}\n"
+            f"- 两市成交: {volume}\n"
+            f"- 市场广度: {breadth}\n"
+            f"- 领涨板块: {top_sectors}\n"
+            f"- 领跌板块: {bottom_sectors}\n\n"
+            "# 宏观舆情\n"
+            f"{news_text}\n\n"
+            "---\n"
+            "请严格按以下 Markdown 格式输出（不要加额外的开头/问候/署名）：\n\n"
+            f"## {date} 大盘{time_label}\n\n"
+            "### 1. 市场定调\n"
+            "(用2-4个字定义今日市场特征，如\"缩量震荡\"、\"放量反弹\"。基于指数涨跌幅和成交额数据说明理由)\n\n"
+            "### 2. 资金与结构\n"
+            "- **赚钱效应**: (基于涨跌家数和涨停跌停数据分析，无数据则写\"暂无涨跌家数数据\")\n"
+            "- **板块轮动**: (基于领涨/领跌板块分析资金方向，无数据则写\"暂无板块数据\")\n\n"
+            "### 3. 宏观与政策\n"
+            "(仅基于上方新闻数据分析，无新闻则写\"暂无重大宏观消息\")\n\n"
+            "### 4. 操作建议\n"
+            "- **仓位**: (基于市场数据给出仓位建议)\n"
+            "- **方向**: (看好/回避哪些方向)\n"
+        )
 
 def get_market_analyzer():
     return MarketAnalyzer()

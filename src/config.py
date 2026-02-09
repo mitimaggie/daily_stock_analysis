@@ -51,7 +51,7 @@ class Config:
     gemini_model: str = "gemini-3-flash-preview"  # 主模型（默认 3 Flash 控成本；3 Pro 更贵）
     gemini_model_fallback: str = "gemini-2.5-flash"  # 备选模型（API 失败时回退）
     gemini_model_when_cached: Optional[str] = "gemini-3-flash-preview"  # 命中舆情缓存时用的模型，默认与主模型一致（3 Flash）
-    gemini_temperature: float = 0.7  # 温度参数（0.0-2.0，控制输出随机性，默认0.7）
+    gemini_temperature: float = 0.2  # 温度参数（0.0-2.0，低温减少幻觉，默认0.2）
 
     # Gemini API 请求配置（防止 429 限流）
     gemini_request_delay: float = 2.0  # 请求间隔（秒）
@@ -62,7 +62,7 @@ class Config:
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None  # 如: https://api.openai.com/v1
     openai_model: str = "gpt-4o-mini"  # OpenAI 兼容模型名称
-    openai_temperature: float = 0.7  # OpenAI 温度参数（0.0-2.0，默认0.7）
+    openai_temperature: float = 0.2  # OpenAI 温度参数（0.0-2.0，低温减少幻觉，默认0.2）
     
     # === 搜索引擎配置（支持多 Key 负载均衡）===
     bocha_api_keys: List[str] = field(default_factory=list)  # Bocha API Keys

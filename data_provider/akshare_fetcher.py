@@ -204,8 +204,12 @@ class AkshareFetcher(BaseFetcher):
         return UnifiedRealtimeQuote(
             code=stock_code, name=data[1], source=RealtimeSource.TENCENT,
             price=safe_float(data[3]), change_pct=safe_float(data[32]),
+            open_price=safe_float(data[5]), high=safe_float(data[33]), low=safe_float(data[34]),
+            pre_close=safe_float(data[4]),
             volume=safe_int(data[6])*100, amount=safe_float(data[37])*10000,
             turnover_rate=safe_float(data[38]), pe_ratio=safe_float(data[39]),
+            pb_ratio=safe_float(data[46]) if len(data) > 46 else None,
+            volume_ratio=safe_float(data[49]) if len(data) > 49 else None,
             total_mv=safe_float(data[45])*100000000
         )
 

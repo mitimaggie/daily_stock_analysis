@@ -2689,10 +2689,13 @@ class NotificationService:
         # PushPlus API 端点
         api_url = "http://www.pushplus.plus/send"
 
-        # 处理消息标题
+        # 处理消息标题（自动区分大盘/个股报告）
         if title is None:
             date_str = datetime.now().strftime('%Y-%m-%d')
-            title = f"📈 股票分析报告 - {date_str}"
+            if '大盘' in content[:100] or '收盘复盘' in content[:100] or '盘中快报' in content[:100]:
+                title = f"📊 大盘复盘 - {date_str}"
+            else:
+                title = f"📈 个股分析报告 - {date_str}"
 
         try:
             payload = {

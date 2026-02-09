@@ -277,7 +277,13 @@ class DataFetcherManager:
         for source in priorities:
             source = source.strip()
             try:
-                if 'akshare' in source:
+                if source == 'tencent':
+                    # 腾讯行情：量比/换手率/PE/PB 最全，推荐第一优先
+                    fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
+                    if fetcher:
+                        q = fetcher.get_realtime_quote(stock_code, source='tencent')
+                        if q: return q
+                elif 'akshare' in source:
                     fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
                     if fetcher:
                         sub_source = source.split('_')[1] if '_' in source else 'sina'
