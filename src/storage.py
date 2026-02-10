@@ -221,6 +221,28 @@ class IndexDaily(Base):
     )
 
 
+class DataCache(Base):
+    """通用数据缓存表：持久化 F10 财务数据、行业PE中位数、板块归属等慢变数据
+
+    cache_type 枚举:
+      - 'f10'         : F10 财务摘要+预测 (TTL ~7天)
+      - 'industry_pe' : 行业 PE 中位数   (TTL ~24h)
+      - 'sector'      : 个股板块归属     (TTL ~24h)
+    """
+    __tablename__ = 'data_cache'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cache_type = Column(String(32), nullable=False, index=True)
+    cache_key = Column(String(64), nullable=False, index=True)  # 通常是股票代码
+    data_json = Column(Text, nullable=False)                     # JSON 序列化的缓存值
+    fetched_at = Column(DateTime, default=datetime.now, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('cache_type', 'cache_key', name='uix_cache_type_key'),
+        Index('ix_cache_type_key_time', 'cache_type', 'cache_key', 'fetched_at'),
+    )
+
+
 class DatabaseManager:
     """
     数据库管理器 - 单例模式
@@ -713,6 +735,52 @@ class DatabaseManager:
                     'advice': result.operation_advice
                 }
             return None
+
+    # === 通用数据缓存 (F10/行业PE/板块归属) ===
+
+    def get_cache(self, cache_type: str, cache_key: str, ttl_hours: float = 24.0) -> Optional[Dict[str, Any]]:
+        """读取缓存，TTL 过期则返回 None"""
+        cutoff = datetime.now() - timedelta(hours=ttl_hours)
+        with self.get_session() as session:
+            row = session.execute(
+                select(DataCache).where(and_(
+                    DataCache.cache_type == cache_type,
+                    DataCache.cache_key == cache_key,
+                    DataCache.fetched_at >= cutoff,
+                ))
+            ).scalar_one_or_none()
+            if row:
+                try:
+                    return json.loads(row.data_json)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        return None
+
+    def set_cache(self, cache_type: str, cache_key: str, data: Dict[str, Any]) -> None:
+        """写入/更新缓存"""
+        data_str = json.dumps(data, ensure_ascii=False, default=str)
+        with self.get_session() as session:
+            try:
+                existing = session.execute(
+                    select(DataCache).where(and_(
+                        DataCache.cache_type == cache_type,
+                        DataCache.cache_key == cache_key,
+                    ))
+                ).scalar_one_or_none()
+                if existing:
+                    existing.data_json = data_str
+                    existing.fetched_at = datetime.now()
+                else:
+                    session.add(DataCache(
+                        cache_type=cache_type,
+                        cache_key=cache_key,
+                        data_json=data_str,
+                        fetched_at=datetime.now(),
+                    ))
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.debug(f"缓存写入失败 [{cache_type}:{cache_key}]: {e}")
 
     def _analyze_ma_status(self, data: StockDaily) -> str:
         close = data.close or 0
