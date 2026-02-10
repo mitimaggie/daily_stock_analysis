@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from src.config import get_config
@@ -267,6 +268,7 @@ class GeminiAnalyzer:
         retry_delay = getattr(cfg, "gemini_retry_delay", 5.0)
         gemini_temp = getattr(cfg, "gemini_temperature", 0.7)
         gen_cfg = {"temperature": gemini_temp}
+        api_timeout = getattr(cfg, "gemini_request_timeout", 120)  # 单次请求超时(秒)
 
         def _is_retryable(e: Exception) -> bool:
             s = str(e).lower()
@@ -293,10 +295,18 @@ class GeminiAnalyzer:
                                 {"role": "user", "content": prompt},
                             ],
                             temperature=getattr(cfg, "openai_temperature", 0.7),
+                            timeout=api_timeout,
                         )
                         return r.choices[0].message.content
                     else:
-                        return model.generate_content(full_prompt, generation_config=gen_cfg).text
+                        # 用线程池包裹 generate_content，防止无限挂起
+                        with ThreadPoolExecutor(max_workers=1) as _tp:
+                            future = _tp.submit(model.generate_content, full_prompt, generation_config=gen_cfg)
+                            try:
+                                resp = future.result(timeout=api_timeout)
+                                return resp.text
+                            except FuturesTimeoutError:
+                                raise TimeoutError(f"Gemini API 请求超时 ({api_timeout}s)")
                 except Exception as e:
                     last_err = e
                     if attempt < max_retries - 1 and _is_retryable(e):
