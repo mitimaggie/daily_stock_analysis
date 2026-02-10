@@ -526,6 +526,16 @@ class NotificationService:
         return "\n".join(report_lines)
     
     @staticmethod
+    def _detect_report_title(content: str) -> str:
+        """根据内容自动检测报告标题（大盘分析/股票分析报告/个股分析报告）"""
+        head = content[:200] if content else ''
+        if '大盘' in head or '收盘复盘' in head or '盘中快报' in head or '大盘策略日报' in head:
+            return "大盘分析"
+        elif '决策仪表盘' in head or '共分析' in head:
+            return "股票分析报告"
+        return "个股分析报告"
+
+    @staticmethod
     def _escape_md(name: str) -> str:
         """Escape markdown special characters in stock names (e.g. *ST → \\*ST)."""
         return name.replace('*', r'\*') if name else name
@@ -801,21 +811,27 @@ class NotificationService:
             if beginner:
                 report_lines.extend(["### 💬 白话解读", "", beginner, ""])
 
-            # ========== 无 dashboard 兜底 ==========
-            if not dashboard:
+            # ========== 兜底（无 dashboard 或分析失败）==========
+            if not dashboard or (not qe and not core):
+                fallback_items = []
+                if result.analysis_summary:
+                    fallback_items.append(f"> {result.analysis_summary}")
+                if result.operation_advice:
+                    fallback_items.append(f"**建议**: {result.operation_advice}")
                 if result.buy_reason:
-                    report_lines.extend([f"**💡 操作理由**: {result.buy_reason}", ""])
+                    fallback_items.append(f"**💡 操作理由**: {result.buy_reason}")
                 if result.risk_warning:
-                    report_lines.extend([f"**⚠️ 风险提示**: {result.risk_warning}", ""])
-                if result.ma_analysis or result.volume_analysis:
-                    report_lines.extend(["### 📊 技术面", ""])
-                    if result.ma_analysis:
-                        report_lines.append(f"**均线**: {result.ma_analysis}")
-                    if result.volume_analysis:
-                        report_lines.append(f"**量能**: {result.volume_analysis}")
-                    report_lines.append("")
+                    fallback_items.append(f"**⚠️ 风险提示**: {result.risk_warning}")
+                if result.ma_analysis:
+                    fallback_items.append(f"**均线**: {result.ma_analysis}")
+                if result.volume_analysis:
+                    fallback_items.append(f"**量能**: {result.volume_analysis}")
                 if result.news_summary:
-                    report_lines.extend(["### 📰 消息面", f"{result.news_summary}", ""])
+                    fallback_items.append(f"**📰 消息面**: {result.news_summary}")
+                if not fallback_items:
+                    fallback_items.append("*分析数据获取失败，请稍后重试*")
+                report_lines.extend(fallback_items)
+                report_lines.append("")
 
             report_lines.extend(["---", ""])
         
@@ -1158,21 +1174,27 @@ class NotificationService:
         if beginner:
             lines.extend(["### 💬 白话解读", "", beginner, ""])
 
-        # ========== 无 dashboard 兜底 ==========
-        if not dashboard:
+        # ========== 兜底（无 dashboard 或分析失败）==========
+        if not dashboard or (not qe and not core):
+            fallback_items = []
+            if result.analysis_summary:
+                fallback_items.append(f"> {result.analysis_summary}")
+            if result.operation_advice:
+                fallback_items.append(f"**建议**: {result.operation_advice}")
             if result.buy_reason:
-                lines.extend([f"**💡 操作理由**: {result.buy_reason}", ""])
+                fallback_items.append(f"**💡 操作理由**: {result.buy_reason}")
             if result.risk_warning:
-                lines.extend([f"**⚠️ 风险提示**: {result.risk_warning}", ""])
-            if result.ma_analysis or result.volume_analysis:
-                lines.extend(["### 📊 技术面", ""])
-                if result.ma_analysis:
-                    lines.append(f"**均线**: {result.ma_analysis}")
-                if result.volume_analysis:
-                    lines.append(f"**量能**: {result.volume_analysis}")
-                lines.append("")
+                fallback_items.append(f"**⚠️ 风险提示**: {result.risk_warning}")
+            if result.ma_analysis:
+                fallback_items.append(f"**均线**: {result.ma_analysis}")
+            if result.volume_analysis:
+                fallback_items.append(f"**量能**: {result.volume_analysis}")
             if result.news_summary:
-                lines.extend(["### 📰 消息面", f"{result.news_summary}", ""])
+                fallback_items.append(f"**📰 消息面**: {result.news_summary}")
+            if not fallback_items:
+                fallback_items.append("*分析数据获取失败，请稍后重试*")
+            lines.extend(fallback_items)
+            lines.append("")
 
         lines.extend(["---", "*AI生成，仅供参考，不构成投资建议*"])
         return "\n".join(lines)
@@ -2601,7 +2623,7 @@ class NotificationService:
             payload = {
                 "msgtype": "markdown",
                 "markdown": {
-                    "title": "股票分析报告",
+                    "title": self._detect_report_title(content),
                     "text": chunk + marker,
                 },
             }
@@ -2635,7 +2657,7 @@ class NotificationService:
             return {
                 "msgtype": "markdown",
                 "markdown": {
-                    "title": "股票分析报告",
+                    "title": self._detect_report_title(content),
                     "text": content
                 }
             }
@@ -2658,7 +2680,7 @@ class NotificationService:
         # Bark (iOS 推送)
         if 'api.day.app' in url_lower:
             return {
-                "title": "股票分析报告",
+                "title": self._detect_report_title(content),
                 "body": content[:4000],  # Bark 限制
                 "group": "stock"
             }
@@ -2852,11 +2874,14 @@ class NotificationService:
         # PushPlus API 端点
         api_url = "http://www.pushplus.plus/send"
 
-        # 处理消息标题（自动区分大盘/个股报告）
+        # 处理消息标题（自动区分大盘/个股/仪表盘报告）
         if title is None:
             date_str = datetime.now().strftime('%Y-%m-%d')
-            if '大盘' in content[:100] or '收盘复盘' in content[:100] or '盘中快报' in content[:100]:
-                title = f"📊 大盘复盘 - {date_str}"
+            head = content[:200]
+            if '大盘' in head or '收盘复盘' in head or '盘中快报' in head or '大盘策略日报' in head:
+                title = f"📊 大盘分析 - {date_str}"
+            elif '决策仪表盘' in head or '共分析' in head:
+                title = f"📊 股票分析报告 - {date_str}"
             else:
                 title = f"📈 个股分析报告 - {date_str}"
 
