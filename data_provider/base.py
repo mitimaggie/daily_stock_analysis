@@ -164,21 +164,40 @@ class DataFetcherManager:
             logger.warning(f"[{code}] 无法获取实时行情，仅返回历史数据")
             return df_history
 
-        # 3. 判断是否需要缝合
-        # 逻辑：如果实时行情的日期 > 历史数据的最后一天，说明是新的一天（或者今天是交易日且正在盘中）
+        # 3. 判断是否需要缝合 / 更新
         try:
             if not df_history.empty:
                 last_date = df_history.iloc[-1]['date'].date()
                 today_date = datetime.now().date()
                 
-                # 简单判断：如果历史数据的最后一天不是今天，尝试缝合
                 if last_date < today_date:
-                    # 构造今天的 K 线行 (Mock Bar)
+                    # 3a. 今天的数据尚未入库 → 构造 Mock Bar 拼接
                     today_row = self._create_mock_bar(realtime_quote, df_history)
                     if today_row is not None:
-                        # 拼接到最后
                         df_merged = pd.concat([df_history, today_row], ignore_index=True)
                         return df_merged
+                elif last_date == today_date:
+                    # 3b. 今天的数据已在 DB 中（之前的 run 写入），但可能已过时
+                    #     用最新实时行情刷新最后一行，保证技术分析和报告数据是最新的
+                    if realtime_quote.price and realtime_quote.price > 0:
+                        df_history = df_history.copy()
+                        idx = df_history.index[-1]
+                        df_history.loc[idx, 'close'] = realtime_quote.price
+                        if realtime_quote.high and realtime_quote.high > 0:
+                            df_history.loc[idx, 'high'] = max(float(df_history.loc[idx, 'high'] or 0), realtime_quote.high)
+                        if realtime_quote.low and realtime_quote.low > 0:
+                            cur_low = float(df_history.loc[idx, 'low'] or 999999)
+                            df_history.loc[idx, 'low'] = min(cur_low, realtime_quote.low) if cur_low > 0 else realtime_quote.low
+                        if realtime_quote.volume and realtime_quote.volume > 0:
+                            elapsed_w = self._calc_elapsed_weight()
+                            if elapsed_w > 0.03:
+                                df_history.loc[idx, 'volume'] = realtime_quote.volume / elapsed_w
+                        if realtime_quote.amount and realtime_quote.amount > 0:
+                            df_history.loc[idx, 'amount'] = realtime_quote.amount
+                        if realtime_quote.change_pct is not None:
+                            df_history.loc[idx, 'pct_chg'] = realtime_quote.change_pct
+                        logger.debug(f"[{code}] 已用实时行情刷新今日K线 (close={realtime_quote.price})")
+                        return df_history
         except Exception as e:
             logger.error(f"[{code}] 数据缝合判断异常: {e}")
         
@@ -232,15 +251,17 @@ class DataFetcherManager:
             if elapsed_weight > 0.03:  # 至少交易了 ~4 分钟才做预测
                 predicted_volume = current_volume / elapsed_weight
 
+            # 用 price 兜底缺失的 OHLC（部分数据源不提供完整的 open/high/low）
+            price = quote.price or 0
             data = {
                 'date': [pd.Timestamp(now.date())],
-                'open': [quote.open_price],
-                'high': [quote.high],
-                'low': [quote.low],
-                'close': [quote.price],
+                'open': [quote.open_price if quote.open_price and quote.open_price > 0 else price],
+                'high': [quote.high if quote.high and quote.high > 0 else price],
+                'low': [quote.low if quote.low and quote.low > 0 else price],
+                'close': [price],
                 'volume': [predicted_volume],
-                'amount': [quote.amount],
-                'pct_chg': [quote.change_pct],
+                'amount': [quote.amount if quote.amount else 0],
+                'pct_chg': [quote.change_pct if quote.change_pct is not None else 0],
                 'volume_ratio': [quote.volume_ratio if quote.volume_ratio else 0.0]
             }
             return pd.DataFrame(data)

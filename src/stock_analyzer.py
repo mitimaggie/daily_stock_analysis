@@ -147,6 +147,19 @@ class TrendAnalysisResult:
     resonance_bonus: int = 0            # 共振加分
     # 白话版解读
     beginner_summary: str = ""          # 通俗语言版分析结论
+    # 估值安全检查
+    pe_ratio: float = 0.0               # 市盈率
+    pb_ratio: float = 0.0               # 市净率
+    peg_ratio: float = 0.0              # PEG
+    valuation_score: int = 0            # 估值评分 (0-10, 10=严重低估)
+    valuation_verdict: str = ""         # "低估" / "合理" / "偏高" / "严重高估"
+    valuation_downgrade: int = 0        # 估值降档扣分 (0~-15)
+    # 全局暂停信号
+    trading_halt: bool = False          # True=不适合交易
+    trading_halt_reason: str = ""       # 暂停原因
+    # 资金面
+    capital_flow_score: int = 0         # 资金面评分 (0-10)
+    capital_flow_signal: str = ""       # 资金面信号描述
     # 仓位管理（量化硬规则，不交给 LLM）
     suggested_position_pct: int = 0     # 建议仓位占比 (0-30%)
 
@@ -221,6 +234,16 @@ class TrendAnalysisResult:
             "resonance_signals": self.resonance_signals,
             "resonance_bonus": self.resonance_bonus,
             "beginner_summary": self.beginner_summary,
+            "pe_ratio": self.pe_ratio,
+            "pb_ratio": self.pb_ratio,
+            "peg_ratio": self.peg_ratio,
+            "valuation_score": self.valuation_score,
+            "valuation_verdict": self.valuation_verdict,
+            "valuation_downgrade": self.valuation_downgrade,
+            "trading_halt": self.trading_halt,
+            "trading_halt_reason": self.trading_halt_reason,
+            "capital_flow_score": self.capital_flow_score,
+            "capital_flow_signal": self.capital_flow_signal,
         }
 
 class StockTrendAnalyzer:
@@ -235,7 +258,7 @@ class StockTrendAnalyzer:
         MarketRegime.BEAR:     {"trend": 13, "bias": 17, "volume": 17, "support": 13, "macd": 12, "rsi": 13, "kdj": 15},
     }
 
-    def analyze(self, df: pd.DataFrame, code: str, market_regime: MarketRegime = MarketRegime.SIDEWAYS, index_returns: pd.Series = None) -> TrendAnalysisResult:
+    def analyze(self, df: pd.DataFrame, code: str, market_regime: MarketRegime = MarketRegime.SIDEWAYS, index_returns: pd.Series = None, valuation: dict = None, capital_flow: dict = None) -> TrendAnalysisResult:
         result = TrendAnalysisResult(code=code)
         
         if df is None or df.empty or len(df) < 30:
@@ -652,7 +675,143 @@ class StockTrendAnalyzer:
             elif score >= 35: result.buy_signal = BuySignal.WAIT
             else: result.buy_signal = BuySignal.SELL
 
-            # =============== 11. 仓位管理（量化硬规则） ===============
+            # =============== 11a. 估值安全检查（估值降档） ===============
+            if valuation and isinstance(valuation, dict):
+                pe = valuation.get('pe')
+                pb = valuation.get('pb')
+                peg = valuation.get('peg')
+                if isinstance(pe, (int, float)) and pe > 0:
+                    result.pe_ratio = float(pe)
+                if isinstance(pb, (int, float)) and pb > 0:
+                    result.pb_ratio = float(pb)
+                if isinstance(peg, (int, float)) and peg > 0:
+                    result.peg_ratio = float(peg)
+
+                # 估值评分 (0-10, 10=严重低估)
+                v_score = 5  # 默认中性
+                downgrade = 0
+
+                if result.pe_ratio > 0:
+                    if result.pe_ratio > 100:
+                        v_score = 0
+                        downgrade = -15
+                        result.valuation_verdict = "严重高估"
+                    elif result.pe_ratio > 60:
+                        v_score = 2
+                        downgrade = -10
+                        result.valuation_verdict = "偏高"
+                    elif result.pe_ratio > 30:
+                        v_score = 4
+                        downgrade = -3
+                        result.valuation_verdict = "略高"
+                    elif result.pe_ratio > 15:
+                        v_score = 6
+                        result.valuation_verdict = "合理"
+                    elif result.pe_ratio > 8:
+                        v_score = 8
+                        result.valuation_verdict = "偏低"
+                    else:
+                        v_score = 10
+                        result.valuation_verdict = "低估"
+
+                    # PEG 修正（PEG < 1 说明增速匹配估值，可放宽）
+                    if result.peg_ratio > 0:
+                        if result.peg_ratio < 0.5:
+                            v_score = min(10, v_score + 3)
+                            downgrade = max(0, downgrade + 5)  # 回补降档
+                            result.valuation_verdict += "(PEG极低,增速优秀)"
+                        elif result.peg_ratio < 1.0:
+                            v_score = min(10, v_score + 1)
+                            downgrade = max(0, downgrade + 3)
+                            result.valuation_verdict += "(PEG合理)"
+                        elif result.peg_ratio > 3.0:
+                            v_score = max(0, v_score - 2)
+                            downgrade = min(downgrade, downgrade - 3)
+                            result.valuation_verdict += "(PEG过高,增速不匹配)"
+
+                result.valuation_score = v_score
+                result.valuation_downgrade = downgrade
+
+                # 应用估值降档到评分
+                if downgrade < 0:
+                    result.signal_score = max(0, result.signal_score + downgrade)
+                    result.score_breakdown['valuation_adj'] = downgrade
+                    # 降档后重新判定信号
+                    score = result.signal_score
+                    if score >= 85: result.buy_signal = BuySignal.STRONG_BUY
+                    elif score >= 70: result.buy_signal = BuySignal.BUY
+                    elif score >= 50: result.buy_signal = BuySignal.HOLD
+                    elif score >= 35: result.buy_signal = BuySignal.WAIT
+                    else: result.buy_signal = BuySignal.SELL
+
+            # =============== 11b. 全局暂停信号 ===============
+            halt_reasons = []
+            # 检查1: ST / *ST / 退市风险（通过股票代码前缀判断不可靠，通过名称判断更准）
+            # 这个检查交由 pipeline 层注入 code_name，此处检查异常技术面
+            # 检查2: 极端波动率（20日年化波动率 > 100%）
+            if result.volatility_20d > 100:
+                halt_reasons.append(f"波动率异常({result.volatility_20d:.0f}%>100%)，疑似妖股")
+            # 检查3: 近60日回撤超过40%
+            if result.max_drawdown_60d < -40:
+                halt_reasons.append(f"近60日回撤{result.max_drawdown_60d:.1f}%，跌幅过大")
+            # 检查4: 连续缩量到极值（量比 < 0.3）且价格在布林下轨下方
+            if result.volume_ratio < 0.3 and result.bb_pct_b < 0:
+                halt_reasons.append("极端缩量+跌破布林下轨，流动性枯竭风险")
+            # 检查5: ATR = 0（停牌或数据异常）
+            if result.atr14 <= 0:
+                halt_reasons.append("ATR为零，可能停牌或数据异常")
+
+            if halt_reasons:
+                result.trading_halt = True
+                result.trading_halt_reason = "；".join(halt_reasons)
+                result.advice_for_empty = f"🚫 暂停交易：{result.trading_halt_reason}"
+                result.advice_for_holding = f"⚠️ 风险警告：{result.trading_halt_reason}，持仓者评估是否离场"
+
+            # =============== 11c. 资金面评分 ===============
+            if capital_flow and isinstance(capital_flow, dict):
+                cf_score = 5  # 默认中性
+                cf_signals = []
+
+                # 北向资金
+                north_net = capital_flow.get('north_net_flow')  # 正=流入(亿)
+                if isinstance(north_net, (int, float)):
+                    if north_net > 50:
+                        cf_score += 3
+                        cf_signals.append(f"北向大幅流入{north_net:.1f}亿")
+                    elif north_net > 10:
+                        cf_score += 1
+                        cf_signals.append(f"北向净流入{north_net:.1f}亿")
+                    elif north_net < -50:
+                        cf_score -= 3
+                        cf_signals.append(f"⚠️北向大幅流出{north_net:.1f}亿")
+                    elif north_net < -10:
+                        cf_score -= 1
+                        cf_signals.append(f"北向净流出{north_net:.1f}亿")
+
+                # 主力资金
+                main_net = capital_flow.get('main_net_flow')  # 正=流入(万)
+                if isinstance(main_net, (int, float)):
+                    if main_net > 5000:
+                        cf_score += 2
+                        cf_signals.append(f"主力净流入{main_net/10000:.1f}亿")
+                    elif main_net < -5000:
+                        cf_score -= 2
+                        cf_signals.append(f"⚠️主力净流出{abs(main_net)/10000:.1f}亿")
+
+                # 融资余额变化
+                margin_change = capital_flow.get('margin_balance_change')  # 正=增加
+                if isinstance(margin_change, (int, float)):
+                    if margin_change > 0:
+                        cf_score += 1
+                        cf_signals.append(f"融资余额增加")
+                    elif margin_change < -1e8:  # 减少超过1亿
+                        cf_score -= 1
+                        cf_signals.append(f"融资余额减少")
+
+                result.capital_flow_score = max(0, min(10, cf_score))
+                result.capital_flow_signal = "；".join(cf_signals) if cf_signals else "资金面数据正常"
+
+            # =============== 11d. 仓位管理（量化硬规则） ===============
             if score >= 85:
                 base_pos = 30
             elif score >= 70:
@@ -662,7 +821,19 @@ class StockTrendAnalyzer:
             else:
                 base_pos = 0
             regime_mult = {MarketRegime.BULL: 1.2, MarketRegime.SIDEWAYS: 1.0, MarketRegime.BEAR: 0.6}
-            result.suggested_position_pct = min(30, int(base_pos * regime_mult.get(market_regime, 1.0)))
+            pos = int(base_pos * regime_mult.get(market_regime, 1.0))
+            # 波动率仓位调整：高波动降仓
+            if result.volatility_20d > 50:
+                pos = min(pos, 10)  # 妖股级波动，仓位上限10%
+            elif result.volatility_20d > 35:
+                pos = min(pos, 20)  # 高波动，仓位上限20%
+            # 估值降档影响仓位
+            if result.valuation_downgrade <= -10:
+                pos = min(pos, 10)  # 严重高估，仓位上限10%
+            # 交易暂停：仓位归零
+            if result.trading_halt:
+                pos = 0
+            result.suggested_position_pct = min(30, pos)
             
             # =============== 12. 多指标共振检测 ===============
             bullish_resonance = []
@@ -870,7 +1041,27 @@ class StockTrendAnalyzer:
         elif res.risk_reward_verdict == "不值得":
             parts.append(f"📊 赚赔比只有{res.risk_reward_ratio:.1f}:1，亏钱的风险比赚钱的空间大，不划算")
 
-        # 6. 止损止盈白话
+        # 6. 估值白话
+        if res.valuation_verdict:
+            if res.valuation_downgrade <= -10:
+                parts.append(f"🚨 重要警告：这只股票估值严重偏高（市盈率{res.pe_ratio:.0f}倍），{res.valuation_verdict}，现在买入就是高位接盘")
+            elif res.valuation_downgrade < 0:
+                parts.append(f"⚠️ 注意估值偏高（市盈率{res.pe_ratio:.0f}倍），{res.valuation_verdict}，买入需谨慎")
+            elif res.valuation_score >= 8:
+                parts.append(f"💰 估值方面比较便宜（市盈率{res.pe_ratio:.0f}倍），{res.valuation_verdict}")
+
+        # 7. 资金面白话
+        if res.capital_flow_signal and res.capital_flow_signal != "资金面数据正常":
+            if res.capital_flow_score >= 8:
+                parts.append(f"💪 资金面很强：{res.capital_flow_signal}，说明大资金在买入")
+            elif res.capital_flow_score <= 2:
+                parts.append(f"⚠️ 资金面较弱：{res.capital_flow_signal}，大资金在撤退")
+
+        # 8. 交易暂停白话
+        if res.trading_halt:
+            parts.insert(0, f"🚫 重要提醒：这只股票目前不适合交易！原因：{res.trading_halt_reason}")
+
+        # 9. 止损止盈白话
         if res.stop_loss_short > 0 and res.take_profit_short > 0:
             sl_pct = abs((price - res.stop_loss_short) / price * 100)
             tp_pct = abs((res.take_profit_short - price) / price * 100)
@@ -965,7 +1156,9 @@ class StockTrendAnalyzer:
         breakdown = result.score_breakdown
         breakdown_str = ""
         if breakdown:
-            breakdown_str = f" (趋势{breakdown.get('trend',0)}+乖离{breakdown.get('bias',0)}+量能{breakdown.get('volume',0)}+支撑{breakdown.get('support',0)}+MACD{breakdown.get('macd',0)}+RSI{breakdown.get('rsi',0)}+KDJ{breakdown.get('kdj',0)})"
+            val_adj = breakdown.get('valuation_adj', 0)
+            val_str = f"+估值{val_adj}" if val_adj != 0 else ""
+            breakdown_str = f" (趋势{breakdown.get('trend',0)}+乖离{breakdown.get('bias',0)}+量能{breakdown.get('volume',0)}+支撑{breakdown.get('support',0)}+MACD{breakdown.get('macd',0)}+RSI{breakdown.get('rsi',0)}+KDJ{breakdown.get('kdj',0)}{val_str})"
 
         levels_str = ""
         if result.support_levels or result.resistance_levels:
@@ -1009,15 +1202,35 @@ class StockTrendAnalyzer:
         if risk_parts:
             risk_str = "\n● 风险: " + " | ".join(risk_parts)
 
+        # 估值信息
+        val_str = ""
+        if result.pe_ratio > 0:
+            val_str = f"\n● 估值: PE={result.pe_ratio:.1f} PB={result.pb_ratio:.2f}"
+            if result.peg_ratio > 0:
+                val_str += f" PEG={result.peg_ratio:.2f}"
+            val_str += f" | {result.valuation_verdict}"
+            if result.valuation_downgrade < 0:
+                val_str += f" (降档{result.valuation_downgrade}分)"
+
+        # 资金面
+        cf_str = ""
+        if result.capital_flow_signal:
+            cf_str = f"\n● 资金面: {result.capital_flow_signal} (评分{result.capital_flow_score}/10)"
+
+        # 交易暂停警告
+        halt_str = ""
+        if result.trading_halt:
+            halt_str = f"\n🚨【交易暂停】{result.trading_halt_reason}"
+
         return f"""
 【量化技术报告】
----------------------------
+---------------------------{halt_str}
 ● 综合评分: {result.signal_score}{breakdown_str} ({result.buy_signal.value})
 ● 趋势状态: {result.trend_status.value} (强度{result.trend_strength:.0f}) | {result.ma_alignment}
 ● 量能: {result.volume_status.value} ({result.volume_trend}) | 量比 {result.volume_ratio:.2f}
 ● MACD: {result.macd_status.value} ({result.macd_signal}) | DIF={result.macd_dif:.4f} DEA={result.macd_dea:.4f}
 ● RSI: {result.rsi_status.value} | RSI6={result.rsi_6:.1f} RSI12={result.rsi_12:.1f} RSI24={result.rsi_24:.1f} | {result.rsi_signal}{f' ⚠️{result.rsi_divergence}' if result.rsi_divergence else ''}
-● KDJ: {result.kdj_status.value} | K={result.kdj_k:.1f} D={result.kdj_d:.1f} J={result.kdj_j:.1f} | {result.kdj_signal}
+● KDJ: {result.kdj_status.value} | K={result.kdj_k:.1f} D={result.kdj_d:.1f} J={result.kdj_j:.1f} | {result.kdj_signal}{val_str}{cf_str}
 ● 关键数据: 现价{result.current_price:.2f} | 乖离MA5={result.bias_ma5:.2f}% MA10={result.bias_ma10:.2f}% MA20={result.bias_ma20:.2f}%{bb_str}{risk_str}{levels_str}
 
 【技术面操作指引 (硬规则)】

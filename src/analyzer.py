@@ -588,6 +588,22 @@ dashboard: {{
         high = today.get('high')
         low = today.get('low')
 
+        # 用实时行情覆盖可能过时的日线数据，确保表格与当前价一致
+        rt_price = realtime.get('price')
+        if rt_price and rt_price > 0:
+            close = rt_price
+        rt_high = realtime.get('high')
+        if rt_high and rt_high > 0:
+            high = max(float(high or 0), rt_high)
+        rt_low = realtime.get('low')
+        if rt_low and rt_low > 0:
+            low = min(float(low or 999999), rt_low) if low and float(low) > 0 else rt_low
+        rt_open = realtime.get('open_price')
+        if rt_open and rt_open > 0:
+            today['open'] = rt_open
+        if realtime.get('pre_close') and realtime['pre_close'] > 0:
+            prev_close = realtime['pre_close']
+
         amplitude = None
         change_amount = None
         if prev_close not in (None, 0) and high is not None and low is not None:
@@ -610,11 +626,11 @@ dashboard: {{
             "high": self._format_price(high),
             "low": self._format_price(low),
             "prev_close": self._format_price(prev_close),
-            "pct_chg": self._format_percent(today.get('pct_chg')),
+            "pct_chg": self._format_percent(realtime.get('change_pct') if realtime.get('change_pct') is not None else today.get('pct_chg')),
             "change_amount": self._format_price(change_amount),
             "amplitude": self._format_percent(amplitude),
-            "volume": self._format_volume(today.get('volume')),
-            "amount": self._format_amount(today.get('amount')),
+            "volume": self._format_volume(realtime.get('volume') or today.get('volume')),
+            "amount": self._format_amount(realtime.get('amount') or today.get('amount')),
         }
         if realtime:
             src = realtime.get('source')

@@ -268,7 +268,39 @@ class StockAnalysisPipeline:
                         idx_ret = None
                 except Exception:
                     pass
-                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret)
+                # 构建估值快照（从实时行情提取 PE/PB，从 F10 缓存提取 PEG）
+                _valuation = {}
+                if quote:
+                    if getattr(quote, 'pe_ratio', None) is not None:
+                        _valuation['pe'] = quote.pe_ratio
+                    if getattr(quote, 'pb_ratio', None) is not None:
+                        _valuation['pb'] = quote.pb_ratio
+                # 尝试从 F10 缓存获取 PEG（缓存命中免网络请求）
+                try:
+                    _f10_cached = get_fundamental_data(code) if not getattr(self.config, 'fast_mode', False) else {}
+                    if _f10_cached:
+                        _f10_val = _f10_cached.get('valuation', {}) or {}
+                        if 'peg' in _f10_val:
+                            _valuation['peg'] = _f10_val['peg']
+                        elif _valuation.get('pe') and _valuation['pe'] > 0:
+                            growth_str = _f10_cached.get('financial', {}).get('net_profit_growth', 'N/A')
+                            if growth_str not in ('N/A', '', '0', None):
+                                try:
+                                    growth_val = float(str(growth_str).replace('%', ''))
+                                    if growth_val > 0:
+                                        _valuation['peg'] = round(_valuation['pe'] / growth_val, 2)
+                                except (ValueError, TypeError):
+                                    pass
+                except Exception:
+                    pass
+                # 资金面数据（如有）
+                _capital_flow = {}
+                try:
+                    if hasattr(self.fetcher_manager, 'get_capital_flow'):
+                        _capital_flow = self.fetcher_manager.get_capital_flow(code) or {}
+                except Exception:
+                    pass
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None)
                 if quote.price:
                     trend_result.current_price = quote.price
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
