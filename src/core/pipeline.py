@@ -244,6 +244,7 @@ class StockAnalysisPipeline:
             daily_df = None
 
         tech_report = "数据不足，无法进行技术分析"
+        tech_report_llm = "数据不足"
         trend_analysis_dict = {}
         if daily_df is not None and not daily_df.empty:
             try:
@@ -304,6 +305,7 @@ class StockAnalysisPipeline:
                 if quote.price:
                     trend_result.current_price = quote.price
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
+                tech_report_llm = self.trend_analyzer.format_for_llm(trend_result)
                 trend_analysis_dict = trend_result.to_dict()
                 trend_analysis_dict['market_regime'] = regime.value
             except Exception as e:
@@ -407,6 +409,7 @@ class StockAnalysisPipeline:
             'chip': chip_data,
             'chip_note': chip_note,
             'technical_analysis_report': tech_report,
+            'technical_analysis_report_llm': tech_report_llm,
             'trend_analysis': trend_analysis_dict,
             'fundamental': fundamental_data,
             'history_summary': history_summary,

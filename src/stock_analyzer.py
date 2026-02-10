@@ -1152,6 +1152,46 @@ class StockTrendAnalyzer:
 
         return df.fillna(0)
 
+    def format_for_llm(self, result: TrendAnalysisResult) -> str:
+        """生成精简版技术摘要（供 LLM prompt 使用，约为 format_analysis 的 1/3 大小）
+        
+        LLM 不需要完整的量化报告，只需要关键信号和硬规则锚点。
+        """
+        breakdown = result.score_breakdown
+        bd_str = ""
+        if breakdown:
+            val_adj = breakdown.get('valuation_adj', 0)
+            bd_str = f" ({'+'.join(f'{k}{v}' for k, v in breakdown.items() if k != 'valuation_adj')}{f'+估值{val_adj}' if val_adj else ''})"
+
+        lines = [
+            f"评分={result.signal_score}{bd_str} 信号={result.buy_signal.value}",
+            f"趋势={result.trend_status.value}(强度{result.trend_strength:.0f}) 均线={result.ma_alignment}",
+            f"MACD={result.macd_status.value} KDJ={result.kdj_status.value} RSI={result.rsi_status.value}(RSI6={result.rsi_6:.0f})",
+            f"量能={result.volume_status.value} 量比={result.volume_ratio:.2f}",
+            f"现价={result.current_price:.2f} 乖离MA5={result.bias_ma5:.1f}% MA20={result.bias_ma20:.1f}%",
+        ]
+        if result.rsi_divergence:
+            lines.append(f"⚠️背离={result.rsi_divergence}")
+        if result.resonance_signals:
+            lines.append(f"共振={abs(result.resonance_count)}个: {','.join(result.resonance_signals)}")
+        if result.valuation_verdict:
+            lines.append(f"估值: PE={result.pe_ratio:.1f} {result.valuation_verdict} 降档={result.valuation_downgrade}")
+        if result.trading_halt:
+            lines.append(f"🚨暂停交易: {result.trading_halt_reason}")
+        if result.capital_flow_signal and result.capital_flow_signal != "资金面数据正常":
+            lines.append(f"资金面: {result.capital_flow_signal}")
+        # 硬规则锚点（LLM 不得覆盖）
+        if result.stop_loss_short > 0:
+            lines.append(f"止损(短)={result.stop_loss_short:.2f} 止损(中)={result.stop_loss_mid:.2f} 买点={result.ideal_buy_anchor:.2f}")
+        if result.take_profit_short > 0:
+            lines.append(f"止盈(短)={result.take_profit_short:.2f} 止盈(中)={result.take_profit_mid:.2f} 移动止盈={result.take_profit_trailing:.2f}")
+        if result.risk_reward_ratio > 0:
+            lines.append(f"R:R={result.risk_reward_ratio:.1f}:1({result.risk_reward_verdict})")
+        lines.append(f"仓位={result.suggested_position_pct}%")
+        lines.append(f"空仓建议: {result.advice_for_empty}")
+        lines.append(f"持仓建议: {result.advice_for_holding}")
+        return "\n".join(lines)
+
     def format_analysis(self, result: TrendAnalysisResult) -> str:
         breakdown = result.score_breakdown
         breakdown_str = ""
