@@ -294,14 +294,67 @@ class StockAnalysisPipeline:
                                     pass
                 except Exception:
                     pass
+                # 行业PE中位数（用于相对估值判断）
+                try:
+                    from data_provider.fundamental_fetcher import get_industry_pe_median
+                    if not getattr(self.config, 'fast_mode', False):
+                        ind_pe = get_industry_pe_median(code)
+                        if ind_pe and ind_pe > 0:
+                            _valuation['industry_pe_median'] = ind_pe
+                except Exception:
+                    pass
                 # 资金面数据（如有）
                 _capital_flow = {}
                 try:
                     if hasattr(self.fetcher_manager, 'get_capital_flow'):
                         _capital_flow = self.fetcher_manager.get_capital_flow(code) or {}
+                    # 注入日均成交额（万元），供资金面阈值相对化使用
+                    if daily_df is not None and len(daily_df) >= 20:
+                        _avg_amount = (daily_df['close'] * daily_df['volume']).tail(20).mean()
+                        if _avg_amount > 0:
+                            _capital_flow['daily_avg_amount'] = round(_avg_amount / 10000, 2)  # 转为万元
                 except Exception:
                     pass
-                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None)
+                # 板块相对强弱（提前获取，注入量化评分）
+                _sector_ctx = None
+                try:
+                    _stock_pct = getattr(quote, 'change_pct', None) if quote else None
+                    _sector_ctx = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=_stock_pct)
+                except Exception:
+                    pass
+                # 筹码数据（提前获取，注入量化评分）
+                _chip_dict = None
+                try:
+                    if getattr(self.config, 'enable_chip_distribution', False) or getattr(self.config, 'chip_fetch_only_from_cache', False):
+                        _chip_obj = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
+                        if _chip_obj:
+                            _chip_dict = _chip_obj.to_dict()
+                except Exception:
+                    pass
+                # F10 基本面数据（提前获取，注入量化评分）
+                _fund_data = None
+                try:
+                    if not getattr(self.config, 'fast_mode', False):
+                        _fund_data = get_fundamental_data(code)
+                except Exception:
+                    pass
+                # 行情附加数据（换手率、52周高低、市值）
+                _quote_extra = None
+                if quote:
+                    _qe = {}
+                    if getattr(quote, 'turnover_rate', None) is not None:
+                        _qe['turnover_rate'] = quote.turnover_rate
+                    if getattr(quote, 'high_52w', None) is not None:
+                        _qe['high_52w'] = quote.high_52w
+                    if getattr(quote, 'low_52w', None) is not None:
+                        _qe['low_52w'] = quote.low_52w
+                    if getattr(quote, 'total_mv', None) is not None:
+                        _qe['total_mv'] = quote.total_mv
+                    if getattr(quote, 'circ_mv', None) is not None:
+                        _qe['circ_mv'] = quote.circ_mv
+                    if _qe:
+                        _quote_extra = _qe
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=_sector_ctx, chip_data=_chip_dict, fundamental_data=_fund_data, quote_extra=_quote_extra)
                 if quote.price:
                     trend_result.current_price = quote.price
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
@@ -367,13 +420,22 @@ class StockAnalysisPipeline:
                 except (ValueError, TypeError, ZeroDivisionError):
                     pass
 
-        # 板块相对强弱
+        # 板块相对强弱（已在量化分析阶段获取，复用 trend_result 中的板块数据）
         sector_context = None
-        try:
-            stock_pct = getattr(quote, 'change_pct', None) if quote else None
-            sector_context = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=stock_pct)
-        except Exception as e:
-            logger.debug(f"[{code}] 板块上下文获取失败: {e}")
+        if trend_analysis_dict:
+            sector_context = {
+                'sector_name': trend_analysis_dict.get('sector_name', ''),
+                'sector_pct': trend_analysis_dict.get('sector_pct', 0),
+                'relative': trend_analysis_dict.get('sector_relative', 0),
+                'sector_score': trend_analysis_dict.get('sector_score', 5),
+                'sector_signal': trend_analysis_dict.get('sector_signal', ''),
+            }
+        if not sector_context or not sector_context.get('sector_name'):
+            try:
+                stock_pct = getattr(quote, 'change_pct', None) if quote else None
+                sector_context = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=stock_pct)
+            except Exception as e:
+                logger.debug(f"[{code}] 板块上下文获取失败: {e}")
 
         # 历史记忆
         history_summary = None

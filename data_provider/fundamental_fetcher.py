@@ -115,3 +115,87 @@ _fetcher = FundamentalFetcher()
 
 def get_fundamental_data(code: str) -> Dict[str, Any]:
     return _fetcher.get_f10_data(code)
+
+
+# === 行业 PE 中位数缓存（每日级别） ===
+_industry_pe_cache: Dict[str, float] = {}
+_industry_pe_timestamp: float = 0
+_INDUSTRY_PE_TTL = 3600 * 6  # 6小时缓存
+
+def get_industry_pe_median(code: str) -> Optional[float]:
+    """获取个股所属行业的 PE 中位数
+
+    流程：
+    1. 通过 ak.stock_individual_info_em 获取个股的行业分类
+    2. 通过 ak.stock_board_industry_cons_em 获取该行业所有成分股
+    3. 通过 ak.stock_zh_a_spot_em 获取成分股实时 PE
+    4. 计算中位数并缓存
+
+    如获取失败，返回 None（调用方 fallback 到绝对值判断）
+    """
+    import time as _time
+    global _industry_pe_cache, _industry_pe_timestamp
+
+    # 缓存过期则清空
+    now = _time.time()
+    if now - _industry_pe_timestamp > _INDUSTRY_PE_TTL:
+        _industry_pe_cache.clear()
+        _industry_pe_timestamp = now
+
+    if code in _industry_pe_cache:
+        return _industry_pe_cache[code]
+
+    try:
+        import akshare as ak
+        import numpy as np
+
+        # 1. 获取个股行业分类
+        _time.sleep(random.uniform(1.0, 2.0))
+        info_df = ak.stock_individual_info_em(symbol=code)
+        if info_df is None or info_df.empty:
+            return None
+
+        # stock_individual_info_em 返回 key-value 两列
+        info_dict = dict(zip(info_df.iloc[:, 0], info_df.iloc[:, 1]))
+        industry = info_dict.get('行业')
+        if not industry:
+            return None
+
+        # 2. 获取行业成分股
+        _time.sleep(random.uniform(1.0, 2.0))
+        cons_df = ak.stock_board_industry_cons_em(symbol=industry)
+        if cons_df is None or cons_df.empty:
+            return None
+
+        # 3. 提取成分股 PE（东财成分股列表自带 PE 列）
+        pe_col = None
+        for col_name in ['市盈率-动态', '市盈率', 'PE']:
+            if col_name in cons_df.columns:
+                pe_col = col_name
+                break
+
+        if pe_col is None:
+            logger.debug(f"[{code}] 行业 '{industry}' 成分股表无 PE 列，列名: {list(cons_df.columns)}")
+            return None
+
+        pe_values = cons_df[pe_col].apply(lambda x: float(x) if x not in (None, '', '-', 'nan') else None)
+        pe_values = pe_values.dropna()
+        pe_values = pe_values[(pe_values > 0) & (pe_values < 10000)]  # 过滤异常值
+
+        if len(pe_values) < 5:
+            logger.debug(f"[{code}] 行业 '{industry}' 有效 PE 数量不足({len(pe_values)})")
+            return None
+
+        median_pe = round(float(np.median(pe_values)), 2)
+        logger.info(f"[{code}] 行业 '{industry}' PE中位数={median_pe} (样本{len(pe_values)})")
+
+        # 缓存该行业所有成分股（避免同行业重复请求）
+        if '代码' in cons_df.columns:
+            for _, row in cons_df.iterrows():
+                _industry_pe_cache[str(row['代码'])] = median_pe
+        _industry_pe_cache[code] = median_pe
+        return median_pe
+
+    except Exception as e:
+        logger.debug(f"[{code}] 行业PE中位数获取失败: {e}")
+        return None

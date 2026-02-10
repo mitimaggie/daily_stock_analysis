@@ -166,9 +166,6 @@ class Config:
     # 熔断器冷却时间（秒）
     circuit_breaker_cooldown: int = 300
 
-    # Discord 机器人状态
-    discord_bot_status: str = "A股智能分析 | /help"
-
     # === 流控配置（防封禁关键参数）===
     # Akshare 请求间隔范围（秒）
     akshare_sleep_min: float = 2.0

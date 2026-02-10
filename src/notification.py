@@ -2883,23 +2883,41 @@ class NotificationService:
                 title = f"📈 个股分析报告 - {date_str}"
 
         try:
+            content_len = len(content)
+            # PushPlus markdown 模板对长内容支持有限，超过阈值切换为 html 模板
+            use_html = content_len > 6000
+            template = "html" if use_html else "markdown"
+            if use_html:
+                logger.info(f"PushPlus 内容较长({content_len}字符)，切换为 HTML 模板")
+
             payload = {
                 "token": self._pushplus_token,
                 "title": title,
                 "content": content,
-                "template": "markdown"  # 使用 Markdown 格式
+                "template": template
             }
 
-            response = requests.post(api_url, json=payload, timeout=10)
+            response = requests.post(api_url, json=payload, timeout=15)
 
             if response.status_code == 200:
                 result = response.json()
                 if result.get('code') == 200:
-                    logger.info("PushPlus 消息发送成功")
+                    logger.info(f"PushPlus 消息发送成功 (template={template}, {content_len}字符)")
                     return True
                 else:
                     error_msg = result.get('msg', '未知错误')
-                    logger.error(f"PushPlus 返回错误: {error_msg}")
+                    logger.error(f"PushPlus 返回错误: {error_msg} (template={template}, {content_len}字符)")
+                    # markdown 失败时 fallback 到 html
+                    if template == "markdown":
+                        logger.info("PushPlus markdown 失败，尝试 html 模板...")
+                        payload["template"] = "html"
+                        resp2 = requests.post(api_url, json=payload, timeout=15)
+                        if resp2.status_code == 200:
+                            r2 = resp2.json()
+                            if r2.get('code') == 200:
+                                logger.info("PushPlus html fallback 发送成功")
+                                return True
+                            logger.error(f"PushPlus html fallback 也失败: {r2.get('msg', '')}")
                     return False
             else:
                 logger.error(f"PushPlus 请求失败: HTTP {response.status_code}")

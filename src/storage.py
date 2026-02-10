@@ -717,7 +717,7 @@ class DatabaseManager:
                 SELECT date, pct_chg FROM index_daily
                 WHERE code = :code ORDER BY date DESC LIMIT :limit
             """)
-            with self.engine.connect() as conn:
+            with self._engine.connect() as conn:
                 df = pd.read_sql(sql, conn, params={"code": index_name, "limit": days})
             if df.empty:
                 return pd.Series(dtype=float)
