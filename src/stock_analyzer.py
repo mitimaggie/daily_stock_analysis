@@ -84,7 +84,7 @@ class TrendAnalysisResult:
     # 核心结论
     trend_status: TrendStatus = TrendStatus.CONSOLIDATION
     signal_score: int = 50 
-    buy_signal: BuySignal = BuySignal.WAIT
+    buy_signal: BuySignal = BuySignal.HOLD
     
     # === 新增：分持仓情况建议 ===
     advice_for_empty: str = ""    # 给空仓者的建议

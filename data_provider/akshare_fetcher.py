@@ -9,6 +9,7 @@ import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .base import BaseFetcher, DataFetchError, STANDARD_COLUMNS
+from .rate_limiter import get_global_limiter, CircuitBreakerOpen
 from .realtime_types import (
     UnifiedRealtimeQuote, ChipDistribution, RealtimeSource,
     get_realtime_circuit_breaker, safe_float, safe_int
@@ -45,12 +46,15 @@ class AkshareFetcher(BaseFetcher):
     def _set_random_user_agent(self): pass 
     
     def _enforce_rate_limit(self):
-        if self._last_request_time:
-            elapsed = time.time() - self._last_request_time
-            if elapsed < self.sleep_min:
-                time.sleep(self.sleep_min - elapsed)
-        self.random_sleep(self.sleep_min, self.sleep_max)
-        self._last_request_time = time.time()
+        """akshare限流（集成全局限流器）"""
+        limiter = get_global_limiter()
+        try:
+            if not limiter.acquire('akshare', blocking=True, timeout=30.0):
+                raise DataFetchError("akshare rate limit timeout")
+        except CircuitBreakerOpen as e:
+            logger.error(f" akshare熔断器打开: {e}")
+            raise DataFetchError(str(e))
+        self.random_sleep()
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:

@@ -40,6 +40,7 @@ from tenacity import (
 )
 
 from .base import BaseFetcher, DataFetchError, RateLimitError, STANDARD_COLUMNS
+from .rate_limiter import get_global_limiter, CircuitBreakerOpen
 from .realtime_types import (
     UnifiedRealtimeQuote, RealtimeSource,
     get_realtime_circuit_breaker,
@@ -191,22 +192,25 @@ class EfinanceFetcher(BaseFetcher):
     
     def _enforce_rate_limit(self) -> None:
         """
-        强制执行速率限制
+        强制执行速率限制（集成全局限流器）
         
-        策略：
-        1. 检查距离上次请求的时间间隔
-        2. 如果间隔不足，补充休眠时间
-        3. 然后再执行随机 jitter 休眠
+        逻辑：
+        1. 通过全局限流器获取请求许可（令牌桶）
+        2. 检查熔断器状态
+        3. 执行本地随机 jitter 休眠
         """
-        if self._last_request_time is not None:
-            elapsed = time.time() - self._last_request_time
-            min_interval = self.sleep_min
-            if elapsed < min_interval:
-                additional_sleep = min_interval - elapsed
-                logger.debug(f"补充休眠 {additional_sleep:.2f} 秒")
-                time.sleep(additional_sleep)
+        limiter = get_global_limiter()
         
-        # 执行随机 jitter 休眠
+        try:
+            # 获取请求许可（最多等待30秒）
+            if not limiter.acquire('efinance', blocking=True, timeout=30.0):
+                logger.warning("⚠️ efinance限流器超时，跳过本次请求")
+                raise RateLimitError("efinance rate limit timeout")
+        except CircuitBreakerOpen as e:
+            logger.error(f"🔴 efinance熔断器打开: {e}")
+            raise RateLimitError(str(e))
+        
+        # 执行本地随机 jitter 休眠（防止过于均匀）
         self.random_sleep(self.sleep_min, self.sleep_max)
         self._last_request_time = time.time()
     
@@ -487,6 +491,8 @@ class EfinanceFetcher(BaseFetcher):
                 api_elapsed = _time.time() - api_start
                 logger.info(f"[API返回] ef.stock.get_realtime_quotes 成功: 返回 {len(df)} 只股票, 耗时 {api_elapsed:.2f}s")
                 circuit_breaker.record_success(source_key)
+                # 记录全局熔断器成功
+                get_global_limiter().record_success('efinance')
                 
                 # 更新缓存
                 _realtime_cache['data'] = df
