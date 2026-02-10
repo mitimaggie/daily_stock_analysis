@@ -808,6 +808,56 @@ class NotificationService:
                         report_lines.append(f"- {item}")
                     report_lines.append("")
             
+            # === 量化增强模块（同 single_stock_report 逻辑）===
+            qe = dashboard.get('quant_extras', {}) if dashboard else {}
+            if qe:
+                if qe.get('trading_halt'):
+                    report_lines.extend([
+                        "### 🚨 交易暂停",
+                        "",
+                        f"**暂停原因**: {qe.get('trading_halt_reason', '未知')}",
+                        "",
+                    ])
+                if qe.get('pe_ratio', 0) > 0:
+                    pe = qe['pe_ratio']
+                    pb = qe.get('pb_ratio', 0)
+                    peg = qe.get('peg_ratio', 0)
+                    verdict = qe.get('valuation_verdict', '')
+                    downgrade = qe.get('valuation_downgrade', 0)
+                    val_line = f"PE={pe:.1f}"
+                    if pb > 0:
+                        val_line += f" | PB={pb:.2f}"
+                    if peg > 0:
+                        val_line += f" | PEG={peg:.2f}"
+                    val_line += f" | **{verdict}**"
+                    if downgrade < 0:
+                        val_line += f" (评分降档{downgrade}分)"
+                    report_lines.extend(["### 📊 估值检查", "", val_line, ""])
+                cf_signal = qe.get('capital_flow_signal', '')
+                if cf_signal and cf_signal != '资金面数据正常':
+                    report_lines.extend(["### 💰 资金面", "", f"{cf_signal} (评分{qe.get('capital_flow_score', 0)}/10)", ""])
+                tp_short = qe.get('take_profit_short', 0)
+                if tp_short > 0:
+                    report_lines.extend([
+                        "### 🎯 止盈方案", "",
+                        "| 短线止盈 | 中线止盈 | 移动止盈 |",
+                        "|----------|----------|----------|",
+                        f"| {tp_short:.2f} | {qe.get('take_profit_mid', 0):.2f} | {qe.get('take_profit_trailing', 0):.2f} |",
+                    ])
+                    tp_plan = qe.get('take_profit_plan', '')
+                    if tp_plan:
+                        report_lines.append(f"\n{tp_plan}")
+                    report_lines.append("")
+                rr = qe.get('risk_reward_ratio', 0)
+                if rr > 0:
+                    report_lines.extend([f"**风险收益比**: {rr:.1f}:1 ({qe.get('risk_reward_verdict', '')})", ""])
+                res_signals = qe.get('resonance_signals', [])
+                if res_signals:
+                    report_lines.extend([f"**多指标共振**: {abs(qe.get('resonance_count', 0))}个信号同向 — {', '.join(res_signals)} (加分{qe.get('resonance_bonus', 0):+d})", ""])
+                beginner = qe.get('beginner_summary', '')
+                if beginner:
+                    report_lines.extend(["### 💬 白话版解读", "", beginner, ""])
+
             # 如果没有 dashboard，显示传统格式
             if not dashboard:
                 # 操作理由
@@ -1187,6 +1237,92 @@ class NotificationService:
                 "",
             ])
         
+        # === 量化增强模块（从 dashboard['quant_extras'] 读取）===
+        qe = dashboard.get('quant_extras', {}) if dashboard else {}
+        if qe:
+            # 交易暂停警告（最高优先级）
+            if qe.get('trading_halt'):
+                lines.extend([
+                    "### 🚨 交易暂停",
+                    "",
+                    f"**暂停原因**: {qe.get('trading_halt_reason', '未知')}",
+                    "",
+                ])
+
+            # 估值检查
+            if qe.get('pe_ratio', 0) > 0:
+                pe = qe['pe_ratio']
+                pb = qe.get('pb_ratio', 0)
+                peg = qe.get('peg_ratio', 0)
+                verdict = qe.get('valuation_verdict', '')
+                downgrade = qe.get('valuation_downgrade', 0)
+                val_line = f"PE={pe:.1f}"
+                if pb > 0:
+                    val_line += f" | PB={pb:.2f}"
+                if peg > 0:
+                    val_line += f" | PEG={peg:.2f}"
+                val_line += f" | **{verdict}**"
+                if downgrade < 0:
+                    val_line += f" (评分降档{downgrade}分)"
+                lines.extend([
+                    "### 📊 估值检查",
+                    "",
+                    val_line,
+                    "",
+                ])
+
+            # 资金面
+            cf_signal = qe.get('capital_flow_signal', '')
+            if cf_signal and cf_signal != '资金面数据正常':
+                lines.extend([
+                    "### 💰 资金面",
+                    "",
+                    f"{cf_signal} (评分{qe.get('capital_flow_score', 0)}/10)",
+                    "",
+                ])
+
+            # 止盈方案
+            tp_short = qe.get('take_profit_short', 0)
+            if tp_short > 0:
+                tp_mid = qe.get('take_profit_mid', 0)
+                tp_trailing = qe.get('take_profit_trailing', 0)
+                tp_plan = qe.get('take_profit_plan', '')
+                lines.extend([
+                    "### 🎯 止盈方案",
+                    "",
+                    f"| 短线止盈 | 中线止盈 | 移动止盈 |",
+                    f"|----------|----------|----------|",
+                    f"| {tp_short:.2f} | {tp_mid:.2f} | {tp_trailing:.2f} |",
+                ])
+                if tp_plan:
+                    lines.append(f"\n{tp_plan}")
+                lines.append("")
+
+            # 风险收益比
+            rr = qe.get('risk_reward_ratio', 0)
+            if rr > 0:
+                rr_verdict = qe.get('risk_reward_verdict', '')
+                lines.append(f"**风险收益比**: {rr:.1f}:1 ({rr_verdict})")
+                lines.append("")
+
+            # 多指标共振
+            res_signals = qe.get('resonance_signals', [])
+            if res_signals:
+                res_count = qe.get('resonance_count', 0)
+                res_bonus = qe.get('resonance_bonus', 0)
+                lines.append(f"**多指标共振**: {abs(res_count)}个信号同向 — {', '.join(res_signals)} (加分{res_bonus:+d})")
+                lines.append("")
+
+            # 白话版解读（散户友好）
+            beginner = qe.get('beginner_summary', '')
+            if beginner:
+                lines.extend([
+                    "### 💬 白话版解读",
+                    "",
+                    beginner,
+                    "",
+                ])
+
         lines.extend([
             "---",
             "*AI生成，仅供参考，不构成投资建议*",

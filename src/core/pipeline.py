@@ -634,6 +634,39 @@ class StockAnalysisPipeline:
                     core['position_advice'] = pos
                     dashboard['core_conclusion'] = core
 
+                # 止盈点位注入
+                if trend.get('take_profit_short'):
+                    sniper['take_profit'] = trend['take_profit_short']
+                if trend.get('take_profit_mid'):
+                    sniper['take_profit_mid'] = trend['take_profit_mid']
+
+                # 新量化字段注入 dashboard（供 notification 渲染）
+                quant_extras = {
+                    'valuation_verdict': trend.get('valuation_verdict', ''),
+                    'valuation_downgrade': trend.get('valuation_downgrade', 0),
+                    'pe_ratio': trend.get('pe_ratio', 0),
+                    'pb_ratio': trend.get('pb_ratio', 0),
+                    'peg_ratio': trend.get('peg_ratio', 0),
+                    'valuation_score': trend.get('valuation_score', 0),
+                    'trading_halt': trend.get('trading_halt', False),
+                    'trading_halt_reason': trend.get('trading_halt_reason', ''),
+                    'capital_flow_score': trend.get('capital_flow_score', 0),
+                    'capital_flow_signal': trend.get('capital_flow_signal', ''),
+                    'beginner_summary': trend.get('beginner_summary', ''),
+                    'take_profit_short': trend.get('take_profit_short', 0),
+                    'take_profit_mid': trend.get('take_profit_mid', 0),
+                    'take_profit_trailing': trend.get('take_profit_trailing', 0),
+                    'take_profit_plan': trend.get('take_profit_plan', ''),
+                    'resonance_count': trend.get('resonance_count', 0),
+                    'resonance_signals': trend.get('resonance_signals', []),
+                    'resonance_bonus': trend.get('resonance_bonus', 0),
+                    'risk_reward_ratio': trend.get('risk_reward_ratio', 0),
+                    'risk_reward_verdict': trend.get('risk_reward_verdict', ''),
+                    'volatility_20d': trend.get('volatility_20d', 0),
+                    'max_drawdown_60d': trend.get('max_drawdown_60d', 0),
+                }
+                dashboard['quant_extras'] = quant_extras
+
                 # 决策类型
                 advice = result.operation_advice
                 if '买' in advice or '加仓' in advice:
