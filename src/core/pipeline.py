@@ -734,28 +734,75 @@ class StockAnalysisPipeline:
 
                 # 新量化字段注入 dashboard（供 notification 渲染）
                 quant_extras = {
+                    # 核心技术指标状态（报告展示 WHY）
+                    'signal_score': trend.get('signal_score', 50),
+                    'buy_signal': trend.get('buy_signal', '观望'),
+                    'trend_status': trend.get('trend_status', '震荡整理'),
+                    'trend_strength': trend.get('trend_strength', 50),
+                    'ma_alignment': trend.get('ma_alignment', ''),
+                    'macd_status': trend.get('macd_status', '中性'),
+                    'rsi_status': trend.get('rsi_status', '中性'),
+                    'rsi_6': trend.get('rsi_6', 50),
+                    'kdj_status': trend.get('kdj_status', '中性'),
+                    'volume_status': trend.get('volume_status', '量能正常'),
+                    'volume_ratio': trend.get('volume_ratio', 0),
+                    # 评分明细（让散户看懂每一分从哪来）
+                    'score_breakdown': trend.get('score_breakdown', {}),
+                    'signal_reasons': trend.get('signal_reasons', []),
+                    'risk_factors': trend.get('risk_factors', []),
+                    # 估值
                     'valuation_verdict': trend.get('valuation_verdict', ''),
                     'valuation_downgrade': trend.get('valuation_downgrade', 0),
                     'pe_ratio': trend.get('pe_ratio', 0),
                     'pb_ratio': trend.get('pb_ratio', 0),
                     'peg_ratio': trend.get('peg_ratio', 0),
                     'valuation_score': trend.get('valuation_score', 0),
+                    # 交易暂停
                     'trading_halt': trend.get('trading_halt', False),
                     'trading_halt_reason': trend.get('trading_halt_reason', ''),
+                    # 资金面
                     'capital_flow_score': trend.get('capital_flow_score', 0),
                     'capital_flow_signal': trend.get('capital_flow_signal', ''),
+                    # 板块
+                    'sector_name': trend.get('sector_name', ''),
+                    'sector_score': trend.get('sector_score', 5),
+                    'sector_signal': trend.get('sector_signal', ''),
+                    # 筹码
+                    'chip_score': trend.get('chip_score', 5),
+                    'chip_signal': trend.get('chip_signal', ''),
+                    # 基本面
+                    'fundamental_score': trend.get('fundamental_score', 5),
+                    'fundamental_signal': trend.get('fundamental_signal', ''),
+                    # 白话版
                     'beginner_summary': trend.get('beginner_summary', ''),
+                    # 止盈/止损
                     'take_profit_short': trend.get('take_profit_short', 0),
                     'take_profit_mid': trend.get('take_profit_mid', 0),
                     'take_profit_trailing': trend.get('take_profit_trailing', 0),
                     'take_profit_plan': trend.get('take_profit_plan', ''),
+                    'stop_loss_short': trend.get('stop_loss_short', 0),
+                    'ideal_buy_anchor': trend.get('ideal_buy_anchor', 0),
+                    # 共振
                     'resonance_count': trend.get('resonance_count', 0),
                     'resonance_signals': trend.get('resonance_signals', []),
                     'resonance_bonus': trend.get('resonance_bonus', 0),
+                    # 风险收益比
                     'risk_reward_ratio': trend.get('risk_reward_ratio', 0),
                     'risk_reward_verdict': trend.get('risk_reward_verdict', ''),
+                    # 风险指标
                     'volatility_20d': trend.get('volatility_20d', 0),
                     'max_drawdown_60d': trend.get('max_drawdown_60d', 0),
+                    'beta_vs_index': trend.get('beta_vs_index', 1.0),
+                    'week52_position': trend.get('week52_position', 0),
+                    # 仓位
+                    'suggested_position_pct': trend.get('suggested_position_pct', 0),
+                    'advice_for_empty': trend.get('advice_for_empty', ''),
+                    'advice_for_holding': trend.get('advice_for_holding', ''),
+                    # 背离
+                    'rsi_divergence': trend.get('rsi_divergence', ''),
+                    # 支撑/阻力
+                    'support_levels': trend.get('support_levels', []),
+                    'resistance_levels': trend.get('resistance_levels', []),
                 }
                 dashboard['quant_extras'] = quant_extras
 
