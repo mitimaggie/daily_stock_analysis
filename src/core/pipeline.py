@@ -651,6 +651,93 @@ class StockAnalysisPipeline:
         except Exception as e:
             logger.error(f"汇总推送失败: {e}")
 
+    def _check_portfolio_risk(self, results: List[AnalysisResult]) -> List[str]:
+        """
+        组合风控检查：板块集中度 + 方向一致性 + 总仓位上限
+        返回风控告警列表（空列表=无告警）
+        """
+        warnings = []
+        if len(results) < 2:
+            return warnings
+
+        # 1. 板块集中度检查
+        sector_map = {}  # sector_name -> [stock_names]
+        for r in results:
+            # 从 context snapshot 或 dashboard 中提取板块信息
+            sector = None
+            if r.dashboard and isinstance(r.dashboard, dict):
+                sector = r.dashboard.get('sector_name')
+            if not sector:
+                # 尝试从 market_snapshot 获取
+                snap = r.market_snapshot or {}
+                sector = snap.get('sector_name')
+            if sector:
+                sector_map.setdefault(sector, []).append(r.name or r.code)
+
+        for sector, stocks in sector_map.items():
+            if len(stocks) >= 2:
+                ratio = len(stocks) / len(results) * 100
+                if ratio >= 50:
+                    warnings.append(
+                        f"⚠️ 板块集中风险: {sector}板块占比{ratio:.0f}% ({', '.join(stocks)})，"
+                        f"建议分散至不同行业，避免板块性系统风险"
+                    )
+
+        # 2. 方向一致性检查（全部同向看多/看空的风险）
+        buy_count = sum(1 for r in results if r.decision_type == 'buy')
+        sell_count = sum(1 for r in results if r.decision_type == 'sell')
+        total = len(results)
+
+        if buy_count == total and total >= 3:
+            warnings.append(
+                f"⚠️ 全仓看多风险: 全部{total}只股票均建议买入，"
+                f"需警惕系统性风险（大盘回调时可能全线亏损）"
+            )
+        elif sell_count == total and total >= 3:
+            warnings.append(
+                f"💡 全仓看空信号: 全部{total}只股票均建议卖出/观望，"
+                f"市场可能处于弱势，建议降低整体仓位"
+            )
+
+        # 3. 总仓位上限检查
+        total_position = 0
+        for r in results:
+            # 从 dashboard 中获取量化建议仓位
+            trend = getattr(r, 'market_snapshot', {}) or {}
+            pos = 0
+            if r.dashboard and isinstance(r.dashboard, dict):
+                core = r.dashboard.get('core_conclusion', {})
+                pos_advice = core.get('position_advice', {})
+                pos_str = pos_advice.get('no_position', '')
+                if '仓位' in str(pos_str):
+                    try:
+                        import re
+                        m = re.search(r'(\d+)%', str(pos_str))
+                        if m:
+                            pos = int(m.group(1))
+                    except Exception:
+                        pass
+            total_position += pos
+
+        if total_position > 80:
+            warnings.append(
+                f"⚠️ 总仓位过高: 建议总仓位{total_position}%超过80%上限，"
+                f"请降低部分个股仓位或减少持股数量"
+            )
+
+        # 4. 高相关性检查（同涨跌幅 > 相关阈值的股票）
+        scores = [(r.name or r.code, r.sentiment_score) for r in results]
+        high_score = [name for name, s in scores if s >= 70]
+        low_score = [name for name, s in scores if s <= 30]
+
+        if len(high_score) >= 3:
+            warnings.append(
+                f"📊 多股同时高分: {', '.join(high_score)} 评分均≥70，"
+                f"检查是否属于同一板块/概念，避免集中踩雷"
+            )
+
+        return warnings
+
     def run(self, stock_codes: Optional[List[str]] = None, dry_run: bool = False, send_notification: bool = True) -> List[AnalysisResult]:
         """
         主执行入口 (由 main.py 调用)
@@ -770,7 +857,23 @@ class StockAnalysisPipeline:
                     logger.error(f"[{code}] AI 分析任务失败: {e}")
         
         logger.info(f"===== 分析完成，总耗时 {time.time() - start_time:.2f}s =====")
-        
+
+        # === 阶段三：组合风控检查 ===
+        if len(results) >= 2:
+            try:
+                risk_warnings = self._check_portfolio_risk(results)
+                if risk_warnings:
+                    logger.warning("⚠️ 【组合风控告警】")
+                    for w in risk_warnings:
+                        logger.warning(f"  {w}")
+                    # 将风控告警注入每只股票的 risk_warning 字段
+                    warning_text = "\n".join(risk_warnings)
+                    for r in results:
+                        existing = r.risk_warning or ""
+                        r.risk_warning = f"{existing}\n【组合风控】{warning_text}".strip()
+            except Exception as e:
+                logger.debug(f"组合风控检查跳过: {e}")
+
         # 汇总推送 (如果没开单股推送)
         if results and send_notification and not dry_run and not single_stock_notify:
             self._send_notifications(results)
