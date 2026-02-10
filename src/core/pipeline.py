@@ -357,6 +357,33 @@ class StockAnalysisPipeline:
                 trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=_sector_ctx, chip_data=_chip_dict, fundamental_data=_fund_data, quote_extra=_quote_extra)
                 if quote.price:
                     trend_result.current_price = quote.price
+                # === P4-3: 资金面连续性检测（基于历史分析记录） ===
+                try:
+                    recent_analyses = self.storage.get_recent_analysis(code, days=5)
+                    if len(recent_analyses) >= 3:
+                        cf_scores = [r.get('capital_flow_score', 5) for r in recent_analyses[:3]]
+                        if all(s >= 7 for s in cf_scores):
+                            trend_result.signal_score = min(100, trend_result.signal_score + 2)
+                            trend_result.score_breakdown['cf_continuity'] = 2
+                            cf_note = "连续3日资金持续流入"
+                            if trend_result.capital_flow_signal and trend_result.capital_flow_signal != "资金面数据正常":
+                                trend_result.capital_flow_signal += f"；{cf_note}"
+                            else:
+                                trend_result.capital_flow_signal = cf_note
+                            StockTrendAnalyzer._update_buy_signal(trend_result)
+                            logger.info(f"[{code}] 资金面连续性: 近3日持续流入(scores={cf_scores}), +2")
+                        elif all(s <= 3 for s in cf_scores):
+                            trend_result.signal_score = max(0, trend_result.signal_score - 2)
+                            trend_result.score_breakdown['cf_continuity'] = -2
+                            cf_note = "连续3日资金持续流出"
+                            if trend_result.capital_flow_signal and trend_result.capital_flow_signal != "资金面数据正常":
+                                trend_result.capital_flow_signal += f"；{cf_note}"
+                            else:
+                                trend_result.capital_flow_signal = cf_note
+                            StockTrendAnalyzer._update_buy_signal(trend_result)
+                            logger.info(f"[{code}] 资金面连续性: 近3日持续流出(scores={cf_scores}), -2")
+                except Exception as e:
+                    logger.debug(f"[{code}] 资金面连续性检测跳过: {e}")
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
                 tech_report_llm = self.trend_analyzer.format_for_llm(trend_result)
                 trend_analysis_dict = trend_result.to_dict()

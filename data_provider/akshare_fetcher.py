@@ -284,6 +284,51 @@ class AkshareFetcher(BaseFetcher):
         bottom = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.tail(n).iterrows()]
         return (top, bottom)
 
+    def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取个股资金流向（东方财富）
+
+        数据来源: ak.stock_individual_fund_flow
+        返回最近一个交易日的主力/超大单/大单/中单/小单净流入数据。
+
+        Returns:
+            dict with keys: main_net_flow (万元), main_net_flow_pct (%),
+            super_large_net (万元), large_net (万元), or None on failure.
+        """
+        if _is_us_code(stock_code) or _is_etf_code(stock_code):
+            return None
+
+        import akshare as ak
+
+        market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
+        try:
+            self._enforce_rate_limit()
+            df = ak.stock_individual_fund_flow(stock=stock_code, market=market)
+            if df is None or df.empty:
+                return None
+
+            latest = df.iloc[-1]
+
+            # 主力净流入（元 → 万元）
+            main_net_raw = safe_float(latest.get('主力净流入-净额', 0))
+            main_pct = safe_float(latest.get('主力净流入-净占比', 0))
+
+            # 超大单+大单 = 主力；也单独暴露便于精细分析
+            super_large = safe_float(latest.get('超大单净流入-净额', 0))
+            large = safe_float(latest.get('大单净流入-净额', 0))
+
+            result = {
+                'main_net_flow': round(main_net_raw / 10000, 2) if main_net_raw else 0,  # 万元
+                'main_net_flow_pct': main_pct or 0,
+                'super_large_net': round(super_large / 10000, 2) if super_large else 0,
+                'large_net': round(large / 10000, 2) if large else 0,
+            }
+            logger.info(f"💰 [{stock_code}] 资金流向: 主力净流入={result['main_net_flow']:.0f}万 ({result['main_net_flow_pct']:.1f}%)")
+            return result
+
+        except Exception as e:
+            logger.debug(f"[{stock_code}] 资金流向获取失败: {e}")
+            return None
+
     def get_chip_distribution(self, stock_code: str, force_fetch: bool = False) -> Optional[ChipDistribution]:
         """获取筹码分布（force_fetch 时忽略 enable_chip_distribution，用于定时 --chip-only 拉取）"""
         import akshare as ak

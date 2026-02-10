@@ -704,6 +704,9 @@ class StockTrendAnalyzer:
             # =============== 11c. 资金面评分 ===============
             self._score_capital_flow(result, capital_flow)
 
+            # =============== 11c2. 资金面连续性（近3日量价趋势） ===============
+            self._score_capital_flow_trend(result, df)
+
             # =============== 11e. 板块强弱评分 ===============
             self._score_sector_strength(result, sector_context)
 
@@ -715,6 +718,12 @@ class StockTrendAnalyzer:
 
             # =============== 11h. 52周位置 + 换手率异常 ===============
             self._score_quote_extra(result, quote_extra)
+
+            # =============== 11i. 修正因子总量上限 ===============
+            self._cap_adjustments(result)
+
+            # =============== 11j. 信号冲突检测 ===============
+            self._detect_signal_conflict(result)
 
             # =============== 11d. 仓位管理（量化硬规则） ===============
             self._calc_position(result, market_regime)
@@ -922,6 +931,48 @@ class StockTrendAnalyzer:
         if cf_adj != 0:
             result.signal_score = max(0, min(100, result.signal_score + cf_adj))
             result.score_breakdown['capital_flow_adj'] = cf_adj
+            self._update_buy_signal(result)
+
+    def _score_capital_flow_trend(self, result: TrendAnalysisResult, df: pd.DataFrame):
+        """资金面连续性检测：近3日量价关系判断持续性资金流向
+
+        逻辑：
+        - 连续3日放量上涨(close>open, volume递增) → 持续流入 +2
+        - 连续3日缩量下跌(close<open, volume递减) → 持续流出 -2
+        - 连续3日放量下跌 → 恐慌抛售 -3
+        """
+        if df is None or len(df) < 5:
+            return
+
+        recent = df.tail(3)
+        if len(recent) < 3:
+            return
+
+        closes = recent['close'].values
+        opens = recent['open'].values
+        volumes = recent['volume'].values
+
+        # 判断连续涨跌
+        up_days = sum(1 for c, o in zip(closes, opens) if c > o)
+        down_days = sum(1 for c, o in zip(closes, opens) if c < o)
+
+        # 判断量能趋势
+        vol_increasing = volumes[-1] > volumes[-2] > volumes[-3] if all(v > 0 for v in volumes) else False
+        vol_decreasing = volumes[-1] < volumes[-2] < volumes[-3] if all(v > 0 for v in volumes) else False
+
+        adj = 0
+        if up_days == 3 and vol_increasing:
+            adj = 2
+            result.score_breakdown['cf_trend'] = 2
+        elif down_days == 3 and vol_increasing:
+            adj = -3
+            result.score_breakdown['cf_trend'] = -3
+        elif down_days == 3 and vol_decreasing:
+            adj = -2
+            result.score_breakdown['cf_trend'] = -2
+
+        if adj != 0:
+            result.signal_score = max(0, min(100, result.signal_score + adj))
             self._update_buy_signal(result)
 
     def _score_sector_strength(self, result: TrendAnalysisResult, sector_context: dict = None):
@@ -1190,6 +1241,87 @@ class StockTrendAnalyzer:
             result.signal_score = max(0, min(100, result.signal_score + adj))
             self._update_buy_signal(result)
 
+    def _cap_adjustments(self, result: TrendAnalysisResult):
+        """修正因子总量上限：防止多维修正导致分数膨胀
+
+        规则：
+        - 正向修正总量上限 +15（防止中性股被吹到强买）
+        - 负向修正总量上限 -20（防守可以更严格）
+        - 仅截断总量，保留各项明细不变
+        """
+        bd = result.score_breakdown
+        if not bd:
+            return
+
+        adj_keys = ['valuation_adj', 'capital_flow_adj', 'cf_trend', 'cf_continuity',
+                     'cross_resonance', 'sector_adj', 'chip_adj',
+                     'fundamental_adj', 'week52_risk', 'week52_opp', 'liquidity_risk']
+        base_keys = ['trend', 'bias', 'volume', 'support', 'macd', 'rsi', 'kdj']
+
+        # 计算基础分和修正总量
+        base_score = sum(bd.get(k, 0) for k in base_keys)
+        total_adj = sum(bd.get(k, 0) for k in adj_keys)
+
+        if total_adj == 0:
+            return
+
+        cap_pos = 15
+        cap_neg = -20
+
+        if total_adj > cap_pos:
+            capped = cap_pos
+        elif total_adj < cap_neg:
+            capped = cap_neg
+        else:
+            return  # 在范围内，无需截断
+
+        # 应用截断后的分数
+        new_score = base_score + capped
+        new_score = max(0, min(100, new_score))
+        old_score = result.signal_score
+
+        if new_score != old_score:
+            result.signal_score = new_score
+            result.score_breakdown['adj_cap'] = capped - total_adj  # 记录截断量
+            self._update_buy_signal(result)
+
+    def _detect_signal_conflict(self, result: TrendAnalysisResult):
+        """信号冲突检测：技术面与多维因子严重分歧时，显式警告
+
+        冲突场景：
+        1. 技术面看多(≥70) 但 基本面/资金面/筹码 任一≤3 → 警告"技术强但XX弱"
+        2. 技术面看空(≤35) 但 基本面/筹码 任一≥8 → 提示"超跌但基本面优"
+        """
+        bd = result.score_breakdown
+        base_keys = ['trend', 'bias', 'volume', 'support', 'macd', 'rsi', 'kdj']
+        base_score = sum(bd.get(k, 0) for k in base_keys)
+
+        conflicts = []
+
+        # 场景1：技术面看多 但 某维度严重看空
+        if base_score >= 70:
+            if result.fundamental_score <= 2:
+                conflicts.append("⚠️技术面偏多但基本面很差(ROE低/负债高)")
+            if result.capital_flow_score <= 2:
+                conflicts.append("⚠️技术面偏多但资金面大幅流出")
+            if result.chip_score <= 2:
+                conflicts.append("⚠️技术面偏多但筹码抛压沉重")
+
+        # 场景2：技术面看空 但 基本面/筹码优秀
+        if base_score <= 35:
+            if result.fundamental_score >= 8:
+                conflicts.append("💡超跌但基本面优质(高ROE/低负债)")
+            if result.chip_score >= 8:
+                conflicts.append("💡超跌但筹码支撑强(低位获利盘少/成本支撑)")
+
+        if conflicts:
+            conflict_str = "；".join(conflicts)
+            result.score_breakdown['signal_conflict'] = conflict_str
+            # 注入到建议文本中（在 _generate_detailed_advice 之前）
+            if not hasattr(result, '_conflict_warnings'):
+                result._conflict_warnings = []
+            result._conflict_warnings = conflicts
+
     def _calc_position(self, result: TrendAnalysisResult, market_regime: MarketRegime):
         """仓位管理（量化硬规则）：基于评分、市场环境、波动率、估值"""
         score = result.signal_score
@@ -1263,6 +1395,25 @@ class StockTrendAnalyzer:
         elif len(bearish_resonance) >= 3:
             result.resonance_bonus = -min(8, len(bearish_resonance) * 2)
             result.signal_score = max(0, result.signal_score + result.resonance_bonus)
+
+        # === P4-4: 跨维度组合信号共振 ===
+        # 放量突破 + 主力流入 + 板块领涨 → 强势启动 extra +3
+        if (result.volume_status == VolumeStatus.HEAVY_VOLUME_UP
+                and result.capital_flow_score >= 7
+                and result.sector_score >= 7):
+            result.resonance_bonus += 3
+            result.signal_score = min(100, result.signal_score + 3)
+            result.resonance_signals.append("🔥强势启动(放量+主力流入+板块领涨)")
+            result.score_breakdown['cross_resonance'] = result.score_breakdown.get('cross_resonance', 0) + 3
+
+        # 缩量阴跌 + 主力流出 + 高位筹码松动 → 出货特征 extra -3
+        bearish_price = (result.trend_status in [TrendStatus.BEAR, TrendStatus.STRONG_BEAR, TrendStatus.WEAK_BEAR]
+                         or result.volume_status == VolumeStatus.HEAVY_VOLUME_DOWN)
+        if bearish_price and result.capital_flow_score <= 3 and result.chip_score <= 3:
+            result.resonance_bonus -= 3
+            result.signal_score = max(0, result.signal_score - 3)
+            result.resonance_signals.append("⚠️出货特征(阴跌+主力流出+筹码松动)")
+            result.score_breakdown['cross_resonance'] = result.score_breakdown.get('cross_resonance', 0) - 3
 
         # 共振后重新判定信号
         self._update_buy_signal(result)
@@ -1362,6 +1513,12 @@ class StockTrendAnalyzer:
         else:
             res.advice_for_empty = "⚖️ 趋势不明，建议观望，若突破箱体再跟随"
             res.advice_for_holding = "⚖️ 做T为主，高抛低吸，降低成本"
+
+        # 附加信号冲突警告
+        if hasattr(res, '_conflict_warnings') and res._conflict_warnings:
+            conflict_text = "｜".join(res._conflict_warnings)
+            res.advice_for_empty = f"{res.advice_for_empty} [{conflict_text}]"
+            res.advice_for_holding = f"{res.advice_for_holding} [{conflict_text}]"
 
     def _generate_beginner_summary(self, res: TrendAnalysisResult):
         """生成白话版解读（面向不懂技术分析的散户）"""
@@ -1562,9 +1719,10 @@ class StockTrendAnalyzer:
             # 技术面基础分
             base = "+".join(f"{k}{v}" for k in ['trend','bias','volume','support','macd','rsi','kdj'] if (v := breakdown.get(k)) is not None)
             # 多维修正
-            adj_map = {'valuation_adj': '估值', 'capital_flow_adj': '资金', 'sector_adj': '板块',
-                       'chip_adj': '筹码', 'fundamental_adj': '基本面', 'week52_risk': '52周高位',
-                       'week52_opp': '52周低位', 'liquidity_risk': '流动性'}
+            adj_map = {'valuation_adj': '估值', 'capital_flow_adj': '资金', 'cf_trend': '资金趋势',
+                       'cf_continuity': '资金连续', 'cross_resonance': '跨维共振',
+                       'sector_adj': '板块', 'chip_adj': '筹码', 'fundamental_adj': '基本面',
+                       'week52_risk': '52周高位', 'week52_opp': '52周低位', 'liquidity_risk': '流动性'}
             adj = " ".join(f"{label}{v:+d}" for key, label in adj_map.items() if (v := breakdown.get(key, 0)) != 0)
             bd_str = f" ({base}{' | ' + adj if adj else ''})"
 
@@ -1629,6 +1787,8 @@ class StockTrendAnalyzer:
             adj_parts = []
             adj_map = {
                 'valuation_adj': '估值', 'capital_flow_adj': '资金',
+                'cf_trend': '资金趋势', 'cf_continuity': '资金连续',
+                'cross_resonance': '跨维共振',
                 'sector_adj': '板块', 'chip_adj': '筹码',
                 'fundamental_adj': '基本面', 'week52_risk': '52周高位',
                 'week52_opp': '52周低位', 'liquidity_risk': '流动性',

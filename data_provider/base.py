@@ -35,13 +35,10 @@ class BaseFetcher(ABC):
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
         pass
 
-    def get_main_indices(self) -> Optional[List[Dict[str, Any]]]: return None
-    def get_market_stats(self) -> Optional[Dict[str, Any]]: return None
     def get_sector_rankings(self, n: int = 5) -> Optional[Tuple[List[Dict], List[Dict]]]: return None
     def get_stock_belong_board(self, stock_code: str): return None
     def get_chip_distribution(self, stock_code: str): return None
     def get_stock_name(self, stock_code: str): return None
-    def get_stock_list(self): return None
 
     def get_daily_data(self, stock_code: str, start_date: Optional[str] = None, end_date: Optional[str] = None, days: int = 30) -> pd.DataFrame:
         if end_date is None: end_date = datetime.now().strftime('%Y-%m-%d')
@@ -104,7 +101,6 @@ class DataFetcherManager:
     def _init_default_fetchers(self) -> None:
         from .efinance_fetcher import EfinanceFetcher
         from .akshare_fetcher import AkshareFetcher
-        from .tushare_fetcher import TushareFetcher
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
@@ -112,19 +108,16 @@ class DataFetcherManager:
         akshare = AkshareFetcher()
         efinance = EfinanceFetcher()
         baostock = BaostockFetcher()
-        tushare = TushareFetcher()
         yfinance = YfinanceFetcher()
         pytdx = PytdxFetcher()
         
-        # 推荐顺序
         akshare.priority = 0
         efinance.priority = 1
         baostock.priority = 2
-        tushare.priority = 3
-        yfinance.priority = 4
-        pytdx.priority = 5
+        yfinance.priority = 3
+        pytdx.priority = 4
 
-        self._fetchers = [akshare, efinance, baostock, tushare, yfinance, pytdx]
+        self._fetchers = [akshare, efinance, baostock, yfinance, pytdx]
         self._fetchers.sort(key=lambda f: f.priority)
         
         logger.info(f"🚀 数据源加载顺序: {', '.join([f.name for f in self._fetchers])}")
@@ -418,22 +411,6 @@ class DataFetcherManager:
             if name: res[code] = name
         return res
     
-    def get_main_indices(self):
-        for f in self._fetchers:
-            try:
-                res = f.get_main_indices()
-                if res: return res
-            except: continue
-        return []
-
-    def get_market_stats(self):
-        for f in self._fetchers:
-            try:
-                res = f.get_market_stats()
-                if res: return res
-            except: continue
-        return {}
-
     def get_sector_rankings(self, n=5):
         for f in self._fetchers:
             try:
@@ -441,6 +418,18 @@ class DataFetcherManager:
                 if res: return res
             except: continue
         return [], []
+
+    def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """获取个股资金流向（主力/超大单/大单净流入）"""
+        for f in self._fetchers:
+            if hasattr(f, 'get_capital_flow'):
+                try:
+                    res = f.get_capital_flow(stock_code)
+                    if res:
+                        return res
+                except Exception:
+                    continue
+        return None
 
     def get_stock_sector_context(self, stock_code: str, stock_pct_chg: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """获取个股所属板块及相对强弱（板块今日涨跌 vs 个股涨跌）"""

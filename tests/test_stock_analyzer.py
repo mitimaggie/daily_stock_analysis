@@ -569,6 +569,105 @@ class TestQuoteExtra:
 
 
 # ============================================================
+# 5f. 修正因子上限测试 (_cap_adjustments)
+# ============================================================
+
+class TestCapAdjustments:
+
+    def test_positive_cap(self, analyzer):
+        """正向修正超过+15时截断"""
+        result = TrendAnalysisResult(code="600000")
+        # 基础分50 + 修正总量+20 → 应截断为+15 → 最终65
+        result.score_breakdown = {
+            'trend': 15, 'bias': 10, 'volume': 8, 'support': 5,
+            'macd': 5, 'rsi': 4, 'kdj': 3,  # base=50
+            'capital_flow_adj': 5, 'sector_adj': 5, 'chip_adj': 5,
+            'fundamental_adj': 5,  # total adj = +20
+        }
+        result.signal_score = 70  # 50+20
+        result.buy_signal = BuySignal.BUY
+        analyzer._cap_adjustments(result)
+        assert result.signal_score == 65  # 50+15
+        assert 'adj_cap' in result.score_breakdown
+
+    def test_negative_cap(self, analyzer):
+        """负向修正超过-20时截断"""
+        result = TrendAnalysisResult(code="600000")
+        result.score_breakdown = {
+            'trend': 15, 'bias': 10, 'volume': 8, 'support': 5,
+            'macd': 5, 'rsi': 4, 'kdj': 3,  # base=50
+            'valuation_adj': -15, 'capital_flow_adj': -5, 'chip_adj': -5,
+        }
+        result.signal_score = 25  # 50-25
+        result.buy_signal = BuySignal.SELL
+        analyzer._cap_adjustments(result)
+        assert result.signal_score == 30  # 50-20
+        assert 'adj_cap' in result.score_breakdown
+
+    def test_within_range_no_cap(self, analyzer):
+        """修正在范围内不截断"""
+        result = TrendAnalysisResult(code="600000")
+        result.score_breakdown = {
+            'trend': 15, 'bias': 10, 'volume': 8, 'support': 5,
+            'macd': 5, 'rsi': 4, 'kdj': 3,
+            'sector_adj': 3, 'fundamental_adj': 2,  # total adj = +5
+        }
+        result.signal_score = 55  # 50+5
+        result.buy_signal = BuySignal.HOLD
+        analyzer._cap_adjustments(result)
+        assert result.signal_score == 55  # 不变
+        assert 'adj_cap' not in result.score_breakdown
+
+
+# ============================================================
+# 5g. 信号冲突检测测试 (_detect_signal_conflict)
+# ============================================================
+
+class TestSignalConflict:
+
+    def test_bullish_tech_weak_fundamental(self, analyzer):
+        """技术面强但基本面极差 → 冲突警告"""
+        result = TrendAnalysisResult(code="600000")
+        result.score_breakdown = {
+            'trend': 25, 'bias': 15, 'volume': 10, 'support': 5,
+            'macd': 8, 'rsi': 5, 'kdj': 5,  # base=73
+        }
+        result.fundamental_score = 1
+        result.capital_flow_score = 5
+        result.chip_score = 5
+        analyzer._detect_signal_conflict(result)
+        assert 'signal_conflict' in result.score_breakdown
+        assert "基本面" in result.score_breakdown['signal_conflict']
+
+    def test_bearish_tech_good_fundamental(self, analyzer):
+        """技术面弱但基本面优 → 提示"""
+        result = TrendAnalysisResult(code="600000")
+        result.score_breakdown = {
+            'trend': 5, 'bias': 5, 'volume': 5, 'support': 5,
+            'macd': 5, 'rsi': 5, 'kdj': 5,  # base=35
+        }
+        result.fundamental_score = 9
+        result.capital_flow_score = 5
+        result.chip_score = 5
+        analyzer._detect_signal_conflict(result)
+        assert 'signal_conflict' in result.score_breakdown
+        assert "超跌但基本面优质" in result.score_breakdown['signal_conflict']
+
+    def test_no_conflict(self, analyzer):
+        """无冲突时不产生警告"""
+        result = TrendAnalysisResult(code="600000")
+        result.score_breakdown = {
+            'trend': 10, 'bias': 10, 'volume': 8, 'support': 5,
+            'macd': 5, 'rsi': 5, 'kdj': 5,  # base=48
+        }
+        result.fundamental_score = 5
+        result.capital_flow_score = 5
+        result.chip_score = 5
+        analyzer._detect_signal_conflict(result)
+        assert 'signal_conflict' not in result.score_breakdown
+
+
+# ============================================================
 # 6. 仓位管理测试 (_calc_position)
 # ============================================================
 

@@ -551,52 +551,6 @@ class EfinanceFetcher(BaseFetcher):
             circuit_breaker.record_failure(source_key, str(e))
             return None
     
-    def get_base_info(self, stock_code: str) -> Optional[Dict[str, Any]]:
-        """
-        获取股票基本信息
-        
-        数据来源：ef.stock.get_base_info()
-        包含：市盈率、市净率、所处行业、总市值、流通市值、ROE、净利率等
-        
-        Args:
-            stock_code: 股票代码
-            
-        Returns:
-            包含基本信息的字典，获取失败返回 None
-        """
-        import efinance as ef
-        
-        try:
-            # 防封禁策略
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-            
-            logger.info(f"[API调用] ef.stock.get_base_info(stock_codes={stock_code}) 获取基本信息...")
-            import time as _time
-            api_start = _time.time()
-            
-            info = ef.stock.get_base_info(stock_code)
-            
-            api_elapsed = _time.time() - api_start
-            logger.info(f"[API返回] ef.stock.get_base_info 成功, 耗时 {api_elapsed:.2f}s")
-            
-            if info is None:
-                logger.warning(f"[API返回] 未获取到 {stock_code} 的基本信息")
-                return None
-            
-            # 转换为字典
-            if isinstance(info, pd.Series):
-                return info.to_dict()
-            elif isinstance(info, pd.DataFrame):
-                if not info.empty:
-                    return info.iloc[0].to_dict()
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"[API错误] 获取 {stock_code} 基本信息失败: {e}")
-            return None
-    
     def get_belong_board(self, stock_code: str) -> Optional[pd.DataFrame]:
         """
         获取股票所属板块
@@ -635,43 +589,6 @@ class EfinanceFetcher(BaseFetcher):
             logger.error(f"[API错误] 获取 {stock_code} 所属板块失败: {e}")
             return None
     
-    def get_enhanced_data(self, stock_code: str, days: int = 60) -> Dict[str, Any]:
-        """
-        获取增强数据（历史K线 + 实时行情 + 基本信息）
-        
-        Args:
-            stock_code: 股票代码
-            days: 历史数据天数
-            
-        Returns:
-            包含所有数据的字典
-        """
-        result = {
-            'code': stock_code,
-            'daily_data': None,
-            'realtime_quote': None,
-            'base_info': None,
-            'belong_board': None,
-        }
-        
-        # 获取日线数据
-        try:
-            df = self.get_daily_data(stock_code, days=days)
-            result['daily_data'] = df
-        except Exception as e:
-            logger.error(f"获取 {stock_code} 日线数据失败: {e}")
-        
-        # 获取实时行情
-        result['realtime_quote'] = self.get_realtime_quote(stock_code)
-        
-        # 获取基本信息
-        result['base_info'] = self.get_base_info(stock_code)
-        
-        # 获取所属板块
-        result['belong_board'] = self.get_belong_board(stock_code)
-        
-        return result
-
 
 if __name__ == "__main__":
     # 测试代码
@@ -714,15 +631,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[实时行情] 获取失败: {e}")
     
-    # 测试基本信息
-    print("\n" + "=" * 50)
-    print("测试基本信息获取 (efinance)")
-    print("=" * 50)
-    try:
-        info = fetcher.get_base_info('600519')
-        if info:
-            print(f"[基本信息] 市盈率={info.get('市盈率(动)', 'N/A')}, 市净率={info.get('市净率', 'N/A')}")
-        else:
-            print("[基本信息] 未获取到数据")
-    except Exception as e:
-        print(f"[基本信息] 获取失败: {e}")
+

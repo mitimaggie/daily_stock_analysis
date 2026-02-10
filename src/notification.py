@@ -393,8 +393,9 @@ class NotificationService:
             emoji = result.get_emoji()
             confidence_stars = result.get_confidence_stars() if hasattr(result, 'get_confidence_stars') else '⭐⭐'
             
+            display_name = self._escape_md(result.name)
             report_lines.extend([
-                f"### {emoji} {result.name} ({result.code})",
+                f"### {emoji} {display_name} ({result.code})",
                 "",
                 f"**操作建议：{result.operation_advice}** | **综合评分：{result.sentiment_score}分** | **趋势预测：{result.trend_prediction}** | **置信度：{confidence_stars}**",
                 "",
@@ -524,27 +525,78 @@ class NotificationService:
         
         return "\n".join(report_lines)
     
+    @staticmethod
+    def _escape_md(name: str) -> str:
+        """Escape markdown special characters in stock names (e.g. *ST → \\*ST)."""
+        return name.replace('*', r'\*') if name else name
+
+    @staticmethod
+    def _clean_sniper_value(value: Any) -> str:
+        """Normalize sniper point values and remove redundant label prefixes."""
+        if value is None:
+            return 'N/A'
+        if isinstance(value, (int, float)):
+            return str(value)
+        if not isinstance(value, str):
+            return str(value)
+        if not value or value == 'N/A':
+            return value
+        prefixes = ['理想买入点：', '次优买入点：', '止损位：', '目标位：',
+                     '理想买入点:', '次优买入点:', '止损位:', '目标位:']
+        for prefix in prefixes:
+            if value.startswith(prefix):
+                return value[len(prefix):]
+        return value
+
+    _SOURCE_DISPLAY_NAMES = {
+        "tencent": "腾讯财经",
+        "akshare_em": "东方财富",
+        "akshare_sina": "新浪财经",
+        "akshare_qq": "腾讯财经",
+        "efinance": "东方财富(efinance)",
+
+        "sina": "新浪财经",
+        "fallback": "降级兜底",
+    }
+
     def _get_signal_level(self, result: AnalysisResult) -> tuple:
         """
-        根据操作建议获取信号等级和颜色
-        
+        Get signal level and color based on operation advice.
+
+        Priority: advice string takes precedence over score.
+        Score-based fallback is used only when advice doesn't match
+        any known value.
+
         Returns:
-            (信号文字, emoji, 颜色标记)
+            (signal_text, emoji, color_tag)
         """
         advice = result.operation_advice
         score = result.sentiment_score
-        
-        if advice in ['强烈买入'] or score >= 80:
+
+        advice_map = {
+            '强烈买入': ('强烈买入', '💚', '强买'),
+            '买入': ('买入', '🟢', '买入'),
+            '加仓': ('买入', '🟢', '买入'),
+            '持有': ('持有', '🟡', '持有'),
+            '观望': ('观望', '⚪', '观望'),
+            '减仓': ('减仓', '🟠', '减仓'),
+            '卖出': ('卖出', '🔴', '卖出'),
+            '强烈卖出': ('卖出', '🔴', '卖出'),
+        }
+        if advice in advice_map:
+            return advice_map[advice]
+
+        if score >= 80:
             return ('强烈买入', '💚', '强买')
-        elif advice in ['买入', '加仓'] or score >= 65:
+        elif score >= 65:
             return ('买入', '🟢', '买入')
-        elif advice in ['持有'] or 55 <= score < 65:
+        elif score >= 55:
             return ('持有', '🟡', '持有')
-        elif advice in ['观望'] or 45 <= score < 55:
+        elif score >= 45:
             return ('观望', '⚪', '观望')
-        elif advice in ['减仓'] or 35 <= score < 45:
+        elif score >= 35:
             return ('减仓', '🟠', '减仓')
-        elif advice in ['卖出', '强烈卖出'] or score < 35:
+        elif score < 35:
             return ('卖出', '🔴', '卖出')
         else:
             return ('观望', '⚪', '观望')
@@ -592,8 +644,9 @@ class NotificationService:
             ])
             for r in sorted_results:
                 emoji = r.get_emoji()
+                display_name = self._escape_md(r.name)
                 report_lines.append(
-                    f"{emoji} **{r.name}({r.code})**: {r.operation_advice} | "
+                    f"{emoji} **{display_name}({r.code})**: {r.operation_advice} | "
                     f"评分 {r.sentiment_score} | {r.trend_prediction}"
                 )
             report_lines.extend([
@@ -607,8 +660,9 @@ class NotificationService:
             signal_text, signal_emoji, signal_tag = self._get_signal_level(result)
             dashboard = result.dashboard if hasattr(result, 'dashboard') and result.dashboard else {}
             
-            # 股票名称（优先使用 dashboard 或 result 中的名称）
-            stock_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
+            # 股票名称（优先使用 dashboard 或 result 中的名称，转义 *ST 等特殊字符）
+            raw_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
+            stock_name = self._escape_md(raw_name)
             
             # 分析时间标注
             time_tag = f" | 分析于 {result.analysis_time}" if getattr(result, 'analysis_time', '') else ""
@@ -780,10 +834,10 @@ class NotificationService:
                         "",
                         "| 点位类型 | 价格 |",
                         "|---------|------|",
-                        f"| 🎯 理想买入点 | {sniper.get('ideal_buy', 'N/A')} |",
-                        f"| 🔵 次优买入点 | {sniper.get('secondary_buy', 'N/A')} |",
-                        f"| 🛑 止损位 | {sniper.get('stop_loss', 'N/A')} |",
-                        f"| 🎊 目标位 | {sniper.get('take_profit', 'N/A')} |",
+                        f"| 🎯 理想买入点 | {self._clean_sniper_value(sniper.get('ideal_buy', 'N/A'))} |",
+                        f"| 🔵 次优买入点 | {self._clean_sniper_value(sniper.get('secondary_buy', 'N/A'))} |",
+                        f"| 🛑 止损位 | {self._clean_sniper_value(sniper.get('stop_loss', 'N/A'))} |",
+                        f"| 🎊 目标位 | {self._clean_sniper_value(sniper.get('take_profit', 'N/A'))} |",
                         "",
                     ])
                 
@@ -943,8 +997,9 @@ class NotificationService:
             battle = dashboard.get('battle_plan', {}) if dashboard else {}
             intel = dashboard.get('intelligence', {}) if dashboard else {}
             
-            # 股票名称
-            stock_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
+            # 股票名称（转义 *ST 等特殊字符）
+            raw_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
+            stock_name = self._escape_md(raw_name)
             
             # 标题行：信号等级 + 股票名称
             lines.append(f"### {signal_emoji} **{signal_text}** | {stock_name}({result.code})")
@@ -1000,11 +1055,11 @@ class NotificationService:
                 
                 points = []
                 if ideal_buy:
-                    points.append(f"🎯买点:{ideal_buy[:15]}")
+                    points.append(f"🎯买点:{self._clean_sniper_value(ideal_buy)[:15]}")
                 if stop_loss:
-                    points.append(f"🛑止损:{stop_loss[:15]}")
+                    points.append(f"🛑止损:{self._clean_sniper_value(stop_loss)[:15]}")
                 if take_profit:
-                    points.append(f"🎊目标:{take_profit[:15]}")
+                    points.append(f"🎊目标:{self._clean_sniper_value(take_profit)[:15]}")
                 
                 if points:
                     lines.append(" | ".join(points))
@@ -1073,9 +1128,10 @@ class NotificationService:
         # 每只股票精简信息（控制长度）
         for result in sorted_results:
             emoji = result.get_emoji()
+            display_name = self._escape_md(result.name)
             
             # 核心信息行
-            lines.append(f"### {emoji} {result.name}({result.code})")
+            lines.append(f"### {emoji} {display_name}({result.code})")
             lines.append(f"**{result.operation_advice}** | 评分:{result.sentiment_score} | {result.trend_prediction}")
             
             # 操作理由（截断）
@@ -1125,8 +1181,9 @@ class NotificationService:
         battle = dashboard.get('battle_plan', {}) if dashboard else {}
         intel = dashboard.get('intelligence', {}) if dashboard else {}
         
-        # 股票名称
-        stock_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
+        # 股票名称（转义 *ST 等特殊字符）
+        raw_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
+        stock_name = self._escape_md(raw_name)
         
         # 分析时间标注（盘中多次分析时可快速区分）
         time_tag = f" | 分析于 {result.analysis_time}" if getattr(result, 'analysis_time', '') else ""
@@ -1220,9 +1277,9 @@ class NotificationService:
                 "| 买点 | 止损 | 目标 |",
                 "|------|------|------|",
             ])
-            ideal_buy = sniper.get('ideal_buy', '-')
-            stop_loss = sniper.get('stop_loss', '-')
-            take_profit = sniper.get('take_profit', '-')
+            ideal_buy = self._clean_sniper_value(sniper.get('ideal_buy', '-'))
+            stop_loss = self._clean_sniper_value(sniper.get('stop_loss', '-'))
+            take_profit = self._clean_sniper_value(sniper.get('take_profit', '-'))
             lines.append(f"| {ideal_buy} | {stop_loss} | {take_profit} |")
             lines.append("")
         
@@ -1352,12 +1409,14 @@ class NotificationService:
             f"{snapshot.get('volume', 'N/A')} | {snapshot.get('amount', 'N/A')} |",
         ])
         if snapshot.get("price") is not None and snapshot.get("price") != 'N/A':
+            raw_source = snapshot.get('source', 'N/A')
+            display_source = self._SOURCE_DISPLAY_NAMES.get(raw_source, raw_source)
             lines.extend([
                 "",
                 "| 当前价 | 量比 | 换手率 | 行情来源 |",
                 "|-------|------|--------|----------|",
                 f"| {snapshot.get('price', 'N/A')} | {snapshot.get('volume_ratio', 'N/A')} | "
-                f"{snapshot.get('turnover_rate', 'N/A')} | {snapshot.get('source', 'N/A')} |",
+                f"{snapshot.get('turnover_rate', 'N/A')} | {display_source} |",
             ])
         lines.append("")
     
@@ -1398,7 +1457,11 @@ class NotificationService:
             logger.warning("企业微信 Webhook 未配置，跳过推送")
             return False
         
-        max_bytes = self._wechat_max_bytes  # 从配置读取，默认 4000 字节
+        # 根据消息类型动态限制上限，避免 text 类型超过企业微信 2048 字节限制
+        if self._wechat_msg_type == 'text':
+            max_bytes = min(self._wechat_max_bytes, 2000)
+        else:
+            max_bytes = self._wechat_max_bytes
         
         # 检查字节长度，超长则分批发送
         content_bytes = len(content.encode('utf-8'))

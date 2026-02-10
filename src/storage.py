@@ -594,6 +594,53 @@ class DatabaseManager:
                 'concentration_70': r.concentration_70 or 0.0,
             }
     
+    def get_recent_analysis(self, code: str, days: int = 5) -> List[Dict[str, Any]]:
+        """获取近N日分析记录的关键评分（用于资金面连续性检测）
+
+        从 context_snapshot 中提取 capital_flow_score，按时间倒序返回。
+        每日仅保留最新一条（去重）。
+
+        Returns:
+            List of dicts: [{'date': datetime, 'sentiment_score': int, 'capital_flow_score': int}, ...]
+        """
+        cutoff = datetime.now() - timedelta(days=days)
+        with self.get_session() as session:
+            results = session.execute(
+                select(AnalysisHistory)
+                .where(and_(
+                    AnalysisHistory.code == code,
+                    AnalysisHistory.created_at >= cutoff
+                ))
+                .order_by(desc(AnalysisHistory.created_at))
+                .limit(days * 2)
+            ).scalars().all()
+
+            seen_dates = set()
+            records = []
+            for r in results:
+                day_key = r.created_at.strftime('%Y-%m-%d') if r.created_at else None
+                if not day_key or day_key in seen_dates:
+                    continue
+                seen_dates.add(day_key)
+
+                record = {
+                    'date': r.created_at,
+                    'sentiment_score': r.sentiment_score,
+                    'capital_flow_score': 5,
+                }
+                if r.context_snapshot:
+                    try:
+                        ctx = json.loads(r.context_snapshot)
+                        trend = ctx.get('trend_analysis', {})
+                        if isinstance(trend, dict):
+                            cf = trend.get('capital_flow_score')
+                            if isinstance(cf, (int, float)):
+                                record['capital_flow_score'] = int(cf)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                records.append(record)
+            return records
+
     def get_analysis_context(self, code: str, target_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
         if target_date is None: target_date = date.today()
         recent_data = self.get_latest_data(code, days=2)

@@ -213,23 +213,7 @@ class HistoryService:
             logger.error(f"查询新闻情报失败: {e}", exc_info=True)
             return []
     
-    def _get_sentiment_label(self, score: int) -> str:
-        """
-        根据评分获取情绪标签
-        
-        Args:
-            score: 情绪评分 (0-100)
-            
-        Returns:
-            情绪标签
-        """
-        if score >= 80:
-            return "极度乐观"
-        elif score >= 60:
-            return "乐观"
-        elif score >= 40:
-            return "中性"
-        elif score >= 20:
-            return "悲观"
-        else:
-            return "极度悲观"
+    @staticmethod
+    def _get_sentiment_label(score: int) -> str:
+        from src.services import get_sentiment_label
+        return get_sentiment_label(score)
