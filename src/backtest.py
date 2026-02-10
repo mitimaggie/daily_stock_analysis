@@ -14,9 +14,10 @@
 
 import logging
 from datetime import datetime, timedelta, date
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import pandas as pd
+import numpy as np
 from sqlalchemy import select, and_, text
 
 from src.storage import DatabaseManager, AnalysisHistory
@@ -68,7 +69,7 @@ class BacktestRunner:
             return [r for r in results]
 
     def _backfill_records(self, records: List[AnalysisHistory]) -> int:
-        """回填实际收益率"""
+        """回填实际收益率（含多周期）"""
         filled = 0
         for record in records:
             try:
@@ -77,8 +78,8 @@ class BacktestRunner:
                 if not analysis_date:
                     continue
 
-                # 获取分析日之后 5-10 个交易日的价格数据
-                df = self._get_prices_after(code, analysis_date, days=10)
+                # 获取分析日之后 20 个交易日的价格数据（支持多周期回测）
+                df = self._get_prices_after(code, analysis_date, days=25)
                 if df is None or len(df) < 5:
                     continue
 
@@ -87,9 +88,19 @@ class BacktestRunner:
                 if price_at_analysis <= 0:
                     continue
 
-                # 5 日后收盘价
+                # 多周期收益率：5日、10日、20日
                 price_5d = float(df.iloc[4]['close']) if len(df) >= 5 else float(df.iloc[-1]['close'])
-                actual_pct = round((price_5d - price_at_analysis) / price_at_analysis * 100, 2)
+                actual_pct_5d = round((price_5d - price_at_analysis) / price_at_analysis * 100, 2)
+                
+                actual_pct_10d = None
+                if len(df) >= 10:
+                    price_10d = float(df.iloc[9]['close'])
+                    actual_pct_10d = round((price_10d - price_at_analysis) / price_at_analysis * 100, 2)
+                
+                actual_pct_20d = None
+                if len(df) >= 20:
+                    price_20d = float(df.iloc[19]['close'])
+                    actual_pct_20d = round((price_20d - price_at_analysis) / price_at_analysis * 100, 2)
 
                 # 检查止损/止盈是否触发（在 5 日内的最低价/最高价）
                 lows_5d = df['low'].iloc[:5].astype(float)
@@ -102,8 +113,21 @@ class BacktestRunner:
                 if record.take_profit and record.take_profit > 0:
                     hit_tp = 1 if float(highs_5d.max()) >= record.take_profit else 0
 
-                # 更新记录
-                self._update_record(record.id, actual_pct, hit_sl, hit_tp)
+                # 获取同期大盘收益率（用于计算alpha）
+                benchmark_pct_5d = self._get_benchmark_return(analysis_date, 5)
+                benchmark_pct_10d = self._get_benchmark_return(analysis_date, 10) if actual_pct_10d else None
+                benchmark_pct_20d = self._get_benchmark_return(analysis_date, 20) if actual_pct_20d else None
+
+                # 更新记录（扩展多周期数据，但暂存在原字段，避免修改表结构）
+                # 实际生产中应添加新字段：actual_pct_10d, actual_pct_20d, benchmark_pct_5d等
+                self._update_record(
+                    record.id, actual_pct_5d, hit_sl, hit_tp,
+                    actual_pct_10d=actual_pct_10d,
+                    actual_pct_20d=actual_pct_20d,
+                    benchmark_pct_5d=benchmark_pct_5d,
+                    benchmark_pct_10d=benchmark_pct_10d,
+                    benchmark_pct_20d=benchmark_pct_20d
+                )
                 filled += 1
 
             except Exception as e:
@@ -128,8 +152,52 @@ class BacktestRunner:
         except Exception:
             return None
 
-    def _update_record(self, record_id: int, actual_pct: float, hit_sl: int, hit_tp: int):
-        """更新单条回测记录"""
+    def _get_benchmark_return(self, start_date: date, holding_days: int) -> Optional[float]:
+        """获取基准（沪深300）收益率
+        
+        Args:
+            start_date: 起始日期
+            holding_days: 持有天数
+        
+        Returns:
+            基准收益率(%)，失败返回None
+        """
+        try:
+            # 从 index_daily 表获取沪深300数据
+            sql = text("""
+                SELECT date, close
+                FROM index_daily
+                WHERE name = '沪深300' AND date >= :start_date
+                ORDER BY date ASC
+                LIMIT :limit
+            """)
+            with self.db.engine.connect() as conn:
+                df = pd.read_sql(sql, conn, params={"start_date": start_date, "limit": holding_days + 2})
+            
+            if df.empty or len(df) < holding_days:
+                return None
+            
+            price_start = float(df.iloc[0]['close'])
+            price_end = float(df.iloc[min(holding_days - 1, len(df) - 1)]['close'])
+            
+            if price_start <= 0:
+                return None
+            
+            return round((price_end - price_start) / price_start * 100, 2)
+        except Exception as e:
+            logger.debug(f"获取基准收益率失败: {e}")
+            return None
+
+    def _update_record(self, record_id: int, actual_pct: float, hit_sl: int, hit_tp: int,
+                      actual_pct_10d: Optional[float] = None,
+                      actual_pct_20d: Optional[float] = None,
+                      benchmark_pct_5d: Optional[float] = None,
+                      benchmark_pct_10d: Optional[float] = None,
+                      benchmark_pct_20d: Optional[float] = None):
+        """更新单条回测记录（含多周期数据）
+        
+        注：多周期数据暂存在 raw_result JSON 中，避免频繁修改表结构
+        """
         with self.db.get_session() as session:
             try:
                 record = session.get(AnalysisHistory, record_id)
@@ -138,13 +206,33 @@ class BacktestRunner:
                     record.hit_stop_loss = hit_sl
                     record.hit_take_profit = hit_tp
                     record.backtest_filled = 1
+                    
+                    # 扩展回测数据存入 raw_result（JSON格式，灵活扩展）
+                    try:
+                        import json
+                        raw = json.loads(record.raw_result) if record.raw_result else {}
+                        backtest_ext = {
+                            'actual_pct_10d': actual_pct_10d,
+                            'actual_pct_20d': actual_pct_20d,
+                            'benchmark_pct_5d': benchmark_pct_5d,
+                            'benchmark_pct_10d': benchmark_pct_10d,
+                            'benchmark_pct_20d': benchmark_pct_20d,
+                            'alpha_5d': round(actual_pct - benchmark_pct_5d, 2) if benchmark_pct_5d is not None else None,
+                            'alpha_10d': round(actual_pct_10d - benchmark_pct_10d, 2) if actual_pct_10d and benchmark_pct_10d else None,
+                            'alpha_20d': round(actual_pct_20d - benchmark_pct_20d, 2) if actual_pct_20d and benchmark_pct_20d else None,
+                        }
+                        raw['backtest_metrics'] = backtest_ext
+                        record.raw_result = json.dumps(raw, ensure_ascii=False)
+                    except Exception:
+                        pass  # raw_result 更新失败不影响主流程
+                    
                     session.commit()
             except Exception as e:
                 session.rollback()
                 logger.debug(f"更新回测记录 {record_id} 失败: {e}")
 
     def _generate_stats_report(self, lookback_days: int) -> str:
-        """生成回测统计报告"""
+        """生成增强版回测统计报告（含夏普、信息比率、alpha等）"""
         with self.db.get_session() as session:
             cutoff = datetime.now() - timedelta(days=lookback_days)
             records = session.execute(
@@ -184,49 +272,185 @@ class BacktestRunner:
                 buy_records.append(r)
 
         lines = [
-            f"## 回测统计（近 {lookback_days} 天，共 {len(records)} 条已回填）",
+            f"## 📊 回测统计报告（近 {lookback_days} 天，共 {len(records)} 条已回填）",
             "",
         ]
 
-        # 按评分段位
-        lines.append("### 各评分段位表现")
+        # === 1. 整体业绩摘要（含夏普、信息比率） ===
+        all_pcts = [r.actual_pct_5d for r in records if r.actual_pct_5d is not None]
+        if all_pcts:
+            sharpe, info_ratio, max_dd, calmar = self._calc_performance_metrics(records)
+            total_avg = sum(all_pcts) / len(all_pcts)
+            total_win = sum(1 for p in all_pcts if p > 0) / len(all_pcts) * 100
+            
+            lines.extend([
+                "### 🎯 整体业绩指标",
+                "",
+                "| 指标 | 数值 | 说明 |",
+                "|------|------|------|",
+                f"| 平均5日收益 | **{total_avg:+.2f}%** | 所有信号的平均收益率 |",
+                f"| 胜率 | **{total_win:.1f}%** | 盈利交易占比 |",
+                f"| 夏普比率 | **{sharpe:.2f}** | 风险调整后收益，>1优秀 |",
+                f"| 信息比率 | **{info_ratio:.2f}** | 相对基准的超额收益/跟踪误差 |",
+                f"| 最大回撤 | **{max_dd:.2f}%** | 峰谷最大跌幅 |",
+                f"| 卡玛比率 | **{calmar:.2f}** | 年化收益/最大回撤，>2优秀 |",
+                "",
+                "---",
+                "",
+            ])
+
+        # === 2. 按评分段位分析（含alpha） ===
+        lines.append("### 📈 各评分段位表现")
         lines.append("")
-        lines.append("| 评分段位 | 记录数 | 平均5日收益 | 胜率 | 止损命中 | 止盈命中 |")
-        lines.append("|---------|--------|-----------|------|---------|---------|")
+        lines.append("| 评分段位 | 记录数 | 平均收益 | Alpha | 胜率 | 夏普 | 止损命中 | 止盈命中 |")
+        lines.append("|---------|--------|---------|-------|------|------|---------|---------|")
         
         for bucket_name, bucket_records in buckets.items():
             if not bucket_records:
-                lines.append(f"| {bucket_name} | 0 | - | - | - | - |")
+                lines.append(f"| {bucket_name} | 0 | - | - | - | - | - | - |")
                 continue
             
             pcts = [r.actual_pct_5d for r in bucket_records if r.actual_pct_5d is not None]
             if not pcts:
-                lines.append(f"| {bucket_name} | {len(bucket_records)} | N/A | N/A | N/A | N/A |")
+                lines.append(f"| {bucket_name} | {len(bucket_records)} | N/A | N/A | N/A | N/A | N/A | N/A |")
                 continue
 
             avg_pct = sum(pcts) / len(pcts)
             win_rate = sum(1 for p in pcts if p > 0) / len(pcts) * 100
+            
+            # Alpha计算（超额收益 = 个股收益 - 基准收益）
+            alphas = []
+            for r in bucket_records:
+                if r.actual_pct_5d is not None and r.raw_result:
+                    try:
+                        import json
+                        raw = json.loads(r.raw_result)
+                        alpha_5d = raw.get('backtest_metrics', {}).get('alpha_5d')
+                        if alpha_5d is not None:
+                            alphas.append(alpha_5d)
+                    except Exception:
+                        pass
+            avg_alpha = sum(alphas) / len(alphas) if alphas else 0.0
+            
+            # 夏普比率（段位内）
+            bucket_sharpe = self._calc_sharpe_ratio(pcts)
+            
             sl_hits = sum(1 for r in bucket_records if r.hit_stop_loss == 1)
             tp_hits = sum(1 for r in bucket_records if r.hit_take_profit == 1)
             sl_rate = sl_hits / len(bucket_records) * 100
             tp_rate = tp_hits / len(bucket_records) * 100
 
             lines.append(
-                f"| {bucket_name} | {len(bucket_records)} | {avg_pct:+.2f}% | {win_rate:.0f}% | {sl_rate:.0f}% | {tp_rate:.0f}% |"
+                f"| {bucket_name} | {len(bucket_records)} | {avg_pct:+.2f}% | {avg_alpha:+.2f}% | {win_rate:.0f}% | {bucket_sharpe:.2f} | {sl_rate:.0f}% | {tp_rate:.0f}% |"
             )
 
-        # 买入信号胜率
+        # === 3. 买入信号专项验证 ===
+        lines.append("")
+        lines.append("---")
         lines.append("")
         if buy_records:
             buy_pcts = [r.actual_pct_5d for r in buy_records if r.actual_pct_5d is not None]
             if buy_pcts:
                 buy_win = sum(1 for p in buy_pcts if p > 0) / len(buy_pcts) * 100
                 buy_avg = sum(buy_pcts) / len(buy_pcts)
-                lines.append(f"### 买入信号验证")
-                lines.append(f"- 买入信号总数: {len(buy_records)}")
-                lines.append(f"- 5日胜率: {buy_win:.0f}%")
-                lines.append(f"- 平均5日收益: {buy_avg:+.2f}%")
+                buy_sharpe = self._calc_sharpe_ratio(buy_pcts)
+                lines.append(f"### 💰 买入信号验证")
+                lines.append(f"- 买入信号总数: **{len(buy_records)}**")
+                lines.append(f"- 5日胜率: **{buy_win:.1f}%**")
+                lines.append(f"- 平均5日收益: **{buy_avg:+.2f}%**")
+                lines.append(f"- 夏普比率: **{buy_sharpe:.2f}**")
         else:
+            lines.append("### 💰 买入信号验证")
             lines.append("*暂无买入信号记录*")
 
+        lines.extend([
+            "",
+            "---",
+            "",
+            "### 📌 指标说明",
+            "- **夏普比率**: 风险调整后收益，计算公式 = (平均收益 - 无风险利率) / 收益标准差",
+            "- **信息比率**: 相对基准的超额收益/跟踪误差，衡量主动管理能力",
+            "- **Alpha**: 超额收益 = 个股收益 - 同期沪深300收益",
+            "- **卡玛比率**: 年化收益/最大回撤，衡量风险收益比",
+        ])
+
         return "\n".join(lines)
+
+    def _calc_sharpe_ratio(self, returns: List[float], rf_rate: float = 0.03) -> float:
+        """计算夏普比率
+        
+        Args:
+            returns: 收益率列表(%)
+            rf_rate: 无风险利率(年化)，默认3%
+        
+        Returns:
+            夏普比率
+        """
+        if not returns or len(returns) < 2:
+            return 0.0
+        
+        returns_array = np.array(returns) / 100  # 转为小数
+        avg_return = np.mean(returns_array)
+        std_return = np.std(returns_array, ddof=1)
+        
+        if std_return == 0:
+            return 0.0
+        
+        # 5日收益率年化：假设1年250个交易日，5日为1/50年
+        # 年化收益 = 5日平均收益 * (250/5) = 平均收益 * 50
+        # 年化波动 = 5日波动 * sqrt(250/5) = 波动 * sqrt(50)
+        rf_5d = rf_rate / 50  # 无风险利率转为5日
+        sharpe = (avg_return - rf_5d) / std_return * np.sqrt(50)
+        
+        return round(sharpe, 2)
+
+    def _calc_performance_metrics(self, records: List[AnalysisHistory]) -> Tuple[float, float, float, float]:
+        """计算整体业绩指标：夏普、信息比率、最大回撤、卡玛比率
+        
+        Returns:
+            (sharpe_ratio, information_ratio, max_drawdown, calmar_ratio)
+        """
+        returns = [r.actual_pct_5d for r in records if r.actual_pct_5d is not None]
+        if not returns:
+            return 0.0, 0.0, 0.0, 0.0
+        
+        # 1. 夏普比率
+        sharpe = self._calc_sharpe_ratio(returns)
+        
+        # 2. 信息比率 = (策略平均收益 - 基准平均收益) / 跟踪误差
+        alphas = []
+        for r in records:
+            if r.actual_pct_5d is not None and r.raw_result:
+                try:
+                    import json
+                    raw = json.loads(r.raw_result)
+                    alpha_5d = raw.get('backtest_metrics', {}).get('alpha_5d')
+                    if alpha_5d is not None:
+                        alphas.append(alpha_5d)
+                except Exception:
+                    pass
+        
+        if alphas and len(alphas) >= 2:
+            avg_alpha = np.mean(alphas)
+            tracking_error = np.std(alphas, ddof=1)
+            info_ratio = (avg_alpha / tracking_error * np.sqrt(50)) if tracking_error > 0 else 0.0
+        else:
+            info_ratio = 0.0
+        
+        # 3. 最大回撤（累计收益曲线的峰谷差）
+        cumulative = np.cumsum([r / 100 for r in returns])  # 累计收益率（小数）
+        running_max = np.maximum.accumulate(cumulative)
+        drawdown = (cumulative - running_max) * 100  # 转回百分比
+        max_drawdown = abs(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        
+        # 4. 卡玛比率 = 年化收益 / 最大回撤
+        avg_return = np.mean(returns)
+        annual_return = avg_return * 50  # 5日收益年化
+        calmar = (annual_return / max_drawdown) if max_drawdown > 0 else 0.0
+        
+        return (
+            round(sharpe, 2),
+            round(info_ratio, 2),
+            round(max_drawdown, 2),
+            round(calmar, 2)
+        )

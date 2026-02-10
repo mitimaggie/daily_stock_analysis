@@ -175,12 +175,14 @@ class GeminiAnalyzer:
         self._model_light = None  # 命中舆情缓存时可选用的轻量模型（如 2.5 Flash），省成本
         self._openai_client = None
         self._use_openai = False
+        self._genai_module = None  # 保存genai模块引用，供Function Calling使用
 
         # 初始化 Gemini（主模型 + 备选模型 + 可选「缓存时轻量模型」）
         self._model_fallback = None
         if self._api_key and "your_" not in self._api_key:
             try:
                 import google.generativeai as genai
+                self._genai_module = genai
                 genai.configure(api_key=self._api_key)
                 self._model = genai.GenerativeModel(model_name=config.gemini_model)
                 fb = getattr(config, "gemini_model_fallback", None)
@@ -235,7 +237,25 @@ class GeminiAnalyzer:
             response_text = ""
             
             # 3. 调用 API（Gemini 优先，失败时尝试备选模型和 OpenAI）
+            # 优先尝试Function Calling（强制JSON输出，减少解析错误）
             cfg = get_config()
+            enable_function_calling = getattr(cfg, 'enable_function_calling', True)  # 默认开启
+            
+            if enable_function_calling and self._genai_module and not self._use_openai:
+                try:
+                    result_dict = self._call_with_function_calling(system_prompt, prompt, use_light_model, cfg)
+                    if result_dict:
+                        # Function Calling成功，直接构造AnalysisResult
+                        result = self._build_result_from_dict(result_dict, code, name)
+                        result.raw_response = json.dumps(result_dict, ensure_ascii=False)
+                        result.search_performed = bool(news_context)
+                        result.current_price = context.get('price', 0)
+                        result.market_snapshot = self._build_market_snapshot(context)
+                        return result
+                except Exception as e:
+                    logger.debug(f"Function Calling失败，降级为文本解析: {e}")
+            
+            # Function Calling失败或未启用，使用原始文本解析
             response_text = self._call_api_with_fallback(
                 system_prompt, prompt, use_light_model, cfg
             )
@@ -439,6 +459,151 @@ dashboard: {{
 
 开始分析：
 """
+
+    def _call_with_function_calling(self, system_prompt: str, user_prompt: str, use_light_model: bool, cfg: Any) -> Optional[Dict[str, Any]]:
+        """使用Function Calling调用Gemini（强制JSON输出，避免格式错误）
+        
+        Returns:
+            解析好的dict，失败返回None
+        """
+        if not self._genai_module:
+            return None
+        
+        try:
+            # 定义输出Schema（Function Declaration）
+            analysis_schema = {
+                "type": "object",
+                "properties": {
+                    "stock_name": {"type": "string"},
+                    "sentiment_score": {"type": "integer", "minimum": 0, "maximum": 100},
+                    "operation_advice": {"type": "string"},
+                    "trend_prediction": {"type": "string"},
+                    "analysis_summary": {"type": "string"},
+                    "risk_warning": {"type": "string"},
+                    "confidence_level": {"type": "string"},
+                    "llm_score": {"type": "integer"},
+                    "llm_advice": {"type": "string"},
+                    "llm_reasoning": {"type": "string"},
+                    "time_horizon": {"type": "string"},
+                    "confidence_reasoning": {"type": "string"},
+                    "dashboard": {
+                        "type": "object",
+                        "properties": {
+                            "core_conclusion": {
+                                "type": "object",
+                                "properties": {
+                                    "one_sentence": {"type": "string"},
+                                    "position_advice": {
+                                        "type": "object",
+                                        "properties": {
+                                            "no_position": {"type": "string"},
+                                            "has_position": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            },
+                            "intelligence": {
+                                "type": "object",
+                                "properties": {
+                                    "risk_alerts": {"type": "array", "items": {"type": "string"}},
+                                    "positive_catalysts": {"type": "array", "items": {"type": "string"}},
+                                    "sentiment_summary": {"type": "string"},
+                                    "earnings_outlook": {"type": "string"}
+                                }
+                            },
+                            "battle_plan": {
+                                "type": "object",
+                                "properties": {
+                                    "sniper_points": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ideal_buy": {"type": "number"},
+                                            "stop_loss": {"type": "number"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "required": ["stock_name", "sentiment_score", "operation_advice", "trend_prediction", "analysis_summary"]
+            }
+            
+            # 创建Function Declaration
+            analyze_stock_function = self._genai_module.protos.FunctionDeclaration(
+                name="analyze_stock",
+                description="分析股票并返回结构化分析结果",
+                parameters=analysis_schema
+            )
+            
+            # 创建Tool
+            stock_analysis_tool = self._genai_module.protos.Tool(
+                function_declarations=[analyze_stock_function]
+            )
+            
+            # 选择模型
+            model = self._model_light if (use_light_model and self._model_light) else self._model
+            
+            # 调用API
+            full_prompt = f"{system_prompt}\n\n{user_prompt}"
+            response = model.generate_content(
+                full_prompt,
+                tools=[stock_analysis_tool],
+                tool_config={'function_calling_config': {'mode': 'any'}}
+            )
+            
+            # 提取Function Call结果
+            if response.candidates and len(response.candidates) > 0:
+                candidate = response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'function_call'):
+                            fc = part.function_call
+                            if fc.name == "analyze_stock":
+                                # 转换protobuf Struct为dict
+                                import json
+                                result_dict = json.loads(self._genai_module.protos.MessageToJson(fc.args))
+                                return result_dict
+            
+            return None
+        except Exception as e:
+            logger.debug(f"Function Calling执行失败: {e}")
+            return None
+
+    def _build_result_from_dict(self, data: Dict[str, Any], code: str, name: str) -> AnalysisResult:
+        """从dict构造AnalysisResult（Function Calling专用）"""
+        op_advice = data.get('operation_advice', '观望')
+        decision = 'hold'
+        if '买' in op_advice or '加仓' in op_advice:
+            decision = 'buy'
+        elif '卖' in op_advice or '减仓' in op_advice:
+            decision = 'sell'
+
+        result = AnalysisResult(
+            code=code,
+            name=data.get('stock_name', name),
+            sentiment_score=int(data.get('sentiment_score', 50)),
+            trend_prediction=data.get('trend_prediction', '震荡'),
+            operation_advice=op_advice,
+            decision_type=decision,
+            confidence_level=data.get('confidence_level', '中'),
+            dashboard=data.get('dashboard', {}),
+            analysis_summary=data.get('analysis_summary', ''),
+            risk_warning=data.get('risk_warning', ''),
+            success=True
+        )
+        
+        # LLM独立判断
+        llm_s = data.get('llm_score')
+        if llm_s is not None:
+            try:
+                result.llm_score = int(llm_s)
+            except (ValueError, TypeError):
+                pass
+        result.llm_advice = str(data.get('llm_advice', '')).strip()
+        result.llm_reasoning = str(data.get('llm_reasoning', '')).strip()
+        
+        return result
 
     def _parse_response(self, response_text: str, code: str, name: str) -> AnalysisResult:
         def _s(v: Any) -> str:

@@ -63,11 +63,13 @@ class KDJStatus(Enum):
     OVERSOLD = "超卖"                    # J<0，反弹机会
 
 class BuySignal(Enum):
-    STRONG_BUY = "强烈买入"
-    BUY = "买入"
-    HOLD = "持有"
-    WAIT = "观望"
-    SELL = "卖出"
+    AGGRESSIVE_BUY = "激进买入"       # 95+: 共振信号+趋势确认，大胆上车
+    STRONG_BUY = "强烈买入"       # 85-94: 多重指标共振，胜率高
+    BUY = "买入"                # 70-84: 技术面看好，可建仓
+    CAUTIOUS_BUY = "谨慎买入"   # 60-69: 有机会但需谨慎
+    HOLD = "持有"                # 50-59: 中性，持股待涨
+    REDUCE = "减仓"              # 35-49: 信号转弱，逐步减仓
+    SELL = "清仓"                # 0-34: 多重风险，先走为妙
 
 class MarketRegime(Enum):
     BULL = "bull"
@@ -340,37 +342,78 @@ class StockTrendAnalyzer:
                 if high_60d > 0:
                     result.max_drawdown_60d = round((result.current_price - high_60d) / high_60d * 100, 2)
 
-            # --- 分层止损锚点 ---
+            # --- 动态止损锚点（Chandelier Exit + ATR自适应）---
             atr = result.atr14
             price = result.current_price
             if atr > 0:
-                result.stop_loss_intraday = round(price - 0.7 * atr, 2)   # 日内：紧止损
-                result.stop_loss_short = round(price - 1.0 * atr, 2)      # 短线：1 ATR
-                sl_atr_mid = price - 1.5 * atr
-                sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else sl_atr_mid
-                result.stop_loss_mid = round(min(sl_atr_mid, sl_ma20) if sl_ma20 > 0 else sl_atr_mid, 2)
+                # 根据波动率调整ATR倍数（高波动股放宽止损，避免频繁止损）
+                atr_percentile = self._calc_atr_percentile(df)
+                if atr_percentile > 0.8:  # ATR处于历史高位（前20%）
+                    atr_multiplier_short = 1.5  # 放宽短线止损
+                    atr_multiplier_mid = 2.0
+                elif atr_percentile < 0.2:  # ATR处于历史低位（后20%）
+                    atr_multiplier_short = 0.8  # 收紧止损
+                    atr_multiplier_mid = 1.2
+                else:
+                    atr_multiplier_short = 1.0  # 标准倍数
+                    atr_multiplier_mid = 1.5
+                
+                # 日内止损（紧）
+                result.stop_loss_intraday = round(price - 0.7 * atr_multiplier_short * atr, 2)
+                
+                # 短线止损：ATR动态倍数
+                result.stop_loss_short = round(price - atr_multiplier_short * atr, 2)
+                
+                # 中线止损：Chandelier Exit（吊灯止损）vs MA20*0.98，取较低者
+                # Chandelier Exit = 近20日最高价 - (ATR * 倍数)
+                if len(df) >= 20:
+                    recent_high_20d = float(df['high'].tail(20).max())
+                    chandelier_sl = recent_high_20d - atr_multiplier_mid * atr
+                    sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else chandelier_sl
+                    result.stop_loss_mid = round(min(chandelier_sl, sl_ma20), 2)
+                else:
+                    sl_atr_mid = price - atr_multiplier_mid * atr
+                    sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else sl_atr_mid
+                    result.stop_loss_mid = round(min(sl_atr_mid, sl_ma20) if sl_ma20 > 0 else sl_atr_mid, 2)
+            
             result.stop_loss_anchor = result.stop_loss_short  # 默认兼容
             result.ideal_buy_anchor = round(result.ma5 if result.ma5 > 0 else result.ma10, 2)
 
-            # --- 止盈锚点 ---
+            # --- 动态止盈锚点 ---
             if atr > 0:
-                result.take_profit_short = round(price + 1.5 * atr, 2)  # 短线止盈: 1.5 ATR
-                # 中线止盈: 第一阻力位（若有）或 2.5 ATR
+                # 趋势股放宽止盈，震荡股收紧止盈
+                if result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
+                    tp_multiplier_short = 2.0  # 趋势股：放宽短线止盈，避免提前离场
+                    tp_multiplier_mid = 3.5
+                elif result.trend_status == TrendStatus.CONSOLIDATION:
+                    tp_multiplier_short = 1.2  # 震荡股：收紧止盈，快进快出
+                    tp_multiplier_mid = 2.0
+                else:
+                    tp_multiplier_short = 1.5  # 标准倍数
+                    tp_multiplier_mid = 2.5
+                
+                result.take_profit_short = round(price + tp_multiplier_short * atr, 2)
+                
+                # 中线止盈: 第一阻力位（若有）或 ATR动态倍数
                 if result.resistance_levels:
                     result.take_profit_mid = round(result.resistance_levels[0], 2)
                 else:
-                    result.take_profit_mid = round(price + 2.5 * atr, 2)
-                # 移动止盈: 近20日最高价 - 1.2 ATR（趋势跟踪型止盈）
+                    result.take_profit_mid = round(price + tp_multiplier_mid * atr, 2)
+                
+                # 移动止盈（Parabolic SAR思想）: 近20日最高价 - 动态ATR
                 if len(df) >= 20:
                     recent_high = float(df['high'].tail(20).max())
-                    result.take_profit_trailing = round(recent_high - 1.2 * atr, 2)
+                    # 趋势越强，移动止盈距离越远（避免趋势中途止盈）
+                    trailing_atr_mult = 1.5 if result.trend_strength >= 75 else 1.2
+                    result.take_profit_trailing = round(recent_high - trailing_atr_mult * atr, 2)
+                
                 # 分批止盈方案
                 tp1 = result.take_profit_short
                 tp2 = result.take_profit_mid
                 result.take_profit_plan = (
                     f"第1批(1/3仓位): 到{tp1:.2f}止盈 | "
                     f"第2批(1/3仓位): 到{tp2:.2f}止盈 | "
-                    f"第3批(底仓): 移动止盈线{result.take_profit_trailing:.2f}跟踪"
+                    f"第3批(底仓): 移动止盈线{result.take_profit_trailing:.2f}跟踪（Parabolic SAR）"
                 )
 
             # --- Beta (如有大盘收益率序列) ---
@@ -695,6 +738,13 @@ class StockTrendAnalyzer:
             
             self._update_buy_signal(result)
 
+            # =============== 11-Pre. 指标组合共振判断 & 市场行为识别 ===============
+            self._detect_indicator_resonance(result, df, prev)
+            self._detect_market_behavior(result, df)
+            
+            # =============== 11-Pre2. 多时间周期共振验证 ===============
+            self._check_multi_timeframe_resonance(result, df)
+
             # =============== 11a. 估值安全检查（估值降档） ===============
             self._check_valuation(result, valuation)
 
@@ -745,6 +795,356 @@ class StockTrendAnalyzer:
         except Exception as e:
             logger.error(f"[{code}] 分析异常: {e}")
             return result
+
+    def _detect_indicator_resonance(self, result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
+        """指标组合共振判断：识别关键买卖信号
+        
+        组合逻辑：
+        1. MACD水下金叉 + KDJ金叉 + 缩量：底部吸筹信号 ★★★★★
+        2. MACD零轴上金叉 + KDJ金叉 + 放量上涨：主升浪启动 ★★★★★
+        3. MACD金叉 + RSI底背离：反转信号 ★★★★
+        4. MACD死叉 + KDJ死叉 + 放量下跌：恐慌抛售 ☆☆☆☆☆
+        5. MACD死叉 + RSI顶背离：顶部信号 ☆☆☆☆
+        6. 放量上涨 + KDJ超买 + MACD高位：诱多嫌疑 ☆☆☆
+        7. 缩量下跌 + KDJ超卖 + MACD低位：洗盘特征 ★★★
+        """
+        resonance_signals = []
+        resonance_score_adj = 0
+        
+        macd_status = result.macd_status
+        kdj_status = result.kdj_status
+        rsi_status = result.rsi_status
+        vol_status = result.volume_status
+        
+        dif, dea = result.macd_dif, result.macd_dea
+        j_val = result.kdj_j
+        
+        # === 组合 1：MACD水下金叉 + KDJ金叉 + 缩量：底部吸筹 ===
+        if (macd_status == MACDStatus.GOLDEN_CROSS and dif < 0 and dea < 0 and 
+            kdj_status in [KDJStatus.GOLDEN_CROSS, KDJStatus.GOLDEN_CROSS_OVERSOLD] and
+            vol_status in [VolumeStatus.SHRINK_VOLUME_UP, VolumeStatus.NORMAL]):
+            resonance_signals.append("★★★★★ 底部吸筹信号：MACD水下金叉+KDJ金叉+缩量，主力建仓阶段")
+            resonance_score_adj += 10
+        
+        # === 组合 2：MACD零轴上金叉 + KDJ金叉 + 放量上涨：主升浪启动 ===
+        elif (macd_status == MACDStatus.GOLDEN_CROSS_ZERO and 
+              kdj_status in [KDJStatus.GOLDEN_CROSS, KDJStatus.BULLISH] and
+              vol_status == VolumeStatus.HEAVY_VOLUME_UP):
+            resonance_signals.append("★★★★★ 主升浪启动：MACD零轴上金叉+KDJ金叉+放量突破，趋势行情")
+            resonance_score_adj += 12
+        
+        # === 组合 3：MACD金叉 + RSI底背离：反转信号 ===
+        elif (macd_status in [MACDStatus.GOLDEN_CROSS, MACDStatus.GOLDEN_CROSS_ZERO] and
+              rsi_status == RSIStatus.BULLISH_DIVERGENCE):
+            resonance_signals.append("★★★★ 反转信号：MACD金叉+RSI底背离，跌不动了")
+            resonance_score_adj += 8
+        
+        # === 组合 4：MACD死叉 + KDJ死叉 + 放量下跌：恐慌抛售 ===
+        if (macd_status == MACDStatus.DEATH_CROSS and
+            kdj_status == KDJStatus.DEATH_CROSS and
+            vol_status == VolumeStatus.HEAVY_VOLUME_DOWN):
+            resonance_signals.append("☆☆☆☆☆ 恐慌抛售：MACD+KDJ双死叉+放量下跌，赶紧离场")
+            resonance_score_adj -= 15
+        
+        # === 组合 5：MACD死叉 + RSI顶背离：顶部信号 ===
+        elif (macd_status == MACDStatus.DEATH_CROSS and
+              rsi_status == RSIStatus.BEARISH_DIVERGENCE):
+            resonance_signals.append("☆☆☆☆ 顶部信号：MACD死叉+RSI顶背离，涨不上去了")
+            resonance_score_adj -= 10
+        
+        # === 组合 6：放量上涨 + KDJ超买 + MACD高位：诱多嫌疑 ===
+        if (vol_status == VolumeStatus.HEAVY_VOLUME_UP and
+            kdj_status == KDJStatus.OVERBOUGHT and
+            dif > 0 and dif > dea and result.trend_strength < 70):
+            resonance_signals.append("☆☆☆ 诱多嫌疑：高位放量+KDJ超买，小心接盘")
+            resonance_score_adj -= 5
+        
+        # === 组合 7：缩量下跌 + KDJ超卖 + MACD低位：洗盘特征 ===
+        if (vol_status == VolumeStatus.SHRINK_VOLUME_DOWN and
+            kdj_status in [KDJStatus.OVERSOLD, KDJStatus.GOLDEN_CROSS_OVERSOLD] and
+            dif < 0 and result.trend_strength > 60):
+            resonance_signals.append("★★★ 洗盘特征：缩量回调+KDJ超卖，不破MA20可接")
+            resonance_score_adj += 5
+        
+        # === 应用共振调整 ===
+        if resonance_signals:
+            result.indicator_resonance = "\n".join(resonance_signals)
+            result.signal_score = max(0, min(100, result.signal_score + resonance_score_adj))
+            result.score_breakdown['resonance_adj'] = resonance_score_adj
+            self._update_buy_signal(result)
+        else:
+            result.indicator_resonance = ""
+
+    def _detect_market_behavior(self, result: TrendAnalysisResult, df: pd.DataFrame):
+        """市场行为识别：诱多/诱空/吸筹/洗盘/拉升/出货
+        
+        识别逻辑：
+        1. 诱多：高位大阳线+巨量+次日低开低走（需要次日数据，暂用当日特征）
+        2. 诱空：低位大阴线+巨量+次日高开高走
+        3. 吸筹：低位缩量震荡+MACD水下+慢慢探底
+        4. 洗盘：中位缩量回调+不破关键均线+KDJ超卖后反弹
+        5. 拉升：持续放量上涨+重心上移+均线多头发散
+        6. 出货：高位震荡+量价背离+MACD顶背离
+        """
+        if df is None or len(df) < 10:
+            result.market_behavior = ""
+            return
+        
+        behavior_signals = []
+        
+        latest = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) >= 2 else latest
+        recent_5 = df.tail(5)
+        recent_10 = df.tail(10)
+        
+        close = float(latest['close'])
+        open_price = float(latest['open'])
+        high = float(latest['high'])
+        low = float(latest['low'])
+        volume = float(latest['volume'])
+        
+        # 阳线/阴线实体大小
+        body_size = abs(close - open_price) / open_price * 100 if open_price > 0 else 0
+        is_big_candle = body_size > 5  # 实体超过5%
+        is_yang = close > open_price
+        
+        # 量比
+        vol_ratio = result.volume_ratio
+        
+        # 价格位置：相对于60日高低点
+        if len(df) >= 60:
+            high_60 = float(df['high'].tail(60).max())
+            low_60 = float(df['low'].tail(60).min())
+            price_position = (close - low_60) / (high_60 - low_60) * 100 if high_60 > low_60 else 50
+        else:
+            price_position = 50
+        
+        # === 1. 诱多判断 ===
+        if (price_position > 70 and is_big_candle and is_yang and vol_ratio > 2.5 and
+            result.kdj_status == KDJStatus.OVERBOUGHT and
+            result.rsi_status in [RSIStatus.OVERBOUGHT, RSIStatus.BEARISH_DIVERGENCE]):
+            behavior_signals.append("🚨 诱多嫌疑：高位巨量长阳+KDJ/RSI超买，谨防接盘")
+        
+        # === 2. 诱空判断 ===
+        elif (price_position < 30 and is_big_candle and not is_yang and vol_ratio > 2.5 and
+              result.kdj_status == KDJStatus.OVERSOLD and
+              result.rsi_status in [RSIStatus.OVERSOLD, RSIStatus.BULLISH_DIVERGENCE]):
+            behavior_signals.append("🔥 诱空嫌疑：低位巨量长阴+KDJ/RSI超卖，反弹在即")
+        
+        # === 3. 吸筹判断 ===
+        if (price_position < 40 and 
+            result.macd_status in [MACDStatus.BEARISH, MACDStatus.NEUTRAL] and
+            result.macd_dif < 0 and
+            vol_ratio < 1.2 and
+            len(recent_10) >= 10):
+            # 检查是否缓慢探底（近10日波动率低）
+            recent_volatility = (recent_10['high'].max() - recent_10['low'].min()) / recent_10['low'].min() * 100
+            if recent_volatility < 15:  # 波动率<15%
+                behavior_signals.append("🧠 疑似吸筹：低位缩量震荡+MACD水下，主力慢慢建仓")
+        
+        # === 4. 洗盘判断 ===
+        if (40 <= price_position <= 70 and
+            result.volume_status in [VolumeStatus.SHRINK_VOLUME_DOWN, VolumeStatus.SHRINK_VOLUME_UP] and
+            result.kdj_status in [KDJStatus.OVERSOLD, KDJStatus.GOLDEN_CROSS_OVERSOLD] and
+            result.current_price > result.ma20 and
+            result.trend_strength >= 65):
+            behavior_signals.append("🌀 洗盘特征：缩量回调+不破MA20+KDJ超卖，上车机会")
+        
+        # === 5. 拉升判断 ===
+        if (result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL] and
+            len(recent_5) >= 5):
+            # 检查近5日是否持续放量上涨
+            up_days = sum(1 for i in range(len(recent_5)) if recent_5.iloc[i]['close'] > recent_5.iloc[i]['open'])
+            avg_vol_ratio = recent_5['volume'].mean() / df['volume'].tail(20).mean() if len(df) >= 20 else 1.0
+            if up_days >= 4 and avg_vol_ratio > 1.3:
+                behavior_signals.append("🚀 拉升阶段：持续放量上涨+均线多头，跟着主力吃肉")
+        
+        # === 6. 出货判断 ===
+        if (price_position > 75 and
+            result.rsi_status in [RSIStatus.BEARISH_DIVERGENCE, RSIStatus.OVERBOUGHT] and
+            result.macd_status in [MACDStatus.DEATH_CROSS, MACDStatus.CROSSING_DOWN] and
+            len(recent_5) >= 5):
+            # 检查是否量价背离（价格新高但量能萎竭）
+            price_high_recent = recent_5['high'].max()
+            price_high_prev = df.tail(10).head(5)['high'].max() if len(df) >= 10 else 0
+            vol_recent = recent_5['volume'].mean()
+            vol_prev = df.tail(10).head(5)['volume'].mean() if len(df) >= 10 else vol_recent
+            if price_high_recent > price_high_prev and vol_recent < vol_prev * 0.8:
+                behavior_signals.append("⚠️ 出货嫌疑：高位震荡+量价背离+指标顶背离，先走为妙")
+        
+        result.market_behavior = "\n".join(behavior_signals) if behavior_signals else ""
+
+    def _check_multi_timeframe_resonance(self, result: TrendAnalysisResult, df: pd.DataFrame):
+        """多时间周期共振验证：日线 + 周线共振
+        
+        逻辑：
+        1. 将日线数据 resample 为周线
+        2. 计算周线的 MACD、KDJ、MA趋势
+        3. 判断日线和周线是否同向
+        4. 共振加分，背离减分
+        
+        共振级别：
+        - 强共振：日线+周线同时金叉/死叉 +5分
+        - 中共振：日线+周线趋势一致 +3分
+        - 背离：日线多头但周线空头 -5分
+        """
+        if df is None or len(df) < 60:  # 至少需要60个交易日（约12周）
+            result.timeframe_resonance = ""
+            return
+        
+        try:
+            # === 1. 将日线 resample 为周线 ===
+            weekly_df = self._resample_to_weekly(df)
+            if weekly_df is None or len(weekly_df) < 5:
+                result.timeframe_resonance = ""
+                return
+            
+            # === 2. 计算周线指标 ===
+            weekly_df = self._calc_indicators(weekly_df)
+            if len(weekly_df) < 3:
+                result.timeframe_resonance = ""
+                return
+            
+            weekly_latest = weekly_df.iloc[-1]
+            weekly_prev = weekly_df.iloc[-2]
+            
+            # 周线 MACD
+            weekly_dif = float(weekly_latest.get('MACD_DIF', 0))
+            weekly_dea = float(weekly_latest.get('MACD_DEA', 0))
+            weekly_prev_dif = float(weekly_prev.get('MACD_DIF', 0))
+            weekly_prev_dea = float(weekly_prev.get('MACD_DEA', 0))
+            
+            weekly_macd_golden = (weekly_prev_dif <= weekly_prev_dea) and (weekly_dif > weekly_dea)
+            weekly_macd_death = (weekly_prev_dif >= weekly_prev_dea) and (weekly_dif < weekly_dea)
+            weekly_macd_bullish = weekly_dif > 0 and weekly_dea > 0
+            weekly_macd_bearish = weekly_dif < 0 and weekly_dea < 0
+            
+            # 周线 KDJ
+            weekly_k = float(weekly_latest.get('K', 50))
+            weekly_d = float(weekly_latest.get('D', 50))
+            weekly_prev_k = float(weekly_prev.get('K', 50))
+            weekly_prev_d = float(weekly_prev.get('D', 50))
+            
+            weekly_kdj_golden = (weekly_prev_k <= weekly_prev_d) and (weekly_k > weekly_d)
+            weekly_kdj_death = (weekly_prev_k >= weekly_prev_d) and (weekly_k < weekly_d)
+            weekly_kdj_bullish = weekly_k > weekly_d
+            weekly_kdj_bearish = weekly_k < weekly_d
+            
+            # 周线MA趋势
+            weekly_ma5 = float(weekly_latest.get('MA5', 0))
+            weekly_ma10 = float(weekly_latest.get('MA10', 0))
+            weekly_ma20 = float(weekly_latest.get('MA20', 0))
+            weekly_ma_bull = weekly_ma5 > weekly_ma10 > weekly_ma20
+            weekly_ma_bear = weekly_ma5 < weekly_ma10 < weekly_ma20
+            
+            # === 3. 日线指标（已计算）===
+            daily_macd_golden = result.macd_status in [MACDStatus.GOLDEN_CROSS, MACDStatus.GOLDEN_CROSS_ZERO]
+            daily_macd_death = result.macd_status == MACDStatus.DEATH_CROSS
+            daily_macd_bullish = result.macd_status in [MACDStatus.BULLISH, MACDStatus.GOLDEN_CROSS_ZERO, MACDStatus.CROSSING_UP]
+            daily_macd_bearish = result.macd_status in [MACDStatus.BEARISH, MACDStatus.CROSSING_DOWN]
+            
+            daily_kdj_golden = result.kdj_status in [KDJStatus.GOLDEN_CROSS, KDJStatus.GOLDEN_CROSS_OVERSOLD]
+            daily_kdj_death = result.kdj_status == KDJStatus.DEATH_CROSS
+            daily_kdj_bullish = result.kdj_status in [KDJStatus.BULLISH, KDJStatus.GOLDEN_CROSS]
+            daily_kdj_bearish = result.kdj_status in [KDJStatus.BEARISH, KDJStatus.DEATH_CROSS]
+            
+            daily_ma_bull = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]
+            daily_ma_bear = result.trend_status == TrendStatus.BEAR
+            
+            # === 4. 共振判断 ===
+            resonance_signals = []
+            resonance_adj = 0
+            
+            # 强共振：日线+周线同时金叉
+            if daily_macd_golden and weekly_macd_golden:
+                resonance_signals.append("🔥🔥 日周共振：MACD同时金叉，趋势确认")
+                resonance_adj += 8
+            
+            if daily_kdj_golden and weekly_kdj_golden:
+                resonance_signals.append("🔥🔥 日周共振：KDJ同时金叉，动能强劲")
+                resonance_adj += 6
+            
+            # 中共振：日线+周线趋势一致
+            if daily_ma_bull and weekly_ma_bull:
+                if not (daily_macd_golden and weekly_macd_golden):  # 避免重复计分
+                    resonance_signals.append("✅ 日周趋势一致：均线多头排列")
+                    resonance_adj += 4
+            
+            if daily_macd_bullish and weekly_macd_bullish:
+                if not (daily_macd_golden and weekly_macd_golden):
+                    resonance_signals.append("✅ MACD多周期多头")
+                    resonance_adj += 3
+            
+            if daily_kdj_bullish and weekly_kdj_bullish:
+                if not (daily_kdj_golden and weekly_kdj_golden):
+                    resonance_signals.append("✅ KDJ多周期多头")
+                    resonance_adj += 2
+            
+            # 背离警告：日线多头但周线空头
+            if daily_ma_bull and weekly_ma_bear:
+                resonance_signals.append("⚠️ 多周期背离：日线多头但周线空头，谨防回调")
+                resonance_adj -= 5
+            
+            if daily_macd_bullish and weekly_macd_bearish:
+                if not (daily_ma_bull and weekly_ma_bear):  # 避免重复减分
+                    resonance_signals.append("⚠️ MACD周线空头，日线反弹需谨慎")
+                    resonance_adj -= 3
+            
+            # 强空头共振
+            if daily_macd_death and weekly_macd_death:
+                resonance_signals.append("❗❗ 日周共振：MACD同时死叉，趋势转弱")
+                resonance_adj -= 8
+            
+            if daily_kdj_death and weekly_kdj_death:
+                resonance_signals.append("❗❗ 日周共振：KDJ同时死叉，动能转弱")
+                resonance_adj -= 6
+            
+            # === 5. 应用共振调整 ===
+            if resonance_signals:
+                result.timeframe_resonance = "\n".join(resonance_signals)
+                result.signal_score = max(0, min(100, result.signal_score + resonance_adj))
+                result.score_breakdown['timeframe_adj'] = resonance_adj
+                self._update_buy_signal(result)
+            else:
+                result.timeframe_resonance = ""
+        
+        except Exception as e:
+            logger.debug(f"多周期共振计算失败: {e}")
+            result.timeframe_resonance = ""
+    
+    def _resample_to_weekly(self, df: pd.DataFrame) -> pd.DataFrame:
+        """将日线K线 resample 为周线K线
+        
+        Args:
+            df: 日线数据，必须包含 date列且为DatetimeIndex或可转换为DatetimeIndex
+        
+        Returns:
+            周线数据
+        """
+        try:
+            df_copy = df.copy()
+            
+            # 确保date列存在且为DatetimeIndex
+            if 'date' in df_copy.columns:
+                df_copy['date'] = pd.to_datetime(df_copy['date'])
+                df_copy = df_copy.set_index('date')
+            elif not isinstance(df_copy.index, pd.DatetimeIndex):
+                return None
+            
+            # Resample为周线（周一开始）
+            weekly = df_copy.resample('W-MON').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum',
+            }).dropna()
+            
+            return weekly
+            
+        except Exception as e:
+            logger.debug(f"Resample到周线失败: {e}")
+            return None
 
     def _check_valuation(self, result: TrendAnalysisResult, valuation: dict = None):
         """估值安全检查：PE/PB/PEG 评分 + 估值降档"""
@@ -1322,31 +1722,117 @@ class StockTrendAnalyzer:
                 result._conflict_warnings = []
             result._conflict_warnings = conflicts
 
-    def _calc_position(self, result: TrendAnalysisResult, market_regime: MarketRegime):
-        """仓位管理（量化硬规则）：基于评分、市场环境、波动率、估值"""
+    def _calc_position(self, result: TrendAnalysisResult, market_regime: MarketRegime, regime_strength: int = 50):
+        """增强版仓位管理系统：动态仓位 + 凯利公式 + 风险分散
+        
+        仓位决策因子：
+        1. 信号强度：signal_score
+        2. 市场环境：market_regime + regime_strength
+        3. 波动率：volatility_20d
+        4. 估值安全边际：pe_ratio
+        5. 胜率预估：基于signal_score的经验公式
+        6. 盈亏比：risk_reward_ratio
+        
+        仓位计算逻辑：
+        - 基础仓位 = f(signal_score)
+        - 环境乘数 = f(market_regime, regime_strength)
+        - 波动调整 = f(volatility)
+        - 估值调整 = f(pe_ratio)
+        - 凯利仓位 = f(胜率, 盈亏比)
+        - 最终仓位 = min(基础仓位 * 各种调整, 凯利仓位)
+        """
         score = result.signal_score
-        if score >= 85:
-            base_pos = 30
-        elif score >= 70:
+        
+        # === 1. 基础仓位（根据信号强度）===
+        if score >= 95:  # 激进买入
+            base_pos = 60
+        elif score >= 85:  # 强烈买入
+            base_pos = 50
+        elif score >= 70:  # 买入
+            base_pos = 35
+        elif score >= 60:  # 谨慎买入
             base_pos = 20
-        elif score >= 50:
+        elif score >= 50:  # 持有
             base_pos = 10
         else:
             base_pos = 0
-        regime_mult = {MarketRegime.BULL: 1.2, MarketRegime.SIDEWAYS: 1.0, MarketRegime.BEAR: 0.6}
-        pos = int(base_pos * regime_mult.get(market_regime, 1.0))
-        # 波动率仓位调整：高波动降仓
+        
+        # === 2. 市场环境乘数（结合强度）===
+        if market_regime == MarketRegime.BULL:
+            regime_mult = 1.0 + (regime_strength - 50) / 100  # 1.0-1.5
+        elif market_regime == MarketRegime.BEAR:
+            regime_mult = 0.5 + regime_strength / 100  # 0.5-1.0
+        else:  # SIDEWAYS
+            regime_mult = 0.8 + (regime_strength - 35) / 100  # 0.65-0.95
+        
+        pos = base_pos * regime_mult
+        
+        # === 3. 波动率调整（高波动降仓）===
         if result.volatility_20d > 50:
-            pos = min(pos, 10)  # 妖股级波动，仓位上限10%
+            vol_mult = 0.6
         elif result.volatility_20d > 35:
-            pos = min(pos, 20)  # 高波动，仓位上限20%
-        # 估值降档影响仓位
-        if result.valuation_downgrade <= -10:
-            pos = min(pos, 10)  # 严重高估，仓位上限10%
-        # 交易暂停：仓位归零
-        if result.trading_halt:
-            pos = 0
-        result.suggested_position_pct = min(30, pos)
+            vol_mult = 0.75
+        elif result.volatility_20d > 20:
+            vol_mult = 0.9
+        else:
+            vol_mult = 1.0
+        pos *= vol_mult
+        
+        # === 4. 估值安全边际调整 ===
+        if result.pe_ratio > 0:
+            if result.pe_ratio > 100:
+                pe_mult = 0.5
+            elif result.pe_ratio > 60:
+                pe_mult = 0.7
+            elif result.pe_ratio > 40:
+                pe_mult = 0.85
+            else:
+                pe_mult = 1.0
+            pos *= pe_mult
+        
+        # === 5. 凯利公式仓位上限（防止过度集中）===
+        # 胜率预估：根据signal_score的经验公式
+        if score >= 85:
+            win_rate = 0.65  # 85+分胜率65%
+        elif score >= 70:
+            win_rate = 0.55
+        elif score >= 60:
+            win_rate = 0.50
+        else:
+            win_rate = 0.45
+        
+        # 盈亏比
+        rr_ratio = result.risk_reward_ratio if result.risk_reward_ratio > 0 else 1.5
+        
+        # 凯利公式：f = (p*b - q) / b，其中p=胜率，b=盈亏比，q=1-p
+        # 修正：为了保守，乘以系数 0.5
+        kelly_f = (win_rate * rr_ratio - (1 - win_rate)) / rr_ratio
+        kelly_pos = max(0, min(50, kelly_f * 100 * 0.5))  # 半凯利，上锆50%
+        
+        # === 6. 最终仓位：取较小值（保守原则）===
+        final_pos = min(pos, kelly_pos)
+        
+        # 特殊场景调整
+        # 共振信号加仓
+        if hasattr(result, 'indicator_resonance') and result.indicator_resonance:
+            if '★★★★★' in result.indicator_resonance:
+                final_pos *= 1.2
+        
+        # 风险信号降仓
+        if hasattr(result, 'market_behavior') and result.market_behavior:
+            if '出货嫌疑' in result.market_behavior or '诱多嫌疑' in result.market_behavior:
+                final_pos *= 0.5
+        
+        result.recommended_position = int(max(0, min(80, final_pos)))  # 上限 80%
+        
+        # 记录仓位计算详情（供调试）
+        result.position_breakdown = {
+            'base': int(base_pos),
+            'regime_mult': round(regime_mult, 2),
+            'vol_mult': round(vol_mult, 2),
+            'kelly_cap': int(kelly_pos),
+            'final': result.recommended_position
+        }
 
     def _check_resonance(self, result: TrendAnalysisResult):
         """多指标共振检测：MACD/KDJ/RSI/量价/趋势同向信号"""
@@ -1434,13 +1920,64 @@ class StockTrendAnalyzer:
 
     @staticmethod
     def _update_buy_signal(result: TrendAnalysisResult):
-        """根据 signal_score 重新判定 buy_signal 等级"""
+        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）
+        
+        分级逻辑：
+        - 95+: 激进买入 - 共振信号+趋势确认，适合重仓
+        - 85-94: 强烈买入 - 多重指标共振，胜率高
+        - 70-84: 买入 - 技术面看好，可建仓
+        - 60-69: 谨慎买入 - 有机会但需谨慎
+        - 50-59: 持有 - 中性，持股待涨
+        - 35-49: 减仓 - 信号转弱，逐步减仓
+        - 0-34: 清仓 - 多重风险，先走为妙
+        
+        特殊加分：
+        - 共振信号（底部吸筹/主升浪启动）：+5分
+        - 市场行为（洗盘/拉升）：+3分
+        
+        特殊减分：
+        - 诱多嫌疑/出货嫌疑：-10分
+        - 恐慌抛售信号：-15分
+        """
         score = result.signal_score
-        if score >= 85: result.buy_signal = BuySignal.STRONG_BUY
-        elif score >= 70: result.buy_signal = BuySignal.BUY
-        elif score >= 50: result.buy_signal = BuySignal.HOLD
-        elif score >= 35: result.buy_signal = BuySignal.WAIT
-        else: result.buy_signal = BuySignal.SELL
+        
+        # === 特殊加分：共振和市场行为 ===
+        bonus = 0
+        if hasattr(result, 'indicator_resonance') and result.indicator_resonance:
+            if '★★★★★' in result.indicator_resonance:  # 顶级共振信号
+                bonus += 5
+            elif '★★★★' in result.indicator_resonance:  # 强共振信号
+                bonus += 3
+        
+        if hasattr(result, 'market_behavior') and result.market_behavior:
+            if '拉升阶段' in result.market_behavior or '洗盘特征' in result.market_behavior:
+                bonus += 3
+            elif '诱多嫌疑' in result.market_behavior or '出货嫌疑' in result.market_behavior:
+                bonus -= 10
+            elif '恐慌抛售' in result.market_behavior:
+                bonus -= 15
+        
+        adjusted_score = max(0, min(100, score + bonus))
+        
+        # === 7档分级 ===
+        if adjusted_score >= 95:
+            result.buy_signal = BuySignal.AGGRESSIVE_BUY
+        elif adjusted_score >= 85:
+            result.buy_signal = BuySignal.STRONG_BUY
+        elif adjusted_score >= 70:
+            result.buy_signal = BuySignal.BUY
+        elif adjusted_score >= 60:
+            result.buy_signal = BuySignal.CAUTIOUS_BUY
+        elif adjusted_score >= 50:
+            result.buy_signal = BuySignal.HOLD
+        elif adjusted_score >= 35:
+            result.buy_signal = BuySignal.REDUCE
+        else:
+            result.buy_signal = BuySignal.SELL
+        
+        # 记录调整后的分数（供调试）
+        if bonus != 0:
+            result.score_breakdown['signal_bonus'] = bonus
 
     def _compute_levels(self, df: pd.DataFrame, res: TrendAnalysisResult) -> tuple:
         """计算支撑位和阻力位：近 20 日 Swing 高低点 + 均线"""
@@ -1605,23 +2142,53 @@ class StockTrendAnalyzer:
         res.beginner_summary = "。".join(cleaned) + "。"
 
     @staticmethod
-    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0) -> 'MarketRegime':
-        """根据个股 MA20 斜率 + 大盘涨跌幅判断市场环境（平滑版）
-
-        平滑机制：检查近 5 个交易日的 MA20 斜率方向是否一致，
-        只有连续 N 天(SMOOTH_DAYS)方向一致才切换环境，避免震荡市中频繁切换。
+    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0, 
+                            volume_data: pd.Series = None) -> tuple:
+        """增强版市场环境检测：多维度判断 + 强度量化
+        
+        判断维度：
+        1. MA趋势：MA5/MA10/MA20/MA60排列 + MA20斜率
+        2. 大盘环境：近20日涨跌幅 + 当日方向
+        3. 量能特征：放量/缩量趋势
+        4. 波动率：近20日波动率（高波动=震荡/熊市）
+        5. 平滑机制：连续3天方向一致才切换
+        
+        Returns:
+            (MarketRegime, 环境强度 0-100)
         """
-        SMOOTH_DAYS = 3  # 至少连续 3 天斜率方向一致才确认切换
-        SLOPE_THRESHOLD = 1.0  # MA20 10日变化率阈值(%)
-
+        SMOOTH_DAYS = 3
+        SLOPE_THRESHOLD = 1.0
+        
         if df is None or df.empty or len(df) < 30:
-            return MarketRegime.SIDEWAYS
+            return MarketRegime.SIDEWAYS, 50
+        
         try:
+            # === 1. MA趋势分析 ===
+            ma5 = df['close'].rolling(5).mean()
+            ma10 = df['close'].rolling(10).mean()
             ma20 = df['close'].rolling(20).mean()
+            ma60 = df['close'].rolling(60).mean()
+            
             if len(ma20) < 15:
-                return MarketRegime.SIDEWAYS
-
-            # 计算近 SMOOTH_DAYS 天每天的 MA20 10日斜率
+                return MarketRegime.SIDEWAYS, 50
+            
+            # MA多头/空头排列检查
+            latest_ma5 = ma5.iloc[-1]
+            latest_ma10 = ma10.iloc[-1]
+            latest_ma20 = ma20.iloc[-1]
+            latest_ma60 = ma60.iloc[-1] if len(ma60) >= 60 else latest_ma20
+            
+            ma_bull_score = 0
+            if latest_ma5 > latest_ma10 > latest_ma20:
+                ma_bull_score += 3
+            if latest_ma10 > latest_ma20 > latest_ma60:
+                ma_bull_score += 2
+            elif latest_ma5 < latest_ma10 < latest_ma20:
+                ma_bull_score -= 3
+            if latest_ma10 < latest_ma20 < latest_ma60:
+                ma_bull_score -= 2
+            
+            # MA20斜率连续性
             bull_count = 0
             bear_count = 0
             for offset in range(SMOOTH_DAYS):
@@ -1638,15 +2205,66 @@ class StockTrendAnalyzer:
                     bull_count += 1
                 elif slope < -SLOPE_THRESHOLD:
                     bear_count += 1
-
-            # 连续 N 天斜率方向一致 + 当日大盘方向确认
-            if bull_count >= SMOOTH_DAYS and index_change_pct >= -0.5:
-                return MarketRegime.BULL
-            elif bear_count >= SMOOTH_DAYS and index_change_pct <= 0.5:
-                return MarketRegime.BEAR
-            return MarketRegime.SIDEWAYS
+            
+            ma_slope_score = 0
+            if bull_count >= SMOOTH_DAYS:
+                ma_slope_score = 3
+            elif bear_count >= SMOOTH_DAYS:
+                ma_slope_score = -3
+            
+            # === 2. 大盘环境分析 ===
+            index_score = 0
+            if index_change_pct > 1.0:
+                index_score = 2
+            elif index_change_pct > 0:
+                index_score = 1
+            elif index_change_pct < -1.0:
+                index_score = -2
+            elif index_change_pct < 0:
+                index_score = -1
+            
+            # === 3. 量能特征分析 ===
+            volume_score = 0
+            if volume_data is not None and len(volume_data) >= 20:
+                recent_vol = volume_data.tail(5).mean()
+                avg_vol = volume_data.tail(20).mean()
+                if avg_vol > 0:
+                    vol_ratio = recent_vol / avg_vol
+                    if vol_ratio > 1.3:  # 近5日持续放量
+                        volume_score = 1
+                    elif vol_ratio < 0.7:  # 近5日持续缩量
+                        volume_score = -1
+            
+            # === 4. 波动率分析 ===
+            volatility_score = 0
+            if len(df) >= 20:
+                recent_20 = df.tail(20)
+                high_20 = recent_20['high'].max()
+                low_20 = recent_20['low'].min()
+                volatility = (high_20 - low_20) / low_20 * 100 if low_20 > 0 else 0
+                if volatility > 30:  # 高波动，倾向震荡/熊市
+                    volatility_score = -2
+                elif volatility < 15:  # 低波动，倾向牛市/震荡
+                    volatility_score = 1
+            
+            # === 5. 综合评分 ===
+            total_score = ma_bull_score + ma_slope_score + index_score + volume_score + volatility_score
+            
+            # === 6. 判定环境 + 计算强度 ===
+            if total_score >= 5:
+                regime = MarketRegime.BULL
+                strength = min(100, 50 + total_score * 5)  # 50-100
+            elif total_score <= -5:
+                regime = MarketRegime.BEAR
+                strength = max(0, 50 + total_score * 5)  # 0-50
+            else:
+                regime = MarketRegime.SIDEWAYS
+                strength = 50 + total_score * 3  # 35-65
+            
+            return regime, int(strength)
+            
         except Exception:
-            return MarketRegime.SIDEWAYS
+            return MarketRegime.SIDEWAYS, 50
 
     # RSI 参数
     RSI_SHORT = 6
@@ -1655,6 +2273,34 @@ class StockTrendAnalyzer:
     # 量能阈值
     VOLUME_SHRINK_RATIO = 0.7
     VOLUME_HEAVY_RATIO = 1.5
+
+    def _calc_atr_percentile(self, df: pd.DataFrame, lookback: int = 60) -> float:
+        """计算当前ATR在历史中的分位数（用于自适应止损倍数）
+        
+        Args:
+            df: 包含ATR14列的DataFrame
+            lookback: 回溯周期（天）
+        
+        Returns:
+            分位数（0-1），0.8表示当前ATR处于历史高位（前20%）
+        """
+        if df is None or len(df) < lookback or 'ATR14' not in df.columns:
+            return 0.5  # 默认中位数
+        
+        try:
+            atr_hist = df['ATR14'].tail(lookback).dropna()
+            if len(atr_hist) < 10:
+                return 0.5
+            
+            current_atr = float(df['ATR14'].iloc[-1])
+            if current_atr <= 0:
+                return 0.5
+            
+            # 计算当前ATR在历史中的排名百分比
+            percentile = (atr_hist <= current_atr).sum() / len(atr_hist)
+            return round(percentile, 2)
+        except Exception:
+            return 0.5
 
     def _calc_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
