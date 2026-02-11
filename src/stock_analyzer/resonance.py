@@ -18,9 +18,45 @@ class ResonanceDetector:
     """共振检测器：多指标共振、市场行为识别、多周期共振"""
     
     @staticmethod
+    def _calc_signal_decay(df: pd.DataFrame, col1: str, col2: str, cross_type: str = 'golden') -> float:
+        """
+        计算交叉信号的时间衰减权重
+        
+        Args:
+            df: K线数据
+            col1, col2: 交叉的两个指标列名
+            cross_type: 'golden'(上穿) 或 'death'(下穿)
+            
+        Returns:
+            衰减权重 (1.0=今天发生, 0.7=昨天, 0.4=前天, 0.0=更早或未发生)
+        """
+        if df is None or len(df) < 3:
+            return 1.0
+        try:
+            for offset in range(3):
+                idx = -(1 + offset)
+                prev_idx = -(2 + offset)
+                if abs(prev_idx) > len(df):
+                    break
+                c1_now = float(df[col1].iloc[idx])
+                c2_now = float(df[col2].iloc[idx])
+                c1_prev = float(df[col1].iloc[prev_idx])
+                c2_prev = float(df[col2].iloc[prev_idx])
+                
+                if cross_type == 'golden':
+                    if c1_prev <= c2_prev and c1_now > c2_now:
+                        return [1.0, 0.7, 0.4][offset]
+                else:
+                    if c1_prev >= c2_prev and c1_now < c2_now:
+                        return [1.0, 0.7, 0.4][offset]
+            return 1.0  # 无法确定时不衰减
+        except Exception:
+            return 1.0
+
+    @staticmethod
     def detect_indicator_resonance(result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
         """
-        指标组合共振判断：识别关键买卖信号
+        指标组合共振判断：识别关键买卖信号（含信号时间衰减）
         
         组合逻辑：
         1. MACD水下金叉 + KDJ金叉 + 缩量：底部吸筹信号 ★★★★★
@@ -30,6 +66,8 @@ class ResonanceDetector:
         5. MACD死叉 + RSI顶背离：顶部信号 ☆☆☆☆
         6. 放量上涨 + KDJ超买 + MACD高位：诱多嫌疑 ☆☆☆
         7. 缩量下跌 + KDJ超卖 + MACD低位：洗盘特征 ★★★
+        
+        信号衰减：金叉/死叉发生在今天权重1.0，昨天0.7，前天0.4
         """
         resonance_signals = []
         resonance_score_adj = 0
@@ -42,33 +80,48 @@ class ResonanceDetector:
         dif, dea = result.macd_dif, result.macd_dea
         j_val = result.kdj_j
         
+        # 计算 MACD 和 KDJ 交叉信号的衰减权重
+        macd_golden_decay = ResonanceDetector._calc_signal_decay(df, 'MACD_DIF', 'MACD_DEA', 'golden')
+        macd_death_decay = ResonanceDetector._calc_signal_decay(df, 'MACD_DIF', 'MACD_DEA', 'death')
+        kdj_golden_decay = ResonanceDetector._calc_signal_decay(df, 'K', 'D', 'golden')
+        
         if (macd_status == MACDStatus.GOLDEN_CROSS and dif < 0 and dea < 0 and 
             kdj_status in [KDJStatus.GOLDEN_CROSS, KDJStatus.GOLDEN_CROSS_OVERSOLD] and
             vol_status in [VolumeStatus.SHRINK_VOLUME_UP, VolumeStatus.NORMAL]):
-            resonance_signals.append("★★★★★ 底部吸筹信号：MACD水下金叉+KDJ金叉+缩量，主力建仓阶段")
-            resonance_score_adj += 10
+            decay = min(macd_golden_decay, kdj_golden_decay)
+            adj = int(10 * decay)
+            resonance_signals.append(f"★★★★★ 底部吸筹信号：MACD水下金叉+KDJ金叉+缩量，主力建仓阶段{f'(衰减{decay:.1f})' if decay < 1.0 else ''}")
+            resonance_score_adj += adj
         
         elif (macd_status == MACDStatus.GOLDEN_CROSS_ZERO and 
               kdj_status in [KDJStatus.GOLDEN_CROSS, KDJStatus.BULLISH] and
               vol_status == VolumeStatus.HEAVY_VOLUME_UP):
-            resonance_signals.append("★★★★★ 主升浪启动：MACD零轴上金叉+KDJ金叉+放量突破，趋势行情")
-            resonance_score_adj += 12
+            decay = macd_golden_decay
+            adj = int(12 * decay)
+            resonance_signals.append(f"★★★★★ 主升浪启动：MACD零轴上金叉+KDJ金叉+放量突破，趋势行情{f'(衰减{decay:.1f})' if decay < 1.0 else ''}")
+            resonance_score_adj += adj
         
         elif (macd_status in [MACDStatus.GOLDEN_CROSS, MACDStatus.GOLDEN_CROSS_ZERO] and
               rsi_status == RSIStatus.BULLISH_DIVERGENCE):
-            resonance_signals.append("★★★★ 反转信号：MACD金叉+RSI底背离，跌不动了")
-            resonance_score_adj += 8
+            decay = macd_golden_decay
+            adj = int(8 * decay)
+            resonance_signals.append(f"★★★★ 反转信号：MACD金叉+RSI底背离，跌不动了{f'(衰减{decay:.1f})' if decay < 1.0 else ''}")
+            resonance_score_adj += adj
         
         if (macd_status == MACDStatus.DEATH_CROSS and
             kdj_status == KDJStatus.DEATH_CROSS and
             vol_status == VolumeStatus.HEAVY_VOLUME_DOWN):
-            resonance_signals.append("☆☆☆☆☆ 恐慌抛售：MACD+KDJ双死叉+放量下跌，赶紧离场")
-            resonance_score_adj -= 15
+            decay = macd_death_decay
+            adj = int(-15 * decay)
+            resonance_signals.append(f"☆☆☆☆☆ 恐慌抛售：MACD+KDJ双死叉+放量下跌，赶紧离场{f'(衰减{decay:.1f})' if decay < 1.0 else ''}")
+            resonance_score_adj += adj
         
         elif (macd_status == MACDStatus.DEATH_CROSS and
               rsi_status == RSIStatus.BEARISH_DIVERGENCE):
-            resonance_signals.append("☆☆☆☆ 顶部信号：MACD死叉+RSI顶背离，涨不上去了")
-            resonance_score_adj -= 10
+            decay = macd_death_decay
+            adj = int(-10 * decay)
+            resonance_signals.append(f"☆☆☆☆ 顶部信号：MACD死叉+RSI顶背离，涨不上去了{f'(衰减{decay:.1f})' if decay < 1.0 else ''}")
+            resonance_score_adj += adj
         
         if (vol_status == VolumeStatus.HEAVY_VOLUME_UP and
             kdj_status == KDJStatus.OVERBOUGHT and
@@ -302,11 +355,13 @@ class ResonanceDetector:
             bonus = min(10, len(bullish_resonance) * 2)
             result.resonance_bonus = bonus
             result.signal_score = min(100, result.signal_score + bonus)
+            result.score_breakdown['cross_resonance'] = result.score_breakdown.get('cross_resonance', 0) + bonus
         elif len(bearish_resonance) >= 3:
             result.resonance_signals = bearish_resonance
             penalty = -min(10, len(bearish_resonance) * 2)
             result.resonance_bonus = penalty
             result.signal_score = max(0, result.signal_score + penalty)
+            result.score_breakdown['cross_resonance'] = result.score_breakdown.get('cross_resonance', 0) + penalty
         else:
             result.resonance_signals = []
             result.resonance_bonus = 0

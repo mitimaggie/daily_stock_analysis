@@ -86,8 +86,32 @@ class ScoringSystem:
     
     @staticmethod
     def _calc_bias_score(result: TrendAnalysisResult) -> int:
-        """计算乖离率评分 (0-20)"""
+        """计算乖离率评分 (0-20)，使用布林带宽度自适应归一化"""
         bias = result.bias_ma5
+        
+        # 自适应归一化：用布林带宽度衡量该股正常波动范围
+        # bb_width = (upper - lower) / middle，典型值 0.05~0.20
+        # 归一化后的 bias = 实际乖离 / 正常波动幅度
+        if result.bb_width > 0.01:
+            half_bb_pct = result.bb_width * 50  # 半个布林带宽度(%)
+            norm_bias = bias / half_bb_pct  # 归一化：1.0 = 到达布林带边缘
+            if norm_bias > 1.5:
+                return 0   # 远超布林上轨
+            elif norm_bias > 1.0:
+                return 5   # 接近或超过布林上轨
+            elif 0 <= norm_bias <= 0.5 and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
+                return 18  # 多头趋势中小幅正乖离
+            elif -0.5 <= norm_bias < 0:
+                return 20  # 小幅负乖离，回踩买点
+            elif -1.0 <= norm_bias < -0.5:
+                return 16  # 中等负乖离
+            elif -1.5 <= norm_bias < -1.0:
+                return 12 if result.trend_status != TrendStatus.BEAR else 5
+            elif norm_bias < -1.5:
+                return 8 if result.trend_status != TrendStatus.BEAR else 2
+            return 10
+        
+        # 回退：无布林带数据时使用原始阈值
         if bias > 8:
             return 0
         elif bias > 5:
@@ -106,7 +130,22 @@ class ScoringSystem:
     
     @staticmethod
     def _calc_volume_score(result: TrendAnalysisResult) -> int:
-        """计算量能评分 (0-15)"""
+        """计算量能评分 (0-15)，含涨跌停特殊处理"""
+        # 涨跌停特殊评分：缩量涨停=好（筹码锁定），放量跌停=差
+        if result.is_limit_up:
+            # 缩量涨停封板 → 筹码锁定良好，高分
+            if result.volume_status == VolumeStatus.SHRINK_VOLUME_UP:
+                return 14
+            # 放量涨停 → 多空分歧，中高分
+            return 11
+        if result.is_limit_down:
+            # 放量跌停 → 有承接但抛压重
+            if result.volume_status == VolumeStatus.HEAVY_VOLUME_DOWN:
+                return 2
+            # 缩量跌停 → 无人接盘，最差
+            return 0
+
+        # 常规量能评分
         scores = {
             VolumeStatus.SHRINK_VOLUME_DOWN: 15,
             VolumeStatus.HEAVY_VOLUME_UP: 12,
@@ -168,8 +207,8 @@ class ScoringSystem:
     
     @staticmethod
     def _calc_kdj_score(result: TrendAnalysisResult) -> int:
-        """计算KDJ评分 (0-13)"""
-        scores = {
+        """计算KDJ评分 (0-13)，含钝化/背离/连续极端修正"""
+        base_scores = {
             KDJStatus.GOLDEN_CROSS_OVERSOLD: 13,
             KDJStatus.OVERSOLD: 11,
             KDJStatus.GOLDEN_CROSS: 10,
@@ -179,7 +218,26 @@ class ScoringSystem:
             KDJStatus.DEATH_CROSS: 1,
             KDJStatus.OVERBOUGHT: 0,
         }
-        return scores.get(result.kdj_status, 5)
+        score = base_scores.get(result.kdj_status, 5)
+        
+        # KDJ 钝化时，将评分拉向中性（减弱极端信号的影响）
+        if result.kdj_passivation:
+            score = int(score * 0.6 + 5 * 0.4)  # 向中性值5靠拢40%
+        
+        # KDJ 背离额外修正
+        if result.kdj_divergence == "KDJ底背离":
+            score = min(13, score + 2)
+        elif result.kdj_divergence == "KDJ顶背离":
+            score = max(0, score - 2)
+        
+        # J 值连续极端额外修正
+        if result.kdj_consecutive_extreme:
+            if "超买" in result.kdj_consecutive_extreme:
+                score = max(0, score - 2)
+            elif "超卖" in result.kdj_consecutive_extreme:
+                score = min(13, score + 2)
+        
+        return score
     
     @staticmethod
     def check_valuation(result: TrendAnalysisResult, valuation: dict = None):
@@ -251,15 +309,15 @@ class ScoringSystem:
             if result.peg_ratio > 0:
                 if result.peg_ratio < 0.5:
                     v_score = min(10, v_score + 3)
-                    downgrade = max(0, downgrade + 5)
+                    downgrade = min(0, downgrade + 5)  # 减轻扣分（往0靠近）
                     result.valuation_verdict += "(PEG极低,增速优秀)"
                 elif result.peg_ratio < 1.0:
                     v_score = min(10, v_score + 1)
-                    downgrade = max(0, downgrade + 3)
+                    downgrade = min(0, downgrade + 3)  # 减轻扣分（往0靠近）
                     result.valuation_verdict += "(PEG合理)"
                 elif result.peg_ratio > 3.0:
                     v_score = max(0, v_score - 2)
-                    downgrade = min(downgrade, downgrade - 3)
+                    downgrade = downgrade - 3  # 加重扣分
                     result.valuation_verdict += "(PEG过高,增速不匹配)"
         
         result.valuation_score = v_score
@@ -605,11 +663,118 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
     
     @staticmethod
+    def score_limit_and_enhanced(result: TrendAnalysisResult):
+        """
+        涨跌停 + 量价背离 + VWAP + 换手率分位数 + 缺口 综合评分修正
+        
+        涨跌停规则：
+        - 涨停板：连板越多越强（但高位连板风险加大）
+        - 跌停板：直接大幅扣分
+        - 连续涨停 ≥3 板：追高风险警告
+        
+        量价背离：
+        - 顶部量价背离：扣分（价格新高但量能萎缩 = 上涨乏力）
+        - 底部量缩企稳：加分（可能筑底）
+        
+        VWAP：
+        - 价格在 VWAP 上方 = 多头占优
+        - 价格在 VWAP 下方 = 空头占优
+        
+        换手率分位数：
+        - >90分位：异常活跃（可能见顶）
+        - <10分位：极度冷清（可能见底）
+        
+        缺口：
+        - 向上跳空 + 放量 = 突破信号
+        - 向下跳空 = 风险信号
+        """
+        adj = 0
+
+        # === 涨跌停评分 ===
+        if result.is_limit_up:
+            if result.consecutive_limits >= 4:
+                # 4板以上：追高风险极大
+                adj -= 3
+                result.risk_factors.append(f"连续{result.consecutive_limits}板涨停，追高风险极大")
+                result.score_breakdown['limit_risk'] = -3
+            elif result.consecutive_limits >= 2:
+                # 连板：强势但需警惕
+                adj += 2
+                result.signal_reasons.append(f"连续{result.consecutive_limits}板涨停，短期强势")
+                result.score_breakdown['limit_adj'] = 2
+            else:
+                # 首板涨停
+                adj += 3
+                result.signal_reasons.append("涨停封板，多头强势")
+                result.score_breakdown['limit_adj'] = 3
+        elif result.is_limit_down:
+            adj -= 5
+            result.risk_factors.append("跌停板，风险极高")
+            result.score_breakdown['limit_adj'] = -5
+
+        # === 量价背离评分 ===
+        vpd = result.volume_price_divergence
+        if vpd == "顶部量价背离":
+            adj -= 3
+            result.risk_factors.append("量价背离：价格新高但成交量萎缩，上涨动能衰竭")
+            result.score_breakdown['vp_divergence'] = -3
+        elif vpd == "底部量缩企稳":
+            adj += 2
+            result.signal_reasons.append("底部量缩企稳，抛压减轻，可能筑底")
+            result.score_breakdown['vp_divergence'] = 2
+
+        # === VWAP 偏离评分 ===
+        vwap_bias = result.vwap_bias
+        if vwap_bias > 3.0:
+            adj += 1
+            result.signal_reasons.append(f"价格在VWAP上方{vwap_bias:.1f}%，多头占优")
+            result.score_breakdown['vwap_adj'] = 1
+        elif vwap_bias < -3.0:
+            adj -= 1
+            result.risk_factors.append(f"价格在VWAP下方{abs(vwap_bias):.1f}%，空头占优")
+            result.score_breakdown['vwap_adj'] = -1
+
+        # === 换手率分位数评分 ===
+        tp = result.turnover_percentile
+        if tp > 0.9:
+            adj -= 2
+            result.risk_factors.append(f"换手率处于历史{tp*100:.0f}%分位，异常活跃，警惕见顶")
+            result.score_breakdown['turnover_adj'] = -2
+        elif tp < 0.1 and tp > 0:
+            adj += 1
+            result.signal_reasons.append(f"换手率处于历史{tp*100:.0f}%分位，极度冷清，关注底部信号")
+            result.score_breakdown['turnover_adj'] = 1
+
+        # === 缺口评分 ===
+        gap = result.gap_type
+        if gap == "向上跳空":
+            from .types import VolumeStatus
+            if result.volume_status in (VolumeStatus.HEAVY_VOLUME_UP,):
+                adj += 2
+                result.signal_reasons.append("放量向上跳空，突破信号")
+                result.score_breakdown['gap_adj'] = 2
+            else:
+                adj += 1
+                result.signal_reasons.append("向上跳空缺口")
+                result.score_breakdown['gap_adj'] = 1
+        elif gap == "向下跳空":
+            adj -= 2
+            result.risk_factors.append("向下跳空缺口，短期风险")
+            result.score_breakdown['gap_adj'] = -2
+
+        # 应用修正
+        if adj != 0:
+            result.signal_score = max(0, min(100, result.signal_score + adj))
+            ScoringSystem.update_buy_signal(result)
+
+    @staticmethod
     def cap_adjustments(result: TrendAnalysisResult):
         """修正因子总量上限：防止多维修正导致分数膨胀"""
         adj_keys = ['valuation_adj', 'capital_flow_adj', 'cf_trend', 'cf_continuity',
                    'cross_resonance', 'sector_adj', 'chip_adj', 'fundamental_adj',
-                   'week52_risk', 'week52_opp', 'liquidity_risk', 'resonance_adj']
+                   'week52_risk', 'week52_opp', 'liquidity_risk', 'resonance_adj',
+                   'limit_adj', 'limit_risk', 'vp_divergence', 'vwap_adj', 'turnover_adj', 'gap_adj',
+                   'timeframe_resonance']
         
         pos_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) > 0)
         neg_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) < 0)
@@ -653,29 +818,18 @@ class ScoringSystem:
     def update_buy_signal(result: TrendAnalysisResult):
         """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）"""
         score = result.signal_score
-        bonus = 0
         
         if score >= 95:
             result.buy_signal = BuySignal.AGGRESSIVE_BUY
-            bonus = 0
         elif score >= 85:
             result.buy_signal = BuySignal.STRONG_BUY
-            bonus = 2
         elif score >= 70:
             result.buy_signal = BuySignal.BUY
-            bonus = 0
         elif score >= 60:
             result.buy_signal = BuySignal.CAUTIOUS_BUY
-            bonus = -2
         elif score >= 50:
             result.buy_signal = BuySignal.HOLD
-            bonus = 0
         elif score >= 35:
             result.buy_signal = BuySignal.REDUCE
-            bonus = 0
         else:
             result.buy_signal = BuySignal.SELL
-            bonus = 0
-        
-        if bonus != 0:
-            result.score_breakdown['signal_bonus'] = bonus

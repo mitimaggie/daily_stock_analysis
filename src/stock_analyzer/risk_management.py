@@ -43,18 +43,23 @@ class RiskManager:
             atr_multiplier_short = 1.0
             atr_multiplier_mid = 1.5
         
-        result.stop_loss_intraday = round(price - 0.7 * atr_multiplier_short * atr, 2)
-        result.stop_loss_short = round(price - atr_multiplier_short * atr, 2)
+        # A股涨跌停限制：止损价不应低于跌停价（无法执行）
+        limit_pct = getattr(result, 'limit_pct', 10.0) or 10.0
+        limit_floor = round(price * (1 - limit_pct / 100), 2)
+        
+        result.stop_loss_intraday = round(max(price - 0.7 * atr_multiplier_short * atr, limit_floor), 2)
+        result.stop_loss_short = round(max(price - atr_multiplier_short * atr, limit_floor), 2)
         
         if len(df) >= 20:
             recent_high_20d = float(df['high'].tail(20).max())
             chandelier_sl = recent_high_20d - atr_multiplier_mid * atr
             sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else chandelier_sl
-            result.stop_loss_mid = round(min(chandelier_sl, sl_ma20), 2)
+            result.stop_loss_mid = round(max(min(chandelier_sl, sl_ma20), limit_floor), 2)
         else:
             sl_atr_mid = price - atr_multiplier_mid * atr
             sl_ma20 = result.ma20 * 0.98 if result.ma20 > 0 else sl_atr_mid
-            result.stop_loss_mid = round(min(sl_atr_mid, sl_ma20) if sl_ma20 > 0 else sl_atr_mid, 2)
+            raw_mid = min(sl_atr_mid, sl_ma20) if sl_ma20 > 0 else sl_atr_mid
+            result.stop_loss_mid = round(max(raw_mid, limit_floor), 2)
         
         result.stop_loss_anchor = result.stop_loss_short
         result.ideal_buy_anchor = round(result.ma5 if result.ma5 > 0 else result.ma10, 2)

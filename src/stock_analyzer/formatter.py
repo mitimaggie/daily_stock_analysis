@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 class AnalysisFormatter:
     """分析结果格式化器"""
     
+    # 多维修正因子中文映射（供评分明细格式化复用）
+    ADJ_MAP = {
+        'valuation_adj': '估值', 'capital_flow_adj': '资金', 'cf_trend': '资金趋势',
+        'cf_continuity': '资金连续', 'cross_resonance': '跨维共振',
+        'sector_adj': '板块', 'chip_adj': '筹码', 'fundamental_adj': '基本面',
+        'week52_risk': '52周高位', 'week52_opp': '52周低位', 'liquidity_risk': '流动性',
+        'limit_adj': '涨跌停', 'limit_risk': '连板风险', 'vp_divergence': '量价背离',
+        'vwap_adj': 'VWAP', 'turnover_adj': '换手率', 'gap_adj': '缺口',
+    }
+    
     @staticmethod
     def format_enhanced(result: TrendAnalysisResult) -> str:
         """
@@ -38,11 +48,7 @@ class AnalysisFormatter:
         bd_str = ""
         if breakdown:
             base = "+".join(f"{k}{v}" for k in ['trend','bias','volume','support','macd','rsi','kdj'] if (v := breakdown.get(k)) is not None)
-            adj_map = {'valuation_adj': '估值', 'capital_flow_adj': '资金', 'cf_trend': '资金趋势',
-                       'cf_continuity': '资金连续', 'cross_resonance': '跨维共振',
-                       'sector_adj': '板块', 'chip_adj': '筹码', 'fundamental_adj': '基本面',
-                       'week52_risk': '52周高位', 'week52_opp': '52周低位', 'liquidity_risk': '流动性'}
-            adj = " ".join(f"{label}{v:+d}" for key, label in adj_map.items() if (v := breakdown.get(key, 0)) != 0)
+            adj = " ".join(f"{label}{v:+d}" for key, label in AnalysisFormatter.ADJ_MAP.items() if (v := breakdown.get(key, 0)) != 0)
             bd_str = f" ({base}{' | ' + adj if adj else ''})"
 
         lines = [
@@ -52,10 +58,35 @@ class AnalysisFormatter:
             f"量能={result.volume_status.value} 量比={result.volume_ratio:.2f}",
             f"现价={result.current_price:.2f} 乖离MA5={result.bias_ma5:.1f}% MA20={result.bias_ma20:.1f}%",
         ]
+        # 新增指标
+        if result.vwap > 0:
+            lines.append(f"VWAP={result.vwap:.2f} 偏离={result.vwap_bias:+.1f}%")
+        if result.is_limit_up:
+            lines.append(f"🟢涨停板（连{result.consecutive_limits}板）" if result.consecutive_limits >= 2 else "🟢涨停封板")
+        elif result.is_limit_down:
+            lines.append("🔴跌停板")
+        if result.volume_price_divergence:
+            lines.append(f"⚠️{result.volume_price_divergence}")
+        if result.gap_type:
+            lines.append(f"缺口={result.gap_type}")
         if result.rsi_divergence:
             lines.append(f"⚠️背离={result.rsi_divergence}")
+        if result.kdj_divergence:
+            lines.append(f"⚠️KDJ背离={result.kdj_divergence}")
+        if result.kdj_passivation:
+            lines.append("KDJ钝化中，超买/超卖信号不可靠")
+        if result.kdj_consecutive_extreme:
+            lines.append(f"⚠️{result.kdj_consecutive_extreme}")
         if result.resonance_signals:
             lines.append(f"共振={abs(result.resonance_count)}个: {','.join(result.resonance_signals)}")
+        if result.indicator_resonance:
+            lines.append(f"指标共振: {result.indicator_resonance.replace(chr(10), '; ')}")
+        if result.market_behavior:
+            lines.append(f"市场行为: {result.market_behavior.replace(chr(10), '; ')}")
+        if result.timeframe_resonance:
+            lines.append(f"多周期: {result.timeframe_resonance.replace(chr(10), '; ')}")
+        if hasattr(result, '_conflict_warnings') and result._conflict_warnings:
+            lines.append(f"⚠️信号冲突: {'; '.join(result._conflict_warnings)}")
         if result.valuation_verdict:
             lines.append(f"估值: PE={result.pe_ratio:.1f} PB={result.pb_ratio:.2f} {result.valuation_verdict} 降档={result.valuation_downgrade}")
         if result.trading_halt:
@@ -105,15 +136,7 @@ class AnalysisFormatter:
             base_str = "+".join(base_parts) if base_parts else ""
             
             adj_parts = []
-            adj_map = {
-                'valuation_adj': '估值', 'capital_flow_adj': '资金',
-                'cf_trend': '资金趋势', 'cf_continuity': '资金连续',
-                'cross_resonance': '跨维共振',
-                'sector_adj': '板块', 'chip_adj': '筹码',
-                'fundamental_adj': '基本面', 'week52_risk': '52周高位',
-                'week52_opp': '52周低位', 'liquidity_risk': '流动性',
-            }
-            for key, label in adj_map.items():
+            for key, label in AnalysisFormatter.ADJ_MAP.items():
                 v = breakdown.get(key, 0)
                 if v != 0:
                     adj_parts.append(f"{label}{v:+d}")
@@ -193,6 +216,61 @@ class AnalysisFormatter:
         if result.trading_halt:
             halt_str = f"\n🚨【交易暂停】{result.trading_halt_reason}"
 
+        # === 利多/利空信号分组 ===
+        bullish_factors = []
+        bearish_factors = []
+        
+        if result.signal_reasons:
+            bullish_factors.extend(result.signal_reasons)
+        if result.risk_factors:
+            bearish_factors.extend(result.risk_factors)
+        
+        # 从指标状态中提取利多/利空
+        from .types import TrendStatus, MACDStatus, KDJStatus, RSIStatus, VolumeStatus
+        if result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
+            bullish_factors.append(f"趋势: {result.ma_alignment}")
+        elif result.trend_status in [TrendStatus.STRONG_BEAR, TrendStatus.BEAR]:
+            bearish_factors.append(f"趋势: {result.ma_alignment}")
+        if result.macd_status in [MACDStatus.GOLDEN_CROSS_ZERO, MACDStatus.GOLDEN_CROSS]:
+            bullish_factors.append(f"MACD: {result.macd_signal}")
+        elif result.macd_status in [MACDStatus.DEATH_CROSS, MACDStatus.CROSSING_DOWN]:
+            bearish_factors.append(f"MACD: {result.macd_signal}")
+        if result.rsi_divergence == "底背离":
+            bullish_factors.append(f"RSI: {result.rsi_signal}")
+        elif result.rsi_divergence == "顶背离":
+            bearish_factors.append(f"RSI: {result.rsi_signal}")
+        if result.kdj_divergence == "KDJ底背离":
+            bullish_factors.append(f"KDJ: {result.kdj_signal}")
+        elif result.kdj_divergence == "KDJ顶背离":
+            bearish_factors.append(f"KDJ: {result.kdj_signal}")
+        if result.volume_price_divergence == "底部量缩企稳":
+            bullish_factors.append("量价: 底部量缩企稳，可能筑底")
+        elif result.volume_price_divergence == "顶部量价背离":
+            bearish_factors.append("量价: 价格新高但量能萎缩")
+        
+        # 去重
+        bullish_factors = list(dict.fromkeys(bullish_factors))
+        bearish_factors = list(dict.fromkeys(bearish_factors))
+        
+        signal_group_str = ""
+        if bullish_factors or bearish_factors:
+            bull_str = "\n".join(f"  ✅ {f}" for f in bullish_factors[:5]) if bullish_factors else "  无"
+            bear_str = "\n".join(f"  ⚠️ {f}" for f in bearish_factors[:5]) if bearish_factors else "  无"
+            signal_group_str = f"""
+【信号汇总】
+📈 利多因素({len(bullish_factors)}):
+{bull_str}
+📉 利空因素({len(bearish_factors)}):
+{bear_str}"""
+
+        kdj_extra = ""
+        if result.kdj_divergence:
+            kdj_extra += f" ⚠️{result.kdj_divergence}"
+        if result.kdj_passivation:
+            kdj_extra += " 🔄钝化"
+        if result.kdj_consecutive_extreme:
+            kdj_extra += f" 🔥{result.kdj_consecutive_extreme}"
+
         return f"""
 【量化技术报告】
 ---------------------------{halt_str}
@@ -201,9 +279,9 @@ class AnalysisFormatter:
 ● 量能: {result.volume_status.value} ({result.volume_trend}) | 量比 {result.volume_ratio:.2f}
 ● MACD: {result.macd_status.value} ({result.macd_signal}) | DIF={result.macd_dif:.4f} DEA={result.macd_dea:.4f}
 ● RSI: {result.rsi_status.value} | RSI6={result.rsi_6:.1f} RSI12={result.rsi_12:.1f} RSI24={result.rsi_24:.1f} | {result.rsi_signal}{f' ⚠️{result.rsi_divergence}' if result.rsi_divergence else ''}
-● KDJ: {result.kdj_status.value} | K={result.kdj_k:.1f} D={result.kdj_d:.1f} J={result.kdj_j:.1f} | {result.kdj_signal}{val_str}{cf_str}{sector_str}{chip_str}{fund_str}
+● KDJ: {result.kdj_status.value} | K={result.kdj_k:.1f} D={result.kdj_d:.1f} J={result.kdj_j:.1f} | {result.kdj_signal}{kdj_extra}{val_str}{cf_str}{sector_str}{chip_str}{fund_str}
 ● 关键数据: 现价{result.current_price:.2f} | 乖离MA5={result.bias_ma5:.2f}% MA10={result.bias_ma10:.2f}% MA20={result.bias_ma20:.2f}%{bb_str}{risk_str}{levels_str}
-
+{signal_group_str}
 【技术面操作指引 (硬规则)】
 👤 针对空仓者: {result.advice_for_empty}
 👥 针对持仓者: {result.advice_for_holding}
@@ -261,9 +339,60 @@ class AnalysisFormatter:
         elif result.rsi_divergence == "顶背离":
             summary_parts.append("⚠️出现顶背离，注意回调风险")
         
+        # 新增指标白话版
+        if result.is_limit_up:
+            if result.consecutive_limits >= 3:
+                summary_parts.append(f"🔥连续{result.consecutive_limits}个涨停板，非常强势但追高风险大")
+            elif result.consecutive_limits >= 2:
+                summary_parts.append(f"🟢连续{result.consecutive_limits}板涨停，短期强势")
+            else:
+                summary_parts.append("🟢涨停封板，多头强势")
+        elif result.is_limit_down:
+            summary_parts.append("🔴跌停板，风险极高，不要抄底")
+        
+        if result.volume_price_divergence == "顶部量价背离":
+            summary_parts.append("⚠️价格创新高但成交量在萎缩，上涨可能快到头了")
+        elif result.volume_price_divergence == "底部量缩企稳":
+            summary_parts.append("💡抛压在减轻，可能正在筑底")
+        
+        if result.gap_type == "向上跳空":
+            summary_parts.append("📈出现向上跳空缺口，短期看多")
+        elif result.gap_type == "向下跳空":
+            summary_parts.append("📉出现向下跳空缺口，短期风险大")
+        
+        if result.turnover_percentile > 0.9:
+            summary_parts.append("⚠️换手率异常高，市场过热，小心见顶")
+        elif result.turnover_percentile < 0.1 and result.turnover_percentile > 0:
+            summary_parts.append("💤换手率极低，市场冷清，关注底部信号")
+
         if result.resonance_count >= 3:
             summary_parts.append(f"多个指标共振({result.resonance_count}个)，信号较强")
         elif result.resonance_count <= -3:
             summary_parts.append(f"多个指标共振向下({abs(result.resonance_count)}个)，注意风险")
+        
+        # KDJ 增强信号白话版
+        if result.kdj_divergence == "KDJ底背离":
+            summary_parts.append("⚠️KDJ底背离，价格新低但动能未新低，可能反转向上")
+        elif result.kdj_divergence == "KDJ顶背离":
+            summary_parts.append("⚠️KDJ顶背离，价格新高但动能跟不上，小心见顶")
+        if result.kdj_passivation:
+            summary_parts.append("🔄KDJ钝化中，超买/超卖信号不太靠谱，看趋势为主")
+        if result.kdj_consecutive_extreme:
+            if "超买" in result.kdj_consecutive_extreme:
+                summary_parts.append(f"🔥{result.kdj_consecutive_extreme}，短期涨太猛了，回调概率很大")
+            else:
+                summary_parts.append(f"🔥{result.kdj_consecutive_extreme}，短期跌太狠了，反弹概率很大")
+        
+        # === 具体操作指引（散户最关心的"到底该怎么做"）===
+        if score >= 70 and result.ideal_buy_anchor > 0:
+            summary_parts.append(f"👉 操作建议：可以在{result.ideal_buy_anchor:.2f}元附近分批买入，止损设在{result.stop_loss_short:.2f}元")
+        elif score >= 60 and result.ideal_buy_anchor > 0:
+            summary_parts.append(f"👉 操作建议：轻仓试探，买点{result.ideal_buy_anchor:.2f}元，严格止损{result.stop_loss_short:.2f}元")
+        elif score >= 50:
+            summary_parts.append("👉 操作建议：观望为主，等技术面更明确再动手")
+        elif score >= 35:
+            summary_parts.append(f"👉 操作建议：不建议买入，持仓者注意止损{result.stop_loss_mid:.2f}元")
+        else:
+            summary_parts.append(f"👉 操作建议：远离！持仓者尽快止损离场")
         
         result.beginner_summary = "；".join(summary_parts)

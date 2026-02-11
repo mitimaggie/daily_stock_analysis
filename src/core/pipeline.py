@@ -81,6 +81,7 @@ def is_market_trading() -> bool:
 
 # === 内部模块导入 ===
 from src.stock_analyzer import StockTrendAnalyzer
+from src.stock_analyzer.scoring import ScoringSystem
 from src.analyzer import GeminiAnalyzer, AnalysisResult
 from src.notification import NotificationService
 from src.storage import DatabaseManager  
@@ -243,6 +244,73 @@ class StockAnalysisPipeline:
             logger.warning(f"[{code}] 获取合并数据失败: {e}")
             daily_df = None
 
+        # === 预获取共享数据（每类数据只获取一次，供量化分析和 LLM context 共用）===
+        fast_mode = getattr(self.config, 'fast_mode', False)
+
+        # F10 基本面数据（只获取一次）
+        fundamental_data = {}
+        if not fast_mode:
+            try:
+                fundamental_data = get_fundamental_data(code)
+            except Exception:
+                pass
+
+        # 补充估值：从实时行情注入 PE/PB/总市值
+        if quote:
+            val = fundamental_data.setdefault('valuation', {}) or {}
+            if not isinstance(val, dict):
+                fundamental_data['valuation'] = val = {}
+            if getattr(quote, 'pe_ratio', None) is not None:
+                val['pe'] = quote.pe_ratio
+            if getattr(quote, 'pb_ratio', None) is not None:
+                val['pb'] = quote.pb_ratio
+            if getattr(quote, 'total_mv', None) is not None:
+                val['total_mv'] = quote.total_mv
+            # PEG = PE / 净利润增速（只计算一次）
+            if 'peg' not in val:
+                try:
+                    pe = val.get('pe')
+                    growth_str = fundamental_data.get('financial', {}).get('net_profit_growth', 'N/A')
+                    if pe and isinstance(pe, (int, float)) and pe > 0 and growth_str not in ('N/A', '', '0', None):
+                        growth_val = float(str(growth_str).replace('%', ''))
+                        if growth_val > 0:
+                            val['peg'] = round(pe / growth_val, 2)
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
+
+        # 筹码数据（只获取一次）
+        _chip_obj = None
+        chip_data = {}
+        chip_note = "未启用"
+        if getattr(self.config, 'enable_chip_distribution', False) or getattr(self.config, 'chip_fetch_only_from_cache', False):
+            _chip_obj = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
+            if _chip_obj:
+                chip_data = _chip_obj.to_dict()
+                # 筹码缓存年龄告警：超过 48h 提示数据可能过时
+                chip_age_note = ""
+                try:
+                    fetched_at = getattr(_chip_obj, 'fetched_at', None) or chip_data.get('fetched_at')
+                    if fetched_at:
+                        if isinstance(fetched_at, str):
+                            fetched_at = datetime.fromisoformat(fetched_at)
+                        age_hours = (datetime.now() - fetched_at).total_seconds() / 3600
+                        if age_hours > 48:
+                            chip_age_note = f"（注意：筹码数据已缓存 {age_hours:.0f} 小时，可能过时）"
+                except Exception:
+                    pass
+                chip_note = f"见下数据{chip_age_note}"
+            else:
+                chip_note = "暂不可用（接口失败或未拉取）"
+
+        # 板块相对强弱（只获取一次）
+        sector_context = None
+        try:
+            _stock_pct = getattr(quote, 'change_pct', None) if quote else None
+            sector_context = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=_stock_pct)
+        except Exception as e:
+            logger.debug(f"[{code}] 板块上下文获取失败: {e}")
+
+        # === 技术面量化分析 ===
         tech_report = "数据不足，无法进行技术分析"
         tech_report_llm = "数据不足"
         trend_analysis_dict = {}
@@ -269,35 +337,21 @@ class StockAnalysisPipeline:
                         idx_ret = None
                 except Exception:
                     pass
-                # 构建估值快照（从实时行情提取 PE/PB，从 F10 缓存提取 PEG）
+                # 构建估值快照（复用已获取的 fundamental_data）
                 _valuation = {}
                 if quote:
                     if getattr(quote, 'pe_ratio', None) is not None:
                         _valuation['pe'] = quote.pe_ratio
                     if getattr(quote, 'pb_ratio', None) is not None:
                         _valuation['pb'] = quote.pb_ratio
-                # 尝试从 F10 缓存获取 PEG（缓存命中免网络请求）
-                try:
-                    _f10_cached = get_fundamental_data(code) if not getattr(self.config, 'fast_mode', False) else {}
-                    if _f10_cached:
-                        _f10_val = _f10_cached.get('valuation', {}) or {}
-                        if 'peg' in _f10_val:
-                            _valuation['peg'] = _f10_val['peg']
-                        elif _valuation.get('pe') and _valuation['pe'] > 0:
-                            growth_str = _f10_cached.get('financial', {}).get('net_profit_growth', 'N/A')
-                            if growth_str not in ('N/A', '', '0', None):
-                                try:
-                                    growth_val = float(str(growth_str).replace('%', ''))
-                                    if growth_val > 0:
-                                        _valuation['peg'] = round(_valuation['pe'] / growth_val, 2)
-                                except (ValueError, TypeError):
-                                    pass
-                except Exception:
-                    pass
+                # PEG 已在预获取阶段计算并写入 fundamental_data['valuation']，直接复用
+                _f10_val = fundamental_data.get('valuation', {}) or {}
+                if 'peg' in _f10_val:
+                    _valuation['peg'] = _f10_val['peg']
                 # 行业PE中位数（用于相对估值判断）
                 try:
                     from data_provider.fundamental_fetcher import get_industry_pe_median
-                    if not getattr(self.config, 'fast_mode', False):
+                    if not fast_mode:
                         ind_pe = get_industry_pe_median(code)
                         if ind_pe and ind_pe > 0:
                             _valuation['industry_pe_median'] = ind_pe
@@ -313,29 +367,6 @@ class StockAnalysisPipeline:
                         _avg_amount = (daily_df['close'] * daily_df['volume']).tail(20).mean()
                         if _avg_amount > 0:
                             _capital_flow['daily_avg_amount'] = round(_avg_amount / 10000, 2)  # 转为万元
-                except Exception:
-                    pass
-                # 板块相对强弱（提前获取，注入量化评分）
-                _sector_ctx = None
-                try:
-                    _stock_pct = getattr(quote, 'change_pct', None) if quote else None
-                    _sector_ctx = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=_stock_pct)
-                except Exception:
-                    pass
-                # 筹码数据（提前获取，注入量化评分）
-                _chip_dict = None
-                try:
-                    if getattr(self.config, 'enable_chip_distribution', False) or getattr(self.config, 'chip_fetch_only_from_cache', False):
-                        _chip_obj = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
-                        if _chip_obj:
-                            _chip_dict = _chip_obj.to_dict()
-                except Exception:
-                    pass
-                # F10 基本面数据（提前获取，注入量化评分）
-                _fund_data = None
-                try:
-                    if not getattr(self.config, 'fast_mode', False):
-                        _fund_data = get_fundamental_data(code)
                 except Exception:
                     pass
                 # 行情附加数据（换手率、52周高低、市值）
@@ -354,7 +385,9 @@ class StockAnalysisPipeline:
                         _qe['circ_mv'] = quote.circ_mv
                     if _qe:
                         _quote_extra = _qe
-                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=_sector_ctx, chip_data=_chip_dict, fundamental_data=_fund_data, quote_extra=_quote_extra)
+                # 复用已获取的筹码数据
+                _chip_dict = chip_data if chip_data else None
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=sector_context, chip_data=_chip_dict, fundamental_data=fundamental_data or None, quote_extra=_quote_extra)
                 if quote.price:
                     trend_result.current_price = quote.price
                 # === P4-3: 资金面连续性检测（基于历史分析记录） ===
@@ -370,7 +403,7 @@ class StockAnalysisPipeline:
                                 trend_result.capital_flow_signal += f"；{cf_note}"
                             else:
                                 trend_result.capital_flow_signal = cf_note
-                            StockTrendAnalyzer._update_buy_signal(trend_result)
+                            ScoringSystem.update_buy_signal(trend_result)
                             logger.info(f"[{code}] 资金面连续性: 近3日持续流入(scores={cf_scores}), +2")
                         elif all(s <= 3 for s in cf_scores):
                             trend_result.signal_score = max(0, trend_result.signal_score - 2)
@@ -380,7 +413,7 @@ class StockAnalysisPipeline:
                                 trend_result.capital_flow_signal += f"；{cf_note}"
                             else:
                                 trend_result.capital_flow_signal = cf_note
-                            StockTrendAnalyzer._update_buy_signal(trend_result)
+                            ScoringSystem.update_buy_signal(trend_result)
                             logger.info(f"[{code}] 资金面连续性: 近3日持续流出(scores={cf_scores}), -2")
                 except Exception as e:
                     logger.debug(f"[{code}] 资金面连续性检测跳过: {e}")
@@ -388,81 +421,18 @@ class StockAnalysisPipeline:
                 tech_report_llm = self.trend_analyzer.format_for_llm(trend_result)
                 trend_analysis_dict = trend_result.to_dict()
                 trend_analysis_dict['market_regime'] = regime.value
+                # 从量化结果回填板块数据（量化分析可能丰富了板块信息）
+                if not sector_context or not sector_context.get('sector_name'):
+                    if trend_analysis_dict.get('sector_name'):
+                        sector_context = {
+                            'sector_name': trend_analysis_dict.get('sector_name', ''),
+                            'sector_pct': trend_analysis_dict.get('sector_pct', 0),
+                            'relative': trend_analysis_dict.get('sector_relative', 0),
+                            'sector_score': trend_analysis_dict.get('sector_score', 5),
+                            'sector_signal': trend_analysis_dict.get('sector_signal', ''),
+                        }
             except Exception as e:
                 logger.error(f"[{code}] 技术分析生成失败: {e}")
-
-        # 筹码数据（先查 DB/内存缓存；失败时明确标记「暂不可用」避免模型瞎编）
-        chip_data = {}
-        chip_note = "未启用"
-        if getattr(self.config, 'enable_chip_distribution', False) or getattr(self.config, 'chip_fetch_only_from_cache', False):
-            chip = self.fetcher_manager.get_chip_distribution(code) if hasattr(self.fetcher_manager, 'get_chip_distribution') else None
-            if chip:
-                chip_data = chip.to_dict()
-                # 筹码缓存年龄告警：超过 48h 提示数据可能过时
-                chip_age_note = ""
-                try:
-                    fetched_at = getattr(chip, 'fetched_at', None) or chip_data.get('fetched_at')
-                    if fetched_at:
-                        from datetime import datetime as _dt
-                        if isinstance(fetched_at, str):
-                            fetched_at = _dt.fromisoformat(fetched_at)
-                        age_hours = (datetime.now() - fetched_at).total_seconds() / 3600
-                        if age_hours > 48:
-                            chip_age_note = f"（注意：筹码数据已缓存 {age_hours:.0f} 小时，可能过时）"
-                except Exception:
-                    pass
-                chip_note = f"见下数据{chip_age_note}"
-            else:
-                chip_note = "暂不可用（接口失败或未拉取）"
-        
-        # F10 基本面数据（快速模式跳过，日内不变，用缓存即可）
-        fundamental_data = {}
-        fast_mode = getattr(self.config, 'fast_mode', False)
-        if not fast_mode:
-            try:
-                fundamental_data = get_fundamental_data(code)
-            except Exception as e:
-                pass
-        # 补充估值：从实时行情注入 PE/PB/总市值（供基本面判断贵/便宜）
-        if quote:
-            val = fundamental_data.setdefault('valuation', {}) or {}
-            if not isinstance(val, dict):
-                fundamental_data['valuation'] = val = {}
-            if getattr(quote, 'pe_ratio', None) is not None:
-                val['pe'] = quote.pe_ratio
-            if getattr(quote, 'pb_ratio', None) is not None:
-                val['pb'] = quote.pb_ratio
-            if getattr(quote, 'total_mv', None) is not None:
-                val['total_mv'] = quote.total_mv
-
-            # PEG = PE / 净利润增速（此处两者都已可用，比 fundamental_fetcher 里更可靠）
-            if 'peg' not in val:
-                try:
-                    pe = val.get('pe')
-                    growth_str = fundamental_data.get('financial', {}).get('net_profit_growth', 'N/A')
-                    if pe and isinstance(pe, (int, float)) and pe > 0 and growth_str not in ('N/A', '', '0', None):
-                        growth_val = float(str(growth_str).replace('%', ''))
-                        if growth_val > 0:
-                            val['peg'] = round(pe / growth_val, 2)
-                except (ValueError, TypeError, ZeroDivisionError):
-                    pass
-
-        # 板块相对强弱（已在量化分析阶段获取，复用 trend_result 中的板块数据）
-        sector_context = None
-        if trend_analysis_dict:
-            sector_context = {
-                'sector_name': trend_analysis_dict.get('sector_name', ''),
-                'sector_pct': trend_analysis_dict.get('sector_pct', 0),
-                'relative': trend_analysis_dict.get('sector_relative', 0),
-                'sector_score': trend_analysis_dict.get('sector_score', 5),
-                'sector_signal': trend_analysis_dict.get('sector_signal', ''),
-            }
-        if not sector_context or not sector_context.get('sector_name'):
-            try:
-                stock_pct = getattr(quote, 'change_pct', None) if quote else None
-                sector_context = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=stock_pct)
-            except Exception as e:
-                logger.debug(f"[{code}] 板块上下文获取失败: {e}")
 
         # 历史记忆
         history_summary = None
@@ -733,78 +703,8 @@ class StockAnalysisPipeline:
                     sniper['take_profit_mid'] = trend['take_profit_mid']
 
                 # 新量化字段注入 dashboard（供 notification 渲染）
-                quant_extras = {
-                    # 核心技术指标状态（报告展示 WHY）
-                    'signal_score': trend.get('signal_score', 50),
-                    'buy_signal': trend.get('buy_signal', '观望'),
-                    'trend_status': trend.get('trend_status', '震荡整理'),
-                    'trend_strength': trend.get('trend_strength', 50),
-                    'ma_alignment': trend.get('ma_alignment', ''),
-                    'macd_status': trend.get('macd_status', '中性'),
-                    'rsi_status': trend.get('rsi_status', '中性'),
-                    'rsi_6': trend.get('rsi_6', 50),
-                    'kdj_status': trend.get('kdj_status', '中性'),
-                    'volume_status': trend.get('volume_status', '量能正常'),
-                    'volume_ratio': trend.get('volume_ratio', 0),
-                    # 评分明细（让散户看懂每一分从哪来）
-                    'score_breakdown': trend.get('score_breakdown', {}),
-                    'signal_reasons': trend.get('signal_reasons', []),
-                    'risk_factors': trend.get('risk_factors', []),
-                    # 估值
-                    'valuation_verdict': trend.get('valuation_verdict', ''),
-                    'valuation_downgrade': trend.get('valuation_downgrade', 0),
-                    'pe_ratio': trend.get('pe_ratio', 0),
-                    'pb_ratio': trend.get('pb_ratio', 0),
-                    'peg_ratio': trend.get('peg_ratio', 0),
-                    'valuation_score': trend.get('valuation_score', 0),
-                    # 交易暂停
-                    'trading_halt': trend.get('trading_halt', False),
-                    'trading_halt_reason': trend.get('trading_halt_reason', ''),
-                    # 资金面
-                    'capital_flow_score': trend.get('capital_flow_score', 0),
-                    'capital_flow_signal': trend.get('capital_flow_signal', ''),
-                    # 板块
-                    'sector_name': trend.get('sector_name', ''),
-                    'sector_score': trend.get('sector_score', 5),
-                    'sector_signal': trend.get('sector_signal', ''),
-                    # 筹码
-                    'chip_score': trend.get('chip_score', 5),
-                    'chip_signal': trend.get('chip_signal', ''),
-                    # 基本面
-                    'fundamental_score': trend.get('fundamental_score', 5),
-                    'fundamental_signal': trend.get('fundamental_signal', ''),
-                    # 白话版
-                    'beginner_summary': trend.get('beginner_summary', ''),
-                    # 止盈/止损
-                    'take_profit_short': trend.get('take_profit_short', 0),
-                    'take_profit_mid': trend.get('take_profit_mid', 0),
-                    'take_profit_trailing': trend.get('take_profit_trailing', 0),
-                    'take_profit_plan': trend.get('take_profit_plan', ''),
-                    'stop_loss_short': trend.get('stop_loss_short', 0),
-                    'ideal_buy_anchor': trend.get('ideal_buy_anchor', 0),
-                    # 共振
-                    'resonance_count': trend.get('resonance_count', 0),
-                    'resonance_signals': trend.get('resonance_signals', []),
-                    'resonance_bonus': trend.get('resonance_bonus', 0),
-                    # 风险收益比
-                    'risk_reward_ratio': trend.get('risk_reward_ratio', 0),
-                    'risk_reward_verdict': trend.get('risk_reward_verdict', ''),
-                    # 风险指标
-                    'volatility_20d': trend.get('volatility_20d', 0),
-                    'max_drawdown_60d': trend.get('max_drawdown_60d', 0),
-                    'beta_vs_index': trend.get('beta_vs_index', 1.0),
-                    'week52_position': trend.get('week52_position', 0),
-                    # 仓位
-                    'suggested_position_pct': trend.get('suggested_position_pct', 0),
-                    'advice_for_empty': trend.get('advice_for_empty', ''),
-                    'advice_for_holding': trend.get('advice_for_holding', ''),
-                    # 背离
-                    'rsi_divergence': trend.get('rsi_divergence', ''),
-                    # 支撑/阻力
-                    'support_levels': trend.get('support_levels', []),
-                    'resistance_levels': trend.get('resistance_levels', []),
-                }
-                dashboard['quant_extras'] = quant_extras
+                # trend 本身就是 TrendAnalysisResult.to_dict() 的输出，直接复用
+                dashboard['quant_extras'] = trend
 
                 # 决策类型
                 advice = result.operation_advice

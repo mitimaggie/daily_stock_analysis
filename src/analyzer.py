@@ -570,8 +570,12 @@ dashboard: {{
             logger.debug(f"Function Calling执行失败: {e}")
             return None
 
-    def _build_result_from_dict(self, data: Dict[str, Any], code: str, name: str) -> AnalysisResult:
-        """从dict构造AnalysisResult（Function Calling专用）"""
+    @staticmethod
+    def _dict_to_result(data: Dict[str, Any], code: str, name: str) -> AnalysisResult:
+        """从 dict 构造 AnalysisResult（公共方法，供 Function Calling 和文本解析共用）"""
+        def _s(v) -> str:
+            return str(v).strip() if v is not None else ""
+
         op_advice = data.get('operation_advice', '观望')
         decision = 'hold'
         if '买' in op_advice or '加仓' in op_advice:
@@ -592,23 +596,52 @@ dashboard: {{
             risk_warning=data.get('risk_warning', ''),
             success=True
         )
-        
-        # LLM独立判断
+
+        # 扩展字段（仪表盘 v2，LLM 若返回则填充）
+        result.trend_analysis = _s(data.get('trend_analysis'))
+        result.short_term_outlook = _s(data.get('short_term_outlook'))
+        result.medium_term_outlook = _s(data.get('medium_term_outlook'))
+        result.technical_analysis = _s(data.get('technical_analysis'))
+        result.ma_analysis = _s(data.get('ma_analysis'))
+        result.volume_analysis = _s(data.get('volume_analysis'))
+        result.pattern_analysis = _s(data.get('pattern_analysis'))
+        result.fundamental_analysis = _s(data.get('fundamental_analysis'))
+        result.sector_position = _s(data.get('sector_position'))
+        result.company_highlights = _s(data.get('company_highlights'))
+        result.news_summary = _s(data.get('news_summary'))
+        result.market_sentiment = _s(data.get('market_sentiment'))
+        result.hot_topics = _s(data.get('hot_topics'))
+        result.key_points = _s(data.get('key_points'))
+        result.buy_reason = _s(data.get('buy_reason'))
+        result.data_sources = _s(data.get('data_sources'))
+        cp = data.get('change_pct')
+        result.change_pct = float(cp) if cp is not None and cp != '' else None
+
+        # LLM 独立判断字段
         llm_s = data.get('llm_score')
         if llm_s is not None:
             try:
                 result.llm_score = int(llm_s)
             except (ValueError, TypeError):
                 pass
-        result.llm_advice = str(data.get('llm_advice', '')).strip()
-        result.llm_reasoning = str(data.get('llm_reasoning', '')).strip()
-        
+        result.llm_advice = _s(data.get('llm_advice'))
+        result.llm_reasoning = _s(data.get('llm_reasoning'))
+
+        # 置信度说明（P2: 不确定性表达）
+        cr = _s(data.get('confidence_reasoning'))
+        if cr:
+            if any(k in cr for k in ('高', '充分', '明确')):
+                result.confidence_level = '高'
+            elif any(k in cr for k in ('低', '不足', '缺少')):
+                result.confidence_level = '低'
+
         return result
 
-    def _parse_response(self, response_text: str, code: str, name: str) -> AnalysisResult:
-        def _s(v: Any) -> str:
-            return str(v).strip() if v is not None else ""
+    def _build_result_from_dict(self, data: Dict[str, Any], code: str, name: str) -> AnalysisResult:
+        """从dict构造AnalysisResult（Function Calling专用）"""
+        return self._dict_to_result(data, code, name)
 
+    def _parse_response(self, response_text: str, code: str, name: str) -> AnalysisResult:
         try:
             clean_text = response_text.replace('```json', '').replace('```', '').strip()
             start = clean_text.find('{')
@@ -617,61 +650,7 @@ dashboard: {{
                 clean_text = clean_text[start:end]
 
             data = json.loads(repair_json(clean_text) if repair_json else clean_text)
-
-            op_advice = data.get('operation_advice', '观望')
-            decision = 'hold'
-            if '买' in op_advice or '加仓' in op_advice:
-                decision = 'buy'
-            elif '卖' in op_advice or '减仓' in op_advice:
-                decision = 'sell'
-
-            result = AnalysisResult(
-                code=code, name=data.get('stock_name', name),
-                sentiment_score=int(data.get('sentiment_score', 50)),
-                trend_prediction=data.get('trend_prediction', '震荡'),
-                operation_advice=op_advice, decision_type=decision,
-                confidence_level=data.get('confidence_level', '中'),
-                dashboard=data.get('dashboard', {}),
-                analysis_summary=data.get('analysis_summary', ''),
-                risk_warning=data.get('risk_warning', ''), success=True
-            )
-            # 扩展字段（仪表盘 v2，LLM 若返回则填充）
-            result.trend_analysis = _s(data.get('trend_analysis'))
-            result.short_term_outlook = _s(data.get('short_term_outlook'))
-            result.medium_term_outlook = _s(data.get('medium_term_outlook'))
-            result.technical_analysis = _s(data.get('technical_analysis'))
-            result.ma_analysis = _s(data.get('ma_analysis'))
-            result.volume_analysis = _s(data.get('volume_analysis'))
-            result.pattern_analysis = _s(data.get('pattern_analysis'))
-            result.fundamental_analysis = _s(data.get('fundamental_analysis'))
-            result.sector_position = _s(data.get('sector_position'))
-            result.company_highlights = _s(data.get('company_highlights'))
-            result.news_summary = _s(data.get('news_summary'))
-            result.market_sentiment = _s(data.get('market_sentiment'))
-            result.hot_topics = _s(data.get('hot_topics'))
-            result.key_points = _s(data.get('key_points'))
-            result.buy_reason = _s(data.get('buy_reason'))
-            result.data_sources = _s(data.get('data_sources'))
-            cp = data.get('change_pct')
-            result.change_pct = float(cp) if cp is not None and cp != '' else None
-            # LLM 独立判断字段
-            llm_s = data.get('llm_score')
-            if llm_s is not None:
-                try:
-                    result.llm_score = int(llm_s)
-                except (ValueError, TypeError):
-                    pass
-            result.llm_advice = _s(data.get('llm_advice'))
-            result.llm_reasoning = _s(data.get('llm_reasoning'))
-            # 置信度说明（P2: 不确定性表达）
-            cr = _s(data.get('confidence_reasoning'))
-            if cr:
-                # 从 confidence_reasoning 推断 confidence_level
-                if any(k in cr for k in ('高', '充分', '明确')):
-                    result.confidence_level = '高'
-                elif any(k in cr for k in ('低', '不足', '缺少')):
-                    result.confidence_level = '低'
-            return result
+            return self._dict_to_result(data, code, name)
         except Exception as e:
             return AnalysisResult(code, name, 50, "解析错", "人工核查", success=True, error_message=str(e))
 
@@ -691,8 +670,8 @@ dashboard: {{
         except (TypeError, ValueError):
             return 'N/A'
 
-    def _format_volume(self, value: Any) -> str:
-        """格式化成交量（可转为万手等）"""
+    def _format_large_number(self, value: Any) -> str:
+        """格式化大数值（成交量/成交额通用，自动转为万/亿）"""
         if value is None: return 'N/A'
         try:
             v = float(value)
@@ -702,16 +681,13 @@ dashboard: {{
         except (TypeError, ValueError):
             return 'N/A'
 
+    def _format_volume(self, value: Any) -> str:
+        """格式化成交量"""
+        return self._format_large_number(value)
+
     def _format_amount(self, value: Any) -> str:
         """格式化成交额"""
-        if value is None: return 'N/A'
-        try:
-            v = float(value)
-            if v >= 1e8: return f"{v/1e8:.2f}亿"
-            if v >= 1e4: return f"{v/1e4:.2f}万"
-            return f"{v:.0f}"
-        except (TypeError, ValueError):
-            return 'N/A'
+        return self._format_large_number(value)
 
     def _build_market_snapshot(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """构建当日行情快照（推送中「当日行情」表格用）"""

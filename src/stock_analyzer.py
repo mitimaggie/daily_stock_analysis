@@ -2365,11 +2365,8 @@ class StockTrendAnalyzer:
             # 技术面基础分
             base = "+".join(f"{k}{v}" for k in ['trend','bias','volume','support','macd','rsi','kdj'] if (v := breakdown.get(k)) is not None)
             # 多维修正
-            adj_map = {'valuation_adj': '估值', 'capital_flow_adj': '资金', 'cf_trend': '资金趋势',
-                       'cf_continuity': '资金连续', 'cross_resonance': '跨维共振',
-                       'sector_adj': '板块', 'chip_adj': '筹码', 'fundamental_adj': '基本面',
-                       'week52_risk': '52周高位', 'week52_opp': '52周低位', 'liquidity_risk': '流动性'}
-            adj = " ".join(f"{label}{v:+d}" for key, label in adj_map.items() if (v := breakdown.get(key, 0)) != 0)
+            from src.stock_analyzer.formatter import AnalysisFormatter
+            adj = " ".join(f"{label}{v:+d}" for key, label in AnalysisFormatter.ADJ_MAP.items() if (v := breakdown.get(key, 0)) != 0)
             bd_str = f" ({base}{' | ' + adj if adj else ''})"
 
         lines = [
@@ -2431,15 +2428,8 @@ class StockTrendAnalyzer:
             base_str = "+".join(base_parts) if base_parts else ""
             # 多维修正因子
             adj_parts = []
-            adj_map = {
-                'valuation_adj': '估值', 'capital_flow_adj': '资金',
-                'cf_trend': '资金趋势', 'cf_continuity': '资金连续',
-                'cross_resonance': '跨维共振',
-                'sector_adj': '板块', 'chip_adj': '筹码',
-                'fundamental_adj': '基本面', 'week52_risk': '52周高位',
-                'week52_opp': '52周低位', 'liquidity_risk': '流动性',
-            }
-            for key, label in adj_map.items():
+            from src.stock_analyzer.formatter import AnalysisFormatter
+            for key, label in AnalysisFormatter.ADJ_MAP.items():
                 v = breakdown.get(key, 0)
                 if v != 0:
                     adj_parts.append(f"{label}{v:+d}")

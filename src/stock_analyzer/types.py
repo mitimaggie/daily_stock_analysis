@@ -143,6 +143,9 @@ class TrendAnalysisResult:
     kdj_j: float = 50.0
     kdj_status: KDJStatus = KDJStatus.NEUTRAL
     kdj_signal: str = ""
+    kdj_divergence: str = ""              # KDJ背离信号（"KDJ底背离"/"KDJ顶背离"/""）
+    kdj_consecutive_extreme: str = ""     # J值连续极端（"J值连续超买N天"/"J值连续超卖N天"/""）
+    kdj_passivation: bool = False         # KDJ钝化状态（强趋势中超买/超卖不可靠）
     
     # === 波动率指标 ===
     atr14: float = 0.0
@@ -225,6 +228,25 @@ class TrendAnalysisResult:
     # === 52周位置 ===
     week52_position: float = 0.0        # 当前价格在 52周高低中的位置(0-100%)
     
+    # === 涨跌停检测（A股特有）===
+    is_limit_up: bool = False              # 当日涨停
+    is_limit_down: bool = False            # 当日跌停
+    limit_pct: float = 10.0                # 涨跌停幅度(10 or 20)
+    consecutive_limits: int = 0            # 连续涨/跌停天数
+    
+    # === VWAP ===
+    vwap: float = 0.0                      # 成交量加权平均价
+    vwap_bias: float = 0.0                 # 现价相对VWAP偏离率(%)
+    
+    # === 量价背离 ===
+    volume_price_divergence: str = ""      # "顶部量价背离" / "底部量缩企稳" / ""
+    
+    # === 换手率分位数 ===
+    turnover_percentile: float = 0.5       # 换手率在历史中的分位数(0-1)
+    
+    # === 缺口检测 ===
+    gap_type: str = ""                     # "向上跳空" / "向下跳空" / ""
+    
     # === 信号详情 ===
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)
@@ -233,74 +255,17 @@ class TrendAnalysisResult:
     score_breakdown: Dict[str, int] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
-        """序列化为 dict，供 pipeline 注入 context 或 prompt 结构化输入"""
-        return {
-            "code": self.code,
-            "current_price": self.current_price,
-            "trend_status": self.trend_status.value,
-            "trend_strength": self.trend_strength,
-            "ma_alignment": self.ma_alignment,
-            "buy_signal": self.buy_signal.value,
-            "signal_score": self.signal_score,
-            "score_breakdown": self.score_breakdown,
-            "volume_status": self.volume_status.value,
-            "macd_status": self.macd_status.value,
-            "macd_dif": self.macd_dif, "macd_dea": self.macd_dea, "macd_bar": self.macd_bar,
-            "rsi_status": self.rsi_status.value, "rsi_signal": self.rsi_signal, "rsi_divergence": self.rsi_divergence,
-            "ma5": self.ma5, "ma10": self.ma10, "ma20": self.ma20, "ma60": self.ma60,
-            "bias_ma5": self.bias_ma5, "bias_ma10": self.bias_ma10, "bias_ma20": self.bias_ma20,
-            "volume_ratio": self.volume_ratio,
-            "atr14": self.atr14,
-            "rsi_6": self.rsi_6, "rsi_12": self.rsi_12, "rsi_24": self.rsi_24,
-            "bb_upper": self.bb_upper, "bb_lower": self.bb_lower,
-            "bb_width": self.bb_width, "bb_pct_b": self.bb_pct_b,
-            "volatility_20d": self.volatility_20d, "beta_vs_index": self.beta_vs_index,
-            "max_drawdown_60d": self.max_drawdown_60d,
-            "stop_loss_anchor": self.stop_loss_anchor,
-            "stop_loss_intraday": self.stop_loss_intraday,
-            "stop_loss_short": self.stop_loss_short,
-            "stop_loss_mid": self.stop_loss_mid,
-            "ideal_buy_anchor": self.ideal_buy_anchor,
-            "suggested_position_pct": self.suggested_position_pct,
-            "recommended_position": self.recommended_position,
-            "support_levels": self.support_levels,
-            "resistance_levels": self.resistance_levels,
-            "advice_for_empty": self.advice_for_empty,
-            "advice_for_holding": self.advice_for_holding,
-            "macd_signal": self.macd_signal, "kdj_signal": self.kdj_signal,
-            "kdj_k": self.kdj_k, "kdj_d": self.kdj_d, "kdj_j": self.kdj_j,
-            "kdj_status": self.kdj_status.value,
-            "take_profit_short": self.take_profit_short,
-            "take_profit_mid": self.take_profit_mid,
-            "take_profit_trailing": self.take_profit_trailing,
-            "take_profit_plan": self.take_profit_plan,
-            "risk_reward_ratio": self.risk_reward_ratio,
-            "risk_reward_verdict": self.risk_reward_verdict,
-            "resonance_count": self.resonance_count,
-            "resonance_signals": self.resonance_signals,
-            "resonance_bonus": self.resonance_bonus,
-            "indicator_resonance": self.indicator_resonance,
-            "market_behavior": self.market_behavior,
-            "timeframe_resonance": self.timeframe_resonance,
-            "beginner_summary": self.beginner_summary,
-            "pe_ratio": self.pe_ratio,
-            "pb_ratio": self.pb_ratio,
-            "peg_ratio": self.peg_ratio,
-            "valuation_score": self.valuation_score,
-            "valuation_verdict": self.valuation_verdict,
-            "valuation_downgrade": self.valuation_downgrade,
-            "trading_halt": self.trading_halt,
-            "trading_halt_reason": self.trading_halt_reason,
-            "capital_flow_score": self.capital_flow_score,
-            "capital_flow_signal": self.capital_flow_signal,
-            "sector_name": self.sector_name,
-            "sector_pct": self.sector_pct,
-            "sector_relative": self.sector_relative,
-            "sector_score": self.sector_score,
-            "sector_signal": self.sector_signal,
-            "chip_score": self.chip_score,
-            "chip_signal": self.chip_signal,
-            "fundamental_score": self.fundamental_score,
-            "fundamental_signal": self.fundamental_signal,
-            "week52_position": self.week52_position,
-        }
+        """序列化为 dict，供 pipeline 注入 context 或 prompt 结构化输入。
+        
+        自动遍历 dataclass 字段，Enum 类型自动取 .value，
+        新增字段时无需手动同步此方法。
+        """
+        from dataclasses import fields as dc_fields
+        d = {}
+        for f in dc_fields(self):
+            val = getattr(self, f.name)
+            if isinstance(val, Enum):
+                d[f.name] = val.value
+            else:
+                d[f.name] = val
+        return d

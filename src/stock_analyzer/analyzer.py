@@ -69,11 +69,11 @@ class StockTrendAnalyzer:
             ma_bull_score = 0
             if latest_ma5 > latest_ma10 > latest_ma20:
                 ma_bull_score += 3
-            if latest_ma10 > latest_ma20 > latest_ma60:
-                ma_bull_score += 2
             elif latest_ma5 < latest_ma10 < latest_ma20:
                 ma_bull_score -= 3
-            if latest_ma10 < latest_ma20 < latest_ma60:
+            if latest_ma10 > latest_ma20 > latest_ma60:
+                ma_bull_score += 2
+            elif latest_ma10 < latest_ma20 < latest_ma60:
                 ma_bull_score -= 2
             
             bull_count = 0
@@ -227,10 +227,12 @@ class StockTrendAnalyzer:
             
             if index_returns is not None and len(df) >= 60:
                 try:
-                    stock_ret = df['close'].pct_change().dropna().tail(60)
-                    idx_ret = index_returns.tail(60)
-                    if len(stock_ret) >= 30 and len(idx_ret) >= 30:
-                        min_len = min(len(stock_ret), len(idx_ret))
+                    # 优先使用120日窗口（学术标准），不足时降级到60日
+                    lookback = 120 if len(df) >= 120 else 60
+                    stock_ret = df['close'].pct_change().dropna().tail(lookback)
+                    idx_ret = index_returns.tail(lookback)
+                    min_len = min(len(stock_ret), len(idx_ret))
+                    if min_len >= 30:
                         s = stock_ret.values[-min_len:]
                         m = idx_ret.values[-min_len:]
                         cov = np.cov(s, m)[0][1]
@@ -240,10 +242,43 @@ class StockTrendAnalyzer:
                 except Exception:
                     pass
             
+            # === 新增指标计算 ===
+            # 涨跌停检测（A股特有）
+            df = TechnicalIndicators.detect_limit(df, code=code)
+            result.is_limit_up = bool(df.iloc[-1].get('limit_up', False))
+            result.is_limit_down = bool(df.iloc[-1].get('limit_down', False))
+            result.limit_pct = float(df.iloc[-1].get('limit_pct', 10.0))
+            # 连板检测
+            if result.is_limit_up or result.is_limit_down:
+                col = 'limit_up' if result.is_limit_up else 'limit_down'
+                count = 0
+                for i in range(len(df) - 1, -1, -1):
+                    if df.iloc[i][col]:
+                        count += 1
+                    else:
+                        break
+                result.consecutive_limits = count
+
+            # VWAP
+            df = TechnicalIndicators.calc_vwap(df)
+            result.vwap = round(float(df.iloc[-1].get('VWAP', 0) or 0), 2)
+            result.vwap_bias = round(float(df.iloc[-1].get('VWAP_bias', 0) or 0), 2)
+
+            # 量价背离
+            result.volume_price_divergence = TechnicalIndicators.detect_volume_price_divergence(df)
+
+            # 缺口检测
+            result.gap_type = TechnicalIndicators.detect_gap(df)
+
+            # 换手率分位数（需要 quote_extra 中的 turnover_rate）
+            turnover = (quote_extra or {}).get('turnover_rate', 0) or 0
+            if turnover > 0:
+                result.turnover_percentile = TechnicalIndicators.calc_turnover_percentile(df, turnover)
+
             self._analyze_volume(result, df, latest, prev)
             self._analyze_macd(result, prev)
             self._analyze_rsi(result, df, prev)
-            self._analyze_kdj(result, prev)
+            self._analyze_kdj(result, df, prev)
             self._analyze_trend(result, df, prev)
             self._calculate_bias(result)
             
@@ -265,6 +300,7 @@ class StockTrendAnalyzer:
             ScoringSystem.score_chip_distribution(result, chip_data)
             ScoringSystem.score_fundamental_quality(result, fundamental_data)
             ScoringSystem.score_quote_extra(result, quote_extra)
+            ScoringSystem.score_limit_and_enhanced(result)
             ScoringSystem.cap_adjustments(result)
             ScoringSystem.detect_signal_conflict(result)
             
@@ -282,24 +318,65 @@ class StockTrendAnalyzer:
             return result
     
     def _analyze_volume(self, result: TrendAnalysisResult, df: pd.DataFrame, latest: pd.Series, prev: pd.Series):
-        """量能分析"""
-        vol_ma5 = df['volume'].iloc[-6:-1].mean()
-        result.volume_ratio = float(latest['volume'] / vol_ma5) if vol_ma5 > 0 else 1.0
-        if 'volume_ratio' in latest and latest['volume_ratio'] > 0:
+        """量能分析（含涨跌停特殊处理 + z-score自适应阈值）"""
+        if 'volume_ratio' in latest and not pd.isna(latest['volume_ratio']) and latest['volume_ratio'] > 0:
             result.volume_ratio = float(latest['volume_ratio'])
+        else:
+            vol_ma5 = df['volume'].iloc[-6:-1].mean()
+            result.volume_ratio = float(latest['volume'] / vol_ma5) if vol_ma5 > 0 else 1.0
+        
+        # z-score 自适应阈值：根据统计显著性动态调整放量/缩量判定
+        heavy_ratio = self.VOLUME_HEAVY_RATIO
+        shrink_ratio = self.VOLUME_SHRINK_RATIO
+        if len(df) >= 20:
+            vol_20 = df['volume'].tail(20)
+            vol_mean = vol_20.mean()
+            vol_std = vol_20.std()
+            if vol_std > 0 and vol_mean > 0:
+                vol_zscore = (float(latest['volume']) - vol_mean) / vol_std
+                # z > 2.0 → 统计显著放量，降低放量阈值使其更容易触发
+                if vol_zscore > 2.0:
+                    heavy_ratio = min(heavy_ratio, result.volume_ratio * 0.95)
+                # z < -1.5 → 统计显著缩量，提高缩量阈值使其更容易触发
+                elif vol_zscore < -1.5:
+                    shrink_ratio = max(shrink_ratio, result.volume_ratio * 1.05)
         
         prev_close_price = float(prev['close'])
         price_change_pct = (result.current_price - prev_close_price) / prev_close_price * 100 if prev_close_price > 0 else 0
         vr = result.volume_ratio
+
+        # === 涨跌停特殊处理（A股特有）===
+        # 涨停板：缩量封板是正常的（买盘无法成交），不应判为"缩量上涨动能不足"
+        # 跌停板：缩量跌停说明恐慌抛售无人接盘，放量跌停说明有资金抄底
+        if result.is_limit_up:
+            if vr <= shrink_ratio:
+                result.volume_status = VolumeStatus.SHRINK_VOLUME_UP
+                result.volume_trend = "缩量涨停封板，筹码锁定良好"
+            else:
+                result.volume_status = VolumeStatus.HEAVY_VOLUME_UP
+                result.volume_trend = "放量涨停，多空分歧较大"
+                if result.consecutive_limits >= 2:
+                    result.volume_trend += f"（连续{result.consecutive_limits}板）"
+            return
         
-        if vr >= self.VOLUME_HEAVY_RATIO:
+        if result.is_limit_down:
+            if vr >= heavy_ratio:
+                result.volume_status = VolumeStatus.HEAVY_VOLUME_DOWN
+                result.volume_trend = "放量跌停，有资金承接但抛压沉重"
+            else:
+                result.volume_status = VolumeStatus.SHRINK_VOLUME_DOWN
+                result.volume_trend = "缩量跌停，恐慌情绪蔓延，无人接盘"
+            return
+
+        # === 常规量能分析（使用z-score自适应阈值）===
+        if vr >= heavy_ratio:
             if price_change_pct > 0:
                 result.volume_status = VolumeStatus.HEAVY_VOLUME_UP
                 result.volume_trend = "放量上涨，多头力量强劲"
             else:
                 result.volume_status = VolumeStatus.HEAVY_VOLUME_DOWN
                 result.volume_trend = "放量下跌，注意风险"
-        elif vr <= self.VOLUME_SHRINK_RATIO:
+        elif vr <= shrink_ratio:
             if price_change_pct > 0:
                 result.volume_status = VolumeStatus.SHRINK_VOLUME_UP
                 result.volume_trend = "缩量上涨，上攻动能不足"
@@ -354,21 +431,30 @@ class StockTrendAnalyzer:
         is_rsi_death = (prev_rsi6 >= prev_rsi12) and (rsi_short < rsi_mid)
         
         rsi_divergence = ""
-        if len(df) >= 20:
-            tail_20 = df.tail(20)
-            tail_10 = df.tail(10)
-            price_high_recent = float(tail_10['high'].max())
-            price_high_prev = float(tail_20.head(10)['high'].max())
-            rsi_high_recent = float(tail_10[f'RSI_{TechnicalIndicators.RSI_MID}'].max())
-            rsi_high_prev = float(tail_20.head(10)[f'RSI_{TechnicalIndicators.RSI_MID}'].max())
-            price_low_recent = float(tail_10['low'].min())
-            price_low_prev = float(tail_20.head(10)['low'].min())
-            rsi_low_recent = float(tail_10[f'RSI_{TechnicalIndicators.RSI_MID}'].min())
-            rsi_low_prev = float(tail_20.head(10)[f'RSI_{TechnicalIndicators.RSI_MID}'].min())
+        if len(df) >= 30:
+            tail_30 = df.tail(30)
+            half = 15
+            first_half = tail_30.head(half)
+            second_half = tail_30.tail(half)
+            rsi_col = f'RSI_{TechnicalIndicators.RSI_MID}'
             
-            if price_high_recent > price_high_prev and rsi_high_recent < rsi_high_prev - 2:
+            price_high_prev = float(first_half['high'].max())
+            price_high_recent = float(second_half['high'].max())
+            rsi_high_prev = float(first_half[rsi_col].max())
+            rsi_high_recent = float(second_half[rsi_col].max())
+            
+            price_low_prev = float(first_half['low'].min())
+            price_low_recent = float(second_half['low'].min())
+            rsi_low_prev = float(first_half[rsi_col].min())
+            rsi_low_recent = float(second_half[rsi_col].min())
+            
+            # 顶背离：价格新高(>1%) + RSI未新高(差>3)
+            if (price_high_recent > price_high_prev * 1.01 and 
+                rsi_high_recent < rsi_high_prev - 3):
                 rsi_divergence = "顶背离"
-            elif price_low_recent < price_low_prev and rsi_low_recent > rsi_low_prev + 2:
+            # 底背离：价格新低(>1%) + RSI未新低(差>3)
+            elif (price_low_recent < price_low_prev * 0.99 and 
+                  rsi_low_recent > rsi_low_prev + 3):
                 rsi_divergence = "底背离"
         result.rsi_divergence = rsi_divergence
         
@@ -403,14 +489,56 @@ class StockTrendAnalyzer:
             result.rsi_status = RSIStatus.OVERSOLD
             result.rsi_signal = f"RSI超卖({rsi_mid:.1f}<30)，反弹机会大"
     
-    def _analyze_kdj(self, result: TrendAnalysisResult, prev: pd.Series):
-        """KDJ分析"""
+    def _analyze_kdj(self, result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
+        """KDJ分析（含背离检测、连续极端、钝化识别）"""
         k_val, d_val, j_val = result.kdj_k, result.kdj_d, result.kdj_j
         pk_val, pd_val = float(prev.get('K', 50) or 50), float(prev.get('D', 50) or 50)
         is_kdj_golden = (pk_val <= pd_val) and (k_val > d_val)
         is_kdj_death = (pk_val >= pd_val) and (k_val < d_val)
         
-        if is_kdj_golden and j_val < 20:
+        # === KDJ 背离检测 ===
+        result.kdj_divergence = TechnicalIndicators.detect_kdj_divergence(df)
+        
+        # === J 值连续极端检测 ===
+        result.kdj_consecutive_extreme = TechnicalIndicators.detect_kdj_consecutive_extreme(df)
+        
+        # === KDJ 钝化识别（需要趋势强度，先用临时值，_analyze_trend 后会更新）===
+        result.kdj_passivation = TechnicalIndicators.detect_kdj_passivation(df, result.trend_strength)
+        
+        # === KDJ 背离优先级最高 ===
+        if result.kdj_divergence == "KDJ底背离":
+            result.kdj_status = KDJStatus.GOLDEN_CROSS_OVERSOLD
+            result.kdj_signal = f"KDJ底背离(价格新低但J值未新低)，反转买入信号"
+        elif result.kdj_divergence == "KDJ顶背离":
+            result.kdj_status = KDJStatus.OVERBOUGHT
+            result.kdj_signal = f"KDJ顶背离(价格新高但J值未新高)，见顶风险"
+        # === 连续极端信号 ===
+        elif result.kdj_consecutive_extreme:
+            if "超买" in result.kdj_consecutive_extreme:
+                result.kdj_status = KDJStatus.OVERBOUGHT
+                result.kdj_signal = f"{result.kdj_consecutive_extreme}，短期严重超买，回调概率极高"
+            else:
+                result.kdj_status = KDJStatus.OVERSOLD
+                result.kdj_signal = f"{result.kdj_consecutive_extreme}，短期严重超卖，反弹概率极高"
+        # === 钝化状态：降低超买/超卖信号权重 ===
+        elif result.kdj_passivation:
+            if j_val > 100 or k_val > 80:
+                result.kdj_status = KDJStatus.BULLISH
+                result.kdj_signal = f"KDJ钝化(强趋势中持续超买K={k_val:.1f})，超买信号不可靠，趋势可能延续"
+            elif j_val < 0 or k_val < 20:
+                result.kdj_status = KDJStatus.BEARISH
+                result.kdj_signal = f"KDJ钝化(弱趋势中持续超卖K={k_val:.1f})，超卖信号不可靠，下跌可能延续"
+            elif is_kdj_golden:
+                result.kdj_status = KDJStatus.GOLDEN_CROSS
+                result.kdj_signal = f"金叉(K={k_val:.1f}>D={d_val:.1f})，但KDJ钝化中，信号需确认"
+            elif is_kdj_death:
+                result.kdj_status = KDJStatus.DEATH_CROSS
+                result.kdj_signal = f"死叉(K={k_val:.1f}<D={d_val:.1f})，但KDJ钝化中，信号需确认"
+            else:
+                result.kdj_status = KDJStatus.NEUTRAL
+                result.kdj_signal = f"KDJ钝化中(K={k_val:.1f} D={d_val:.1f} J={j_val:.1f})，信号可靠性降低"
+        # === 常规 KDJ 分析 ===
+        elif is_kdj_golden and j_val < 20:
             result.kdj_status = KDJStatus.GOLDEN_CROSS_OVERSOLD
             result.kdj_signal = f"超卖区金叉(J={j_val:.1f}<20)，强买入信号"
         elif j_val > 100:
