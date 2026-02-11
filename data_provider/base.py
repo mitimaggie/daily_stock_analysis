@@ -273,16 +273,19 @@ class DataFetcherManager:
         except: return 0
 
     # 数据源补充机制：主数据源缺少的字段，自动从备用源补充（借鉴上游 #275）
-    _SUPPLEMENT_FIELDS = [
-        'volume_ratio', 'turnover_rate',
-        'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
-        'amplitude',
+    # 注意：只补充真正关键的字段，避免因可选字段缺失而触发额外请求导致被封
+    _SUPPLEMENT_FIELDS_CRITICAL = [
+        'volume_ratio', 'turnover_rate',  # 量化分析必需
+        'pe_ratio', 'pb_ratio',           # 估值分析必需
+    ]
+    _SUPPLEMENT_FIELDS_OPTIONAL = [
+        'total_mv', 'circ_mv', 'amplitude',  # 可选，缺失不影响核心分析
     ]
 
     @classmethod
     def _quote_needs_supplement(cls, quote) -> bool:
-        """检查行情是否缺少关键补充字段"""
-        for f in cls._SUPPLEMENT_FIELDS:
+        """检查行情是否缺少关键补充字段（仅检查critical字段，避免过度请求）"""
+        for f in cls._SUPPLEMENT_FIELDS_CRITICAL:
             if getattr(quote, f, None) is None:
                 return True
         return False
@@ -291,7 +294,8 @@ class DataFetcherManager:
     def _merge_quote_fields(cls, primary, secondary) -> list:
         """将 secondary 中非 None 的字段补充到 primary 中缺失的字段，返回被填充的字段名列表"""
         filled = []
-        for f in cls._SUPPLEMENT_FIELDS:
+        all_fields = cls._SUPPLEMENT_FIELDS_CRITICAL + cls._SUPPLEMENT_FIELDS_OPTIONAL
+        for f in all_fields:
             if getattr(primary, f, None) is None:
                 val = getattr(secondary, f, None)
                 if val is not None:
@@ -316,6 +320,9 @@ class DataFetcherManager:
         priorities = config.realtime_source_priority.split(',')
         
         primary_quote = None
+        supplement_attempts = 0
+        MAX_SUPPLEMENT = 1  # 最多只尝试1个备用源补充，防止被封
+        
         for source in priorities:
             source = source.strip()
             try:
@@ -323,15 +330,17 @@ class DataFetcherManager:
                 if q:
                     if primary_quote is None:
                         primary_quote = q
-                        # 如果主数据源已经字段齐全，直接返回
+                        # 如果主数据源已经关键字段齐全，直接返回（不再请求备用源）
                         if not self._quote_needs_supplement(primary_quote):
                             return primary_quote
                     else:
                         # 用备用源补充缺失字段
+                        supplement_attempts += 1
                         filled = self._merge_quote_fields(primary_quote, q)
                         if filled:
                             logger.debug(f"[{stock_code}] 从 {source} 补充字段: {', '.join(filled)}")
-                        if not self._quote_needs_supplement(primary_quote):
+                        # 补充完成或达到上限，直接返回
+                        if not self._quote_needs_supplement(primary_quote) or supplement_attempts >= MAX_SUPPLEMENT:
                             return primary_quote
             except Exception: continue
         return primary_quote  # 返回已有的（即使部分字段缺失）
