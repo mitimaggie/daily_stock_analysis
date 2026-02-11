@@ -21,21 +21,37 @@ class ScoringSystem:
         MarketRegime.SIDEWAYS: {"trend": 18, "bias": 20, "volume": 12, "support": 12, "macd": 13, "rsi": 10, "kdj": 15},
         MarketRegime.BEAR:     {"trend": 13, "bias": 17, "volume": 17, "support": 13, "macd": 12, "rsi": 13, "kdj": 15},
     }
+
+    # 改进4: 短线交易敏感度 - 不同时间维度使用不同权重表
+    # intraday: 日内做T，KDJ/RSI/量能权重大幅提升，趋势权重降低
+    # short: 短线1-5日，均衡但偏重短周期指标
+    # mid: 中线1-4周，与默认一致（趋势为王）
+    HORIZON_WEIGHTS = {
+        "intraday": {"trend": 10, "bias": 15, "volume": 18, "support": 8, "macd": 12, "rsi": 17, "kdj": 20},
+        "short":    {"trend": 15, "bias": 15, "volume": 15, "support": 8, "macd": 15, "rsi": 14, "kdj": 18},
+        "mid":      None,  # None = 使用 REGIME_WEIGHTS（默认行为）
+    }
     
     @staticmethod
-    def calculate_base_score(result: TrendAnalysisResult, market_regime: MarketRegime) -> int:
+    def calculate_base_score(result: TrendAnalysisResult, market_regime: MarketRegime, time_horizon: str = "") -> int:
         """
         计算基础技术面评分
         
         Args:
             result: 分析结果对象
             market_regime: 市场环境
+            time_horizon: 时间维度 ("intraday"/"short"/"mid"/""=默认)
             
         Returns:
             基础评分 (0-100)
         """
         raw_scores = ScoringSystem._get_raw_dimension_scores(result)
-        weights = ScoringSystem.REGIME_WEIGHTS.get(market_regime, ScoringSystem.REGIME_WEIGHTS[MarketRegime.SIDEWAYS])
+        # 改进4: 优先使用时间维度权重表，未命中则回退到市场环境权重
+        horizon_weights = ScoringSystem.HORIZON_WEIGHTS.get(time_horizon)
+        if horizon_weights:
+            weights = horizon_weights
+        else:
+            weights = ScoringSystem.REGIME_WEIGHTS.get(market_regime, ScoringSystem.REGIME_WEIGHTS[MarketRegime.SIDEWAYS])
         
         result.score_breakdown = {
             k: min(weights[k], round(raw_scores[k] * weights[k])) 

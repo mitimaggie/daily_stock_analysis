@@ -536,6 +536,27 @@ class NotificationService:
                 f"{signal_emoji} {stock_name}（{result.code}）：{signal_text} | {score_tag} | {result.trend_prediction}",
             ])
 
+            # ========== 改进1: 今日变化对比（前置显示）==========
+            signal_changes = getattr(result, 'signal_changes', [])
+            if signal_changes:
+                changes_text = " | ".join(signal_changes[:5])
+                report_lines.append(f"📈 **今日变化**: {changes_text}")
+            elif not getattr(result, 'is_first_analysis', True):
+                score_change = getattr(result, 'score_change', None)
+                if score_change is not None and score_change != 0:
+                    arrow = '⬆️' if score_change > 0 else '⬇️'
+                    report_lines.append(f"📈 **今日变化**: {arrow}评分{score_change:+d}")
+
+            # ========== 改进6: 量化vs AI分歧高亮 ==========
+            divergence_alert = getattr(result, 'divergence_alert', '')
+            if divergence_alert:
+                report_lines.append(f"{divergence_alert}")
+
+            # ========== 改进3: 具体手数建议 ==========
+            concrete_position = getattr(result, 'concrete_position', '')
+            if concrete_position:
+                report_lines.append(f"💰 **具体建议**: {concrete_position}")
+
             # ========== 交易暂停 ==========
             if qe.get('trading_halt'):
                 report_lines.append(f"🚨 **交易暂停**: {qe.get('trading_halt_reason', '未知')}")

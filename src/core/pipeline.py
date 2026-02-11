@@ -387,7 +387,11 @@ class StockAnalysisPipeline:
                         _quote_extra = _qe
                 # 复用已获取的筹码数据
                 _chip_dict = chip_data if chip_data else None
-                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=sector_context, chip_data=_chip_dict, fundamental_data=fundamental_data or None, quote_extra=_quote_extra)
+                # 改进4: 确定时间维度（auto模式下盘中用short，盘后用默认）
+                _time_horizon = getattr(self.config, 'time_horizon', 'auto') or 'auto'
+                if _time_horizon == 'auto':
+                    _time_horizon = 'short' if is_market_intraday() else ''
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=sector_context, chip_data=_chip_dict, fundamental_data=fundamental_data or None, quote_extra=_quote_extra, time_horizon=_time_horizon)
                 if quote.price:
                     trend_result.current_price = quote.price
                 # === P4-3: 资金面连续性检测（基于历史分析记录） ===
@@ -587,6 +591,17 @@ class StockAnalysisPipeline:
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 搜索服务异常: {e}")
 
+            # 改进7: 新闻时效性标注 - 在舆情内容前标注来源和时效
+            if search_content and used_news_cache:
+                timeliness_map = {
+                    "akshare": "⏰ 以下新闻来自Akshare免费源(24h缓存)，可能非最新",
+                    "perplexity_cache": "⏰ 以下新闻来自Perplexity缓存(6h内)，注意时效",
+                    "cache_legacy": "⏰ 以下新闻来自历史缓存(6h内)，注意时效",
+                }
+                timeliness_note = timeliness_map.get(news_source, "")
+                if timeliness_note:
+                    search_content = f"{timeliness_note}\n\n{search_content}"
+
             if not search_content and not fast_mode:
                 logger.info(f"📭 [{stock_name}] 无舆情数据，将仅基于技术面+基本面分析")
 
@@ -715,6 +730,72 @@ class StockAnalysisPipeline:
                 else:
                     result.decision_type = 'hold'
 
+            # === 改进1: 今日变化对比 ===
+            history = context.get('history_summary')
+            if history and isinstance(history, dict) and history.get('score') is not None:
+                result.is_first_analysis = False
+                result.prev_score = history['score']
+                result.score_change = result.sentiment_score - history['score']
+                result.prev_advice = history.get('advice', '')
+                result.prev_trend = history.get('trend', '')
+                # 检测关键信号变化
+                changes = []
+                prev_signals = history.get('signals', {})
+                curr_trend = context.get('trend_analysis', {})
+                if prev_signals and curr_trend:
+                    signal_pairs = [
+                        ('trend_status', '趋势'),
+                        ('macd_status', 'MACD'),
+                        ('kdj_status', 'KDJ'),
+                        ('rsi_status', 'RSI'),
+                        ('volume_status', '量能'),
+                        ('buy_signal', '信号'),
+                    ]
+                    for key, label in signal_pairs:
+                        old_val = prev_signals.get(key, '')
+                        new_val = curr_trend.get(key, '')
+                        if old_val and new_val and old_val != new_val:
+                            changes.append(f"{label}: {old_val}→{new_val}")
+                # 评分变化也作为信号
+                if result.score_change is not None and abs(result.score_change) >= 5:
+                    arrow = '⬆️' if result.score_change > 0 else '⬇️'
+                    changes.insert(0, f"{arrow}评分{result.prev_score}→{result.sentiment_score}({result.score_change:+d})")
+                # 操作建议变化
+                if result.prev_advice and result.operation_advice != result.prev_advice:
+                    changes.append(f"建议: {result.prev_advice}→{result.operation_advice}")
+                result.signal_changes = changes
+            else:
+                result.is_first_analysis = True
+
+            # === 改进6: 量化 vs AI 分歧高亮 ===
+            if result.llm_score is not None and result.sentiment_score is not None:
+                divergence = abs(result.sentiment_score - result.llm_score)
+                result.quant_ai_divergence = divergence
+                if divergence >= 20:
+                    q_label = f"量化{result.sentiment_score}分"
+                    a_label = f"AI{result.llm_score}分"
+                    q_dir = "看多" if result.sentiment_score >= 60 else ("看空" if result.sentiment_score <= 40 else "中性")
+                    a_dir = "看多" if result.llm_score >= 60 else ("看空" if result.llm_score <= 40 else "中性")
+                    result.divergence_alert = f"⚠️ 量化与AI严重分歧: {q_label}({q_dir}) vs {a_label}({a_dir})"
+                    if result.llm_reasoning:
+                        result.divergence_alert += f" | AI理由: {result.llm_reasoning[:60]}"
+                elif divergence >= 15:
+                    result.divergence_alert = f"📊 量化({result.sentiment_score}) vs AI({result.llm_score}) 存在分歧({divergence}分)"
+
+            # === 改进3: 具体手数建议 ===
+            portfolio_size = getattr(self.config, 'portfolio_size', 0) or 0
+            if portfolio_size > 0 and result.current_price > 0:
+                pct = 0
+                if trend and isinstance(trend, dict):
+                    pct = trend.get('suggested_position_pct', 0) or 0
+                if pct > 0:
+                    amount = portfolio_size * pct / 100
+                    shares = int(amount / result.current_price / 100) * 100  # A股最小100股
+                    if shares >= 100:
+                        result.concrete_position = f"建议买入{shares}股(约{shares * result.current_price:.0f}元，占总资金{pct}%，总资金{portfolio_size/10000:.1f}万)"
+                    else:
+                        result.concrete_position = f"建议仓位{pct}%，但单价较高，最少需{100 * result.current_price:.0f}元买1手"
+
             # 标注分析时间戳（盘中多次分析时可区分）
             result.analysis_time = datetime.now().strftime('%H:%M')
             self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score} (时间={result.analysis_time})")
@@ -741,6 +822,10 @@ class StockAnalysisPipeline:
         logger.info("正在生成汇总日报...")
         try:
             daily_report = self.notifier.generate_dashboard_report(results)
+            # 改进5: 附加组合分析报告
+            portfolio_text = getattr(self, '_portfolio_report_text', '')
+            if portfolio_text:
+                daily_report = daily_report + "\n\n" + portfolio_text
             self.notifier.send(daily_report)
             self.notifier.save_report_to_file(daily_report)
             # 同时保存一份 .txt 到本地，不改变 PushPlus 等推送逻辑
@@ -977,6 +1062,47 @@ class StockAnalysisPipeline:
                         r.risk_warning = f"{existing}\n【组合风控】{warning_text}".strip()
             except Exception as e:
                 logger.debug(f"组合风控检查跳过: {e}")
+
+        # === 改进5: 持仓组合分析 ===
+        if len(results) >= 2:
+            try:
+                from src.portfolio_analyzer import PortfolioAnalyzer
+                portfolio_size = getattr(self.config, 'portfolio_size', 0) or 0
+                portfolio_report = PortfolioAnalyzer.analyze(results, portfolio_size)
+                portfolio_text = PortfolioAnalyzer.format_report(portfolio_report, portfolio_size)
+                logger.info(f"📋 组合分析完成:\n{portfolio_text}")
+                # 将组合报告注入最后一只股票的 risk_warning（或独立推送）
+                # 这里选择在汇总推送中附加
+                self._portfolio_report_text = portfolio_text
+            except Exception as e:
+                logger.debug(f"组合分析跳过: {e}")
+                self._portfolio_report_text = ""
+        else:
+            self._portfolio_report_text = ""
+
+        # === 改进2: 盘中预警监控（自动注册规则） ===
+        if getattr(self.config, 'enable_alert_monitor', False) and results:
+            try:
+                from src.alert_monitor import AlertMonitor
+                monitor = AlertMonitor(config=self.config)
+                monitor.add_rules_from_analysis(results)
+                interval = getattr(self.config, 'alert_interval_seconds', 300)
+                logger.info(f"📢 盘中预警已注册 {len(monitor.rules)} 只股票，间隔{interval}s")
+                # 非阻塞启动（在独立线程中运行）
+                import threading
+                t = threading.Thread(
+                    target=monitor.run_loop,
+                    kwargs={
+                        'fetcher_manager': self.fetcher_manager,
+                        'notifier': self.notifier,
+                        'interval_seconds': interval,
+                    },
+                    daemon=True,
+                    name="AlertMonitor"
+                )
+                t.start()
+            except Exception as e:
+                logger.debug(f"预警监控启动跳过: {e}")
 
         # 汇总推送 (如果没开单股推送)
         if results and send_notification and not dry_run and not single_stock_notify:

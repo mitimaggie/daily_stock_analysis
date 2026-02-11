@@ -159,7 +159,8 @@ class StockTrendAnalyzer:
         sector_context: dict = None,
         chip_data: dict = None,
         fundamental_data: dict = None,
-        quote_extra: dict = None
+        quote_extra: dict = None,
+        time_horizon: str = ""
     ) -> TrendAnalysisResult:
         """
         股票趋势分析主入口
@@ -284,7 +285,7 @@ class StockTrendAnalyzer:
             
             result.support_levels, result.resistance_levels = RiskManager.compute_support_resistance_levels(df, result)
             
-            score = ScoringSystem.calculate_base_score(result, market_regime)
+            score = ScoringSystem.calculate_base_score(result, market_regime, time_horizon=time_horizon)
             result.signal_score = score
             ScoringSystem.update_buy_signal(result)
             

@@ -713,10 +713,10 @@ class DatabaseManager:
             return pd.DataFrame()
             
     # === 新增：获取历史记忆（用于连续性分析） ===
-    def get_last_analysis_summary(self, code: str) -> Optional[Dict[str, str]]:
+    def get_last_analysis_summary(self, code: str) -> Optional[Dict[str, Any]]:
         """
-        获取上一次分析的核心观点
-        返回: {'date': '2026-02-04', 'view': '看多，因为...', 'risk': '注意...'}
+        获取上一次分析的核心观点（增强版：含结构化评分/信号数据）
+        返回: {'date': '2026-02-04', 'view': '...', 'advice': '...', 'score': 72, 'trend': '...', 'signals': {...}}
         """
         with self.get_session() as session:
             # 获取最近的一条记录
@@ -728,12 +728,31 @@ class DatabaseManager:
             ).scalar_one_or_none()
             
             if result:
-                return {
+                summary = {
                     'date': result.created_at.strftime('%Y-%m-%d'),
                     'trend': result.trend_prediction,
-                    'view': (result.analysis_summary[:80] + "..." if result.analysis_summary and len(result.analysis_summary) > 80 else (result.analysis_summary or "")),  # 最近1条，限80字
-                    'advice': result.operation_advice
+                    'view': (result.analysis_summary[:80] + "..." if result.analysis_summary and len(result.analysis_summary) > 80 else (result.analysis_summary or "")),
+                    'advice': result.operation_advice,
+                    'score': result.sentiment_score,
                 }
+                # 从 context_snapshot 提取结构化信号数据
+                if result.context_snapshot:
+                    try:
+                        ctx = json.loads(result.context_snapshot)
+                        trend_data = ctx.get('trend_analysis', {})
+                        if isinstance(trend_data, dict):
+                            summary['signals'] = {
+                                'trend_status': trend_data.get('trend_status', ''),
+                                'macd_status': trend_data.get('macd_status', ''),
+                                'kdj_status': trend_data.get('kdj_status', ''),
+                                'rsi_status': trend_data.get('rsi_status', ''),
+                                'volume_status': trend_data.get('volume_status', ''),
+                                'buy_signal': trend_data.get('buy_signal', ''),
+                                'signal_score': trend_data.get('signal_score'),
+                            }
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                return summary
             return None
 
     # === 通用数据缓存 (F10/行业PE/板块归属) ===

@@ -224,8 +224,13 @@ class RiskManager:
         return supports, resistances
     
     @staticmethod
-    def generate_detailed_advice(result: TrendAnalysisResult):
-        """生成持仓/空仓的分离建议"""
+    def generate_detailed_advice(result: TrendAnalysisResult, signal_confirm_days: int = 0):
+        """生成持仓/空仓的分离建议
+        
+        Args:
+            result: 分析结果
+            signal_confirm_days: 信号确认期（天），>0时首次出现买入信号会标注"待确认"
+        """
         bias = result.bias_ma5
         trend = result.trend_status
         score = result.signal_score

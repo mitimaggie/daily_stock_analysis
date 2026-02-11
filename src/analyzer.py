@@ -71,6 +71,25 @@ class AnalysisResult:
     llm_advice: str = ""                  # LLM 自己的操作建议
     llm_reasoning: str = ""               # LLM 给出上调/下调理由
 
+    # === 改进1: 今日变化对比 ===
+    prev_score: Optional[int] = None         # 上次分析评分
+    score_change: Optional[int] = None       # 评分变化 (+/-)
+    prev_advice: str = ""                    # 上次操作建议
+    signal_changes: List[str] = None         # 关键信号变化列表
+    prev_trend: str = ""                     # 上次趋势预测
+    is_first_analysis: bool = True           # 是否首次分析
+
+    # === 改进3: 具体手数建议 ===
+    concrete_position: str = ""              # 具体手数/金额建议
+
+    # === 改进6: 量化 vs AI 分歧高亮 ===
+    quant_ai_divergence: int = 0             # 量化与AI评分差值
+    divergence_alert: str = ""               # 分歧告警文本
+
+    def __post_init__(self):
+        if self.signal_changes is None:
+            self.signal_changes = []
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'code': self.code, 'name': self.name,

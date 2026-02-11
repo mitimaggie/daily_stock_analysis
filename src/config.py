@@ -130,6 +130,13 @@ class Config:
     log_dir: str = "./logs"  # 日志文件目录
     log_level: str = "INFO"  # 日志级别
     
+    # === 散户实战增强配置 ===
+    portfolio_size: float = 0.0  # 总资金（元），配置后可输出具体手数建议（如 100000 = 10万）
+    time_horizon: str = "auto"  # 分析时间维度: auto(自动)/intraday(日内)/short(短线1-5日)/mid(中线1-4周)
+    enable_alert_monitor: bool = False  # 是否启用盘中预警监控
+    alert_interval_seconds: int = 300  # 预警轮询间隔（秒），默认5分钟
+    signal_confirm_days: int = 0  # 信号确认期（天），>0时首次出现买入信号不立即建议买入
+
     # === 系统配置 ===
     max_workers: int = 1  # 默认顺序执行，日志一条一条输出
     fast_mode: bool = False  # 盘中快速模式：跳过搜索、强制轻量模型、跳过F10
@@ -404,7 +411,13 @@ class Config:
             # - efinance/akshare_em: 东财全量接口，数据最全但容易被封
             realtime_source_priority=os.getenv('REALTIME_SOURCE_PRIORITY', 'tencent,akshare_sina,efinance,akshare_em'),
             realtime_cache_ttl=int(os.getenv('REALTIME_CACHE_TTL', '600')),
-            circuit_breaker_cooldown=int(os.getenv('CIRCUIT_BREAKER_COOLDOWN', '300'))
+            circuit_breaker_cooldown=int(os.getenv('CIRCUIT_BREAKER_COOLDOWN', '300')),
+            # 散户实战增强配置
+            portfolio_size=float(os.getenv('PORTFOLIO_SIZE', '0')),
+            time_horizon=os.getenv('TIME_HORIZON', 'auto').lower(),
+            enable_alert_monitor=os.getenv('ENABLE_ALERT_MONITOR', 'false').lower() == 'true',
+            alert_interval_seconds=int(os.getenv('ALERT_INTERVAL_SECONDS', '300')),
+            signal_confirm_days=int(os.getenv('SIGNAL_CONFIRM_DAYS', '0')),
         )
     
     @classmethod
