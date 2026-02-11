@@ -674,18 +674,16 @@ class NotificationService:
             "",
         ]
 
-        # === 新增：分析结果摘要 (Issue #112) ===
+        # === 分析结果摘要 ===
         if results:
             report_lines.extend([
                 "## 📊 分析结果摘要",
                 "",
             ])
             for r in sorted_results:
-                emoji = r.get_emoji()
                 display_name = self._escape_md(r.name)
                 report_lines.append(
-                    f"{emoji} **{display_name}({r.code})**: {r.operation_advice} | "
-                    f"评分 {r.sentiment_score} | {r.trend_prediction}"
+                    f"{display_name}({r.code})：{r.operation_advice} | 评分 {r.sentiment_score} | {r.trend_prediction}"
                 )
             report_lines.extend([
                 "",
@@ -711,30 +709,32 @@ class NotificationService:
             if llm_score is not None:
                 score_tag = f"量化 {result.sentiment_score} / AI {llm_score}"
             report_lines.extend([
-                f"{signal_emoji} **{stock_name}（{result.code}）**：{signal_text} | {score_tag} | {result.trend_prediction}",
+                f"{signal_emoji} {stock_name}（{result.code}）：{signal_text} | {score_tag} | {result.trend_prediction}",
             ])
 
             # ========== 交易暂停 ==========
             if qe.get('trading_halt'):
                 report_lines.append(f"🚨 **交易暂停**: {qe.get('trading_halt_reason', '未知')}")
 
-            # ========== ② 核心结论（最重要，放最前）==========
+            # ========== ② 重要信息速览 ==========
             one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
             if one_sentence:
-                report_lines.append(f"📌 **核心结论**：{one_sentence}")
+                report_lines.append(f"📋 重要信息速览")
+                report_lines.append(f"💭 舆情情绪：{one_sentence}")
 
-            # ========== ③ 重要信息速览（AI 舆情/基本面）==========
-            has_intel = False
+            # ========== ③ 业绩预期等补充信息 ==========
+            has_intel = one_sentence is not None
             if intel:
-                intel_lines = []
-                if intel.get('sentiment_summary'):
-                    intel_lines.append(f"💭 **舆情情绪**：{intel['sentiment_summary']}")
                 if intel.get('earnings_outlook'):
-                    intel_lines.append(f"📊 **业绩预期**：{intel['earnings_outlook']}")
-                if intel_lines:
-                    has_intel = True
-                    report_lines.append("📋 **重要信息速览**")
-                    report_lines.extend(intel_lines)
+                    if not has_intel:
+                        report_lines.append(f"📋 重要信息速览")
+                        has_intel = True
+                    report_lines.append(f"📊 业绩预期：{intel['earnings_outlook']}")
+                if intel.get('sentiment_summary') and not one_sentence:
+                    if not has_intel:
+                        report_lines.append(f"📋 重要信息速览")
+                        has_intel = True
+                    report_lines.append(f"💭 舆情情绪：{intel['sentiment_summary']}")
 
             # 风险警报
             risk_alerts = intel.get('risk_alerts', []) if intel else []
@@ -743,15 +743,15 @@ class NotificationService:
             if all_risks:
                 if not has_intel:
                     report_lines.append("")
-                report_lines.append("🚨 **风险警报**：")
-                for i, r in enumerate(all_risks[:4], 1):
+                report_lines.append("🚨 风险警报：")
+                for i, r in enumerate(all_risks[:3], 1):
                     report_lines.append(f"风险点{i}：{r}")
 
             # 利好催化
             catalysts = intel.get('positive_catalysts', []) if intel else []
             if catalysts:
-                report_lines.append("✨ **利好催化**：")
-                for i, c in enumerate(catalysts[:3], 1):
+                report_lines.append("✨ 利好催化：")
+                for i, c in enumerate(catalysts[:2], 1):
                     report_lines.append(f"利好{i}：{c}")
 
             # 最新动态
@@ -997,12 +997,11 @@ class NotificationService:
         
         # 每只股票精简信息（控制长度）
         for result in sorted_results:
-            emoji = result.get_emoji()
             display_name = self._escape_md(result.name)
             
             # 核心信息行
-            lines.append(f"### {emoji} {display_name}({result.code})")
-            lines.append(f"**{result.operation_advice}** | 评分:{result.sentiment_score} | {result.trend_prediction}")
+            lines.append(f"{display_name}({result.code})")
+            lines.append(f"{result.operation_advice} | 评分:{result.sentiment_score} | {result.trend_prediction}")
             
             # 操作理由（截断）
             if hasattr(result, 'buy_reason') and result.buy_reason:
