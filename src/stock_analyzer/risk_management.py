@@ -182,7 +182,7 @@ class RiskManager:
     @staticmethod
     def compute_support_resistance_levels(df: pd.DataFrame, result: TrendAnalysisResult) -> Tuple[List[float], List[float]]:
         """
-        计算支撑位和阻力位：近 20 日 Swing 高低点 + 均线
+        计算支撑位和阻力位：Swing高低点 + 均线 + 整数关口 + 筹码峰值 (Q2增强)
         
         Args:
             df: K线数据
@@ -218,6 +218,28 @@ class RiskManager:
             support_set.add(result.ma60)
         
         price = result.current_price
+
+        # Q2: 整数关口效应（A股特有：10/20/50/100等整数位有天然支撑/阻力）
+        if price > 0:
+            # 根据价格量级确定整数关口间距
+            if price >= 100:
+                step = 10
+            elif price >= 50:
+                step = 5
+            elif price >= 10:
+                step = 2
+            else:
+                step = 1
+            # 找到价格附近的整数关口（上下各2个）
+            base = int(price / step) * step
+            for offset in range(-2, 3):
+                level = base + offset * step
+                if level > 0 and level != price:
+                    if level < price:
+                        support_set.add(float(level))
+                    else:
+                        resistance_set.add(float(level))
+
         supports = sorted([s for s in support_set if 0 < s < price], reverse=True)[:5]
         resistances = sorted([r for r in resistance_set if r > price])[:5]
         
@@ -236,27 +258,30 @@ class RiskManager:
         score = result.signal_score
         
         if score >= 85:
-            result.advice_for_empty = f"技术面强势(评分{score})，乖离{bias:.1f}%，可适当追高，止损{result.stop_loss_short:.2f}"
-            result.advice_for_holding = f"持有为主(评分{score})，目标{result.take_profit_mid:.2f}，移动止盈{result.take_profit_trailing:.2f}"
+            result.advice_for_empty = f"技术面强势({score}分)，乖离{bias:.1f}%，可适当追高，止损{result.stop_loss_short:.2f}"
+            if -3 <= bias <= 5:
+                result.advice_for_holding = f"可加仓({score}分)，回踩MA5加仓，目标{result.take_profit_mid:.2f}，移动止盈{result.take_profit_trailing:.2f}"
+            else:
+                result.advice_for_holding = f"持有+移动止盈({score}分)，乖离{bias:.1f}%偏大不宜加仓，目标{result.take_profit_mid:.2f}"
         elif score >= 70:
             if -3 <= bias <= 3:
-                result.advice_for_empty = f"回踩买点，可分批建仓(评分{score})，止损{result.stop_loss_short:.2f}"
-                result.advice_for_holding = f"继续持有(评分{score})，目标{result.take_profit_mid:.2f}"
+                result.advice_for_empty = f"回踩买点，可分批建仓({score}分)，止损{result.stop_loss_short:.2f}"
+                result.advice_for_holding = f"可小幅加仓({score}分)，回踩MA5附近加仓，目标{result.take_profit_mid:.2f}"
             else:
-                result.advice_for_empty = f"技术面偏强(评分{score})但乖离{bias:.1f}%偏大，等回调至MA5附近"
-                result.advice_for_holding = f"持有为主(评分{score})，分批止盈{result.take_profit_short:.2f}"
+                result.advice_for_empty = f"技术面偏强({score}分)但乖离{bias:.1f}%偏大，等回调至MA5附近"
+                result.advice_for_holding = f"持有为主({score}分)，乖离偏大不加仓，分批止盈{result.take_profit_short:.2f}"
         elif score >= 60:
-            result.advice_for_empty = f"谨慎乐观(评分{score})，轻仓试探，止损{result.stop_loss_short:.2f}"
-            result.advice_for_holding = f"谨慎持有(评分{score})，短线目标{result.take_profit_short:.2f}"
+            result.advice_for_empty = f"谨慎乐观({score}分)，轻仓试探，止损{result.stop_loss_short:.2f}"
+            result.advice_for_holding = f"持有观察({score}分)，不加仓，短线目标{result.take_profit_short:.2f}"
         elif score >= 50:
-            result.advice_for_empty = f"观望为主(评分{score})，等待更明确信号"
-            result.advice_for_holding = f"持股待涨(评分{score})，止损{result.stop_loss_mid:.2f}"
+            result.advice_for_empty = f"观望为主({score}分)，等待更明确信号"
+            result.advice_for_holding = f"持股待涨({score}分)，不加仓，止损{result.stop_loss_mid:.2f}"
         elif score >= 35:
-            result.advice_for_empty = f"不建议入场(评分{score})，信号偏弱"
-            result.advice_for_holding = f"减仓观望(评分{score})，止损{result.stop_loss_mid:.2f}"
+            result.advice_for_empty = f"不建议入场({score}分)，信号偏弱"
+            result.advice_for_holding = f"减仓观望({score}分)，止损{result.stop_loss_mid:.2f}，不加仓"
         else:
-            result.advice_for_empty = f"空仓观望(评分{score})，技术面偏空"
-            result.advice_for_holding = f"建议离场(评分{score})，止损{result.stop_loss_mid:.2f}"
+            result.advice_for_empty = f"空仓观望({score}分)，技术面偏空"
+            result.advice_for_holding = f"建议清仓({score}分)，止损{result.stop_loss_mid:.2f}"
         
         if hasattr(result, '_conflict_warnings') and result._conflict_warnings:
             conflict_text = " | ".join(result._conflict_warnings)

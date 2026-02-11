@@ -532,8 +532,12 @@ class NotificationService:
             score_tag = f"评分 {result.sentiment_score}"
             if llm_score is not None:
                 score_tag = f"量化 {result.sentiment_score} / AI {llm_score}"
+            # Q1: 排名信息
+            rank_info = getattr(result, 'score_rank', '')
+            rank_suffix = f" | 排名{rank_info}" if rank_info else ""
             report_lines.extend([
-                f"{signal_emoji} {stock_name}（{result.code}）：{signal_text} | {score_tag} | {result.trend_prediction}",
+                f"## {signal_emoji} {stock_name}（{result.code}）",
+                f"**{signal_text}** | {score_tag}{rank_suffix} | {result.trend_prediction}",
             ])
 
             # ========== 改进1: 今日变化对比（前置显示）==========
@@ -552,10 +556,18 @@ class NotificationService:
             if divergence_alert:
                 report_lines.append(f"{divergence_alert}")
 
-            # ========== 改进3: 具体手数建议 ==========
-            concrete_position = getattr(result, 'concrete_position', '')
-            if concrete_position:
-                report_lines.append(f"💰 **具体建议**: {concrete_position}")
+            # Q9: 评分短板/优势
+            score_weakness = getattr(result, 'score_weakness', '')
+            score_strength = getattr(result, 'score_strength', '')
+            if score_weakness or score_strength:
+                parts = []
+                if score_strength:
+                    parts.append(f"💪 {score_strength}")
+                if score_weakness:
+                    parts.append(f"⚡ {score_weakness}")
+                report_lines.append(" | ".join(parts))
+
+            report_lines.append("")  # 空行分隔标题区和内容区
 
             # ========== 交易暂停 ==========
             if qe.get('trading_halt'):
@@ -564,8 +576,8 @@ class NotificationService:
             # ========== ② 重要信息速览 ==========
             one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
             if one_sentence:
-                report_lines.append(f"📋 重要信息速览")
-                report_lines.append(f"💭 舆情情绪：{one_sentence}")
+                report_lines.append(f"**📋 重要信息速览**")
+                report_lines.append(f"💭 {one_sentence}")
 
             # ========== ③ 业绩预期等补充信息 ==========
             has_intel = one_sentence is not None
@@ -609,6 +621,8 @@ class NotificationService:
             if result.risk_warning:
                 report_lines.append(f"⚠️ **风险提示**：{result.risk_warning}")
 
+            report_lines.append("")  # 空行分隔
+
             # ========== ④ 量化诊断（简洁文本）==========
             if qe:
                 self._render_quant_diagnosis(report_lines, qe, result.sentiment_score)
@@ -628,15 +642,23 @@ class NotificationService:
                 tp_m_val = f"{tp_mid:.2f}" if tp_mid > 0 else "-"
                 rr_val = f"{rr:.1f}:1" if rr > 0 else "-"
 
-                report_lines.append(f"🎯 **作战计划**：买入 {buy_val} | 止损 {sl_val} | 短线目标 {tp_s_val} | 中线目标 {tp_m_val} | R:R {rr_val}")
+                report_lines.append("")
+                report_lines.append(f"**🎯 作战计划**")
+                report_lines.append(f"买入 {buy_val} | 止损 {sl_val} | 短线目标 {tp_s_val} | 中线目标 {tp_m_val} | R:R {rr_val}")
 
-                # 持仓建议
+                # 持仓建议 - 分行显示，更清晰
                 pos_advice = core.get('position_advice', {}) if core else {}
                 pos_pct = qe.get('suggested_position_pct', 0) if qe else 0
                 advice_empty = (qe.get('advice_for_empty', '') if qe else '') or pos_advice.get('no_position', result.operation_advice)
                 advice_hold = (qe.get('advice_for_holding', '') if qe else '') or pos_advice.get('has_position', '继续持有')
                 pct_note = f"（仓位≤{pos_pct}%）" if pos_pct > 0 else ""
-                report_lines.append(f"🆕 空仓者：{advice_empty}{pct_note} | 💼 持仓者：{advice_hold}")
+                report_lines.append(f"🆕 空仓者：{advice_empty}{pct_note}")
+                report_lines.append(f"💼 持仓者：{advice_hold}")
+
+                # 改进3: 具体手数建议
+                concrete_position = getattr(result, 'concrete_position', '')
+                if concrete_position:
+                    report_lines.append(f"💰 {concrete_position}")
 
                 tp_plan = qe.get('take_profit_plan', '') if qe else ''
                 if tp_plan:

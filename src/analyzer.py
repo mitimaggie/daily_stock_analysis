@@ -86,6 +86,15 @@ class AnalysisResult:
     quant_ai_divergence: int = 0             # 量化与AI评分差值
     divergence_alert: str = ""               # 分歧告警文本
 
+    # === Q1: 评分自适应校准 ===
+    score_percentile: float = 0.0            # 评分百分位排名 (0-100%)
+    score_rank: str = ""                     # 排名描述 (如 "第2/10, 前20%")
+    score_calibration_note: str = ""         # 校准说明 (如 "牛市中70分仅为平均水平")
+
+    # === Q9: 评分短板分析 ===
+    score_weakness: str = ""                 # 短板分析 (如 "量能不足是主要短板")
+    score_strength: str = ""                 # 优势分析
+
     def __post_init__(self):
         if self.signal_changes is None:
             self.signal_changes = []
@@ -475,6 +484,13 @@ dashboard: {{
 ✅ "量化78分看多+北向资金连续3日流入+Q3营收增速35%超预期，但PE=45倍处于历史高位需注意回调风险"
 ✅ "技术面MACD金叉+KDJ超卖共振看多，但公司刚发盈利预警，建议等财报落地再介入"
 ❌ "该股基本面良好，技术面表现不错，建议关注"（禁止这种废话）
+
+### 反面论证（必填，减少确认偏误）
+在dashboard中增加字段 counter_arguments(array[string])：
+- 如果你看多，必须列出2-3个"看多可能错误的理由"
+- 如果你看空，必须列出2-3个"看空可能错误的理由"
+- 如果你观望，列出"可能错过机会的理由"和"可能避开风险的理由"各1条
+示例：看多时 → ["若大盘系统性回调，该股Beta=1.3将放大跌幅", "Q4业绩可能不及预期"]
 
 开始分析：
 """

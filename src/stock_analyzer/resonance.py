@@ -17,23 +17,53 @@ logger = logging.getLogger(__name__)
 class ResonanceDetector:
     """共振检测器：多指标共振、市场行为识别、多周期共振"""
     
+    # Q4: 不同指标的信号有效期（天数）和衰减曲线
+    # KDJ金叉有效期短（2-3天），MACD金叉有效期长（5-7天）
+    SIGNAL_EFFECTIVE_DAYS = {
+        'KDJ': 3,    # KDJ信号有效期短
+        'MACD': 5,   # MACD信号有效期较长
+        'RSI': 4,    # RSI信号中等
+    }
+
     @staticmethod
-    def _calc_signal_decay(df: pd.DataFrame, col1: str, col2: str, cross_type: str = 'golden') -> float:
+    def _calc_signal_decay(df: pd.DataFrame, col1: str, col2: str, cross_type: str = 'golden',
+                           indicator: str = 'MACD') -> float:
         """
-        计算交叉信号的时间衰减权重
+        计算交叉信号的时间衰减权重（Q4增强：指标自适应+波动率调整）
         
         Args:
             df: K线数据
             col1, col2: 交叉的两个指标列名
             cross_type: 'golden'(上穿) 或 'death'(下穿)
+            indicator: 指标类型 ('MACD'/'KDJ'/'RSI')，决定有效期
             
         Returns:
-            衰减权重 (1.0=今天发生, 0.7=昨天, 0.4=前天, 0.0=更早或未发生)
+            衰减权重 (1.0=今天发生, 递减至0.0)
         """
         if df is None or len(df) < 3:
             return 1.0
+        
+        # Q4: 根据指标类型确定搜索窗口和衰减曲线
+        effective_days = ResonanceDetector.SIGNAL_EFFECTIVE_DAYS.get(indicator, 5)
+        
+        # Q4: 波动率自适应 - 高波动环境下信号衰减更快
+        vol_factor = 1.0
+        if len(df) >= 20:
+            try:
+                daily_ret = df['close'].pct_change().dropna().tail(20)
+                vol_20d = float(daily_ret.std() * (252 ** 0.5) * 100)
+                if vol_20d > 60:
+                    vol_factor = 0.7  # 高波动：有效期缩短30%
+                elif vol_20d < 20:
+                    vol_factor = 1.3  # 低波动：有效期延长30%
+            except Exception:
+                pass
+        
+        adjusted_days = max(2, int(effective_days * vol_factor))
+        search_range = min(adjusted_days, len(df) - 1)
+        
         try:
-            for offset in range(3):
+            for offset in range(search_range):
                 idx = -(1 + offset)
                 prev_idx = -(2 + offset)
                 if abs(prev_idx) > len(df):
@@ -43,12 +73,16 @@ class ResonanceDetector:
                 c1_prev = float(df[col1].iloc[prev_idx])
                 c2_prev = float(df[col2].iloc[prev_idx])
                 
+                is_cross = False
                 if cross_type == 'golden':
-                    if c1_prev <= c2_prev and c1_now > c2_now:
-                        return [1.0, 0.7, 0.4][offset]
+                    is_cross = c1_prev <= c2_prev and c1_now > c2_now
                 else:
-                    if c1_prev >= c2_prev and c1_now < c2_now:
-                        return [1.0, 0.7, 0.4][offset]
+                    is_cross = c1_prev >= c2_prev and c1_now < c2_now
+                
+                if is_cross:
+                    # 线性衰减：第0天=1.0，第N天=0.0
+                    decay = max(0.0, 1.0 - offset / adjusted_days)
+                    return round(decay, 2)
             return 1.0  # 无法确定时不衰减
         except Exception:
             return 1.0
@@ -81,9 +115,9 @@ class ResonanceDetector:
         j_val = result.kdj_j
         
         # 计算 MACD 和 KDJ 交叉信号的衰减权重
-        macd_golden_decay = ResonanceDetector._calc_signal_decay(df, 'MACD_DIF', 'MACD_DEA', 'golden')
-        macd_death_decay = ResonanceDetector._calc_signal_decay(df, 'MACD_DIF', 'MACD_DEA', 'death')
-        kdj_golden_decay = ResonanceDetector._calc_signal_decay(df, 'K', 'D', 'golden')
+        macd_golden_decay = ResonanceDetector._calc_signal_decay(df, 'MACD_DIF', 'MACD_DEA', 'golden', indicator='MACD')
+        macd_death_decay = ResonanceDetector._calc_signal_decay(df, 'MACD_DIF', 'MACD_DEA', 'death', indicator='MACD')
+        kdj_golden_decay = ResonanceDetector._calc_signal_decay(df, 'K', 'D', 'golden', indicator='KDJ')
         
         if (macd_status == MACDStatus.GOLDEN_CROSS and dif < 0 and dea < 0 and 
             kdj_status in [KDJStatus.GOLDEN_CROSS, KDJStatus.GOLDEN_CROSS_OVERSOLD] and

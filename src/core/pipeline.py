@@ -1063,6 +1063,49 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.debug(f"组合风控检查跳过: {e}")
 
+        # === Q1: 评分自适应校准 - 百分位排名 ===
+        if len(results) >= 2:
+            scores = sorted([r.sentiment_score for r in results], reverse=True)
+            total = len(scores)
+            for r in results:
+                rank_pos = scores.index(r.sentiment_score) + 1
+                percentile = (1 - (rank_pos - 1) / total) * 100
+                r.score_percentile = round(percentile, 1)
+                r.score_rank = f"第{rank_pos}/{total}，前{percentile:.0f}%"
+                # 校准说明
+                avg_score = sum(scores) / total
+                if avg_score >= 70:
+                    r.score_calibration_note = f"今日均分{avg_score:.0f}(偏高)，{r.sentiment_score}分仅为{'中等' if r.sentiment_score < avg_score + 5 else '突出'}水平"
+                elif avg_score <= 40:
+                    r.score_calibration_note = f"今日均分{avg_score:.0f}(偏低)，{r.sentiment_score}分已属{'较强' if r.sentiment_score > avg_score else '一般'}"
+
+        # === Q9: 评分短板/优势分析 ===
+        for r in results:
+            trend_data = {}
+            if r.dashboard and isinstance(r.dashboard, dict):
+                trend_data = r.dashboard.get('quant_extras', {}) or {}
+            breakdown = trend_data.get('score_breakdown', {})
+            if breakdown:
+                # 找短板：得分率最低的维度
+                dim_labels = {'trend': '趋势', 'bias': '乖离', 'volume': '量能', 'support': '支撑', 'macd': 'MACD', 'rsi': 'RSI', 'kdj': 'KDJ'}
+                base_dims = {k: breakdown.get(k, 0) for k in dim_labels if k in breakdown}
+                if base_dims:
+                    # 用各维度的权重来计算得分率
+                    from src.stock_analyzer.scoring import ScoringSystem
+                    default_w = ScoringSystem.REGIME_WEIGHTS.get(MarketRegime.SIDEWAYS, {})
+                    dim_rates = {}
+                    for k, v in base_dims.items():
+                        max_w = default_w.get(k, 10)
+                        if max_w > 0:
+                            dim_rates[k] = v / max_w
+                    if dim_rates:
+                        weakest = min(dim_rates, key=dim_rates.get)
+                        strongest = max(dim_rates, key=dim_rates.get)
+                        w_rate = dim_rates[weakest]
+                        s_rate = dim_rates[strongest]
+                        r.score_weakness = f"{dim_labels.get(weakest, weakest)}({base_dims[weakest]}/{default_w.get(weakest, '?')})得分率{w_rate:.0%}，是主要短板"
+                        r.score_strength = f"{dim_labels.get(strongest, strongest)}({base_dims[strongest]}/{default_w.get(strongest, '?')})得分率{s_rate:.0%}，是主要优势"
+
         # === 改进5: 持仓组合分析 ===
         if len(results) >= 2:
             try:
