@@ -81,6 +81,7 @@ def is_market_trading() -> bool:
 
 # === 内部模块导入 ===
 from src.stock_analyzer import StockTrendAnalyzer
+from src.stock_analyzer.types import MarketRegime
 from src.stock_analyzer.scoring import ScoringSystem
 from src.analyzer import GeminiAnalyzer, AnalysisResult
 from src.notification import NotificationService
