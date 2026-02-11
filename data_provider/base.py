@@ -272,6 +272,33 @@ class DataFetcherManager:
             return len(stock_codes)
         except: return 0
 
+    # 数据源补充机制：主数据源缺少的字段，自动从备用源补充（借鉴上游 #275）
+    _SUPPLEMENT_FIELDS = [
+        'volume_ratio', 'turnover_rate',
+        'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
+        'amplitude',
+    ]
+
+    @classmethod
+    def _quote_needs_supplement(cls, quote) -> bool:
+        """检查行情是否缺少关键补充字段"""
+        for f in cls._SUPPLEMENT_FIELDS:
+            if getattr(quote, f, None) is None:
+                return True
+        return False
+
+    @classmethod
+    def _merge_quote_fields(cls, primary, secondary) -> list:
+        """将 secondary 中非 None 的字段补充到 primary 中缺失的字段，返回被填充的字段名列表"""
+        filled = []
+        for f in cls._SUPPLEMENT_FIELDS:
+            if getattr(primary, f, None) is None:
+                val = getattr(secondary, f, None)
+                if val is not None:
+                    setattr(primary, f, val)
+                    filled.append(f)
+        return filled
+
     def get_realtime_quote(self, stock_code: str):
         from .akshare_fetcher import _is_us_code
         from src.config import get_config
@@ -288,27 +315,42 @@ class DataFetcherManager:
         # 🔥 读取配置中的优先级
         priorities = config.realtime_source_priority.split(',')
         
+        primary_quote = None
         for source in priorities:
             source = source.strip()
             try:
-                if source == 'tencent':
-                    # 腾讯行情：量比/换手率/PE/PB 最全，推荐第一优先
-                    fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
-                    if fetcher:
-                        q = fetcher.get_realtime_quote(stock_code, source='tencent')
-                        if q: return q
-                elif 'akshare' in source:
-                    fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
-                    if fetcher:
-                        sub_source = source.split('_')[1] if '_' in source else 'sina'
-                        q = fetcher.get_realtime_quote(stock_code, source=sub_source)
-                        if q: return q
-                elif source == 'efinance':
-                    fetcher = next((f for f in self._fetchers if f.name == 'EfinanceFetcher'), None)
-                    if fetcher:
-                        q = fetcher.get_realtime_quote(stock_code)
-                        if q: return q
+                q = self._fetch_quote_from_source(stock_code, source)
+                if q:
+                    if primary_quote is None:
+                        primary_quote = q
+                        # 如果主数据源已经字段齐全，直接返回
+                        if not self._quote_needs_supplement(primary_quote):
+                            return primary_quote
+                    else:
+                        # 用备用源补充缺失字段
+                        filled = self._merge_quote_fields(primary_quote, q)
+                        if filled:
+                            logger.debug(f"[{stock_code}] 从 {source} 补充字段: {', '.join(filled)}")
+                        if not self._quote_needs_supplement(primary_quote):
+                            return primary_quote
             except Exception: continue
+        return primary_quote  # 返回已有的（即使部分字段缺失）
+
+    def _fetch_quote_from_source(self, stock_code: str, source: str):
+        """从指定数据源获取实时行情"""
+        if source == 'tencent':
+            fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
+            if fetcher:
+                return fetcher.get_realtime_quote(stock_code, source='tencent')
+        elif 'akshare' in source:
+            fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
+            if fetcher:
+                sub_source = source.split('_')[1] if '_' in source else 'sina'
+                return fetcher.get_realtime_quote(stock_code, source=sub_source)
+        elif source == 'efinance':
+            fetcher = next((f for f in self._fetchers if f.name == 'EfinanceFetcher'), None)
+            if fetcher:
+                return fetcher.get_realtime_quote(stock_code)
         return None
 
     def get_chip_distribution(self, stock_code: str, force_fetch: bool = False):
