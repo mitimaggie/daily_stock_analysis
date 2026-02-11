@@ -260,7 +260,7 @@ class StockAnalysisPipeline:
                                 break
                     except Exception:
                         pass
-                regime = _STA.detect_market_regime(daily_df, idx_pct)
+                regime, _ = _STA.detect_market_regime(daily_df, idx_pct)
                 # 获取指数收益率序列（供 Beta 计算）
                 idx_ret = None
                 try:
