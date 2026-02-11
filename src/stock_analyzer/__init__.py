@@ -22,6 +22,7 @@ from .scoring import ScoringSystem
 from .resonance import ResonanceDetector
 from .risk_management import RiskManager
 from .formatter import AnalysisFormatter
+from .report_template import ReportTemplate
 from .analyzer import StockTrendAnalyzer
 
 # 导出所有公开接口
@@ -43,4 +44,5 @@ __all__ = [
     'ResonanceDetector',
     'RiskManager',
     'AnalysisFormatter',
+    'ReportTemplate',
 ]

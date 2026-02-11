@@ -14,6 +14,20 @@ class AnalysisFormatter:
     """分析结果格式化器"""
     
     @staticmethod
+    def format_enhanced(result: TrendAnalysisResult) -> str:
+        """
+        生成增强版分析报告（更易读、更便于决策）
+        
+        特点：
+        - 快速决策区前置
+        - 可视化评分条和风险等级
+        - 操作锚点突出显示
+        - 分层信息展示
+        """
+        from .report_template import ReportTemplate
+        return ReportTemplate.generate_enhanced_report(result)
+    
+    @staticmethod
     def format_for_llm(result: TrendAnalysisResult) -> str:
         """
         生成精简版技术摘要（供 LLM prompt 使用）

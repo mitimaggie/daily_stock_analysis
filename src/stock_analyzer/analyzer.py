@@ -30,6 +30,124 @@ class StockTrendAnalyzer:
         """初始化分析器"""
         pass
     
+    @staticmethod
+    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0, 
+                            volume_data: pd.Series = None) -> tuple:
+        """
+        增强版市场环境检测：多维度判断 + 强度量化
+        
+        判断维度：
+        1. MA趋势：MA5/MA10/MA20/MA60排列 + MA20斜率
+        2. 大盘环境：近20日涨跌幅 + 当日方向
+        3. 量能特征：放量/缩量趋势
+        4. 波动率：近20日波动率（高波动=震荡/熊市）
+        5. 平滑机制：连续3天方向一致才切换
+        
+        Returns:
+            (MarketRegime, 环境强度 0-100)
+        """
+        SMOOTH_DAYS = 3
+        SLOPE_THRESHOLD = 1.0
+        
+        if df is None or df.empty or len(df) < 30:
+            return MarketRegime.SIDEWAYS, 50
+        
+        try:
+            ma5 = df['close'].rolling(5).mean()
+            ma10 = df['close'].rolling(10).mean()
+            ma20 = df['close'].rolling(20).mean()
+            ma60 = df['close'].rolling(60).mean()
+            
+            if len(ma20) < 15:
+                return MarketRegime.SIDEWAYS, 50
+            
+            latest_ma5 = ma5.iloc[-1]
+            latest_ma10 = ma10.iloc[-1]
+            latest_ma20 = ma20.iloc[-1]
+            latest_ma60 = ma60.iloc[-1] if len(ma60) >= 60 else latest_ma20
+            
+            ma_bull_score = 0
+            if latest_ma5 > latest_ma10 > latest_ma20:
+                ma_bull_score += 3
+            if latest_ma10 > latest_ma20 > latest_ma60:
+                ma_bull_score += 2
+            elif latest_ma5 < latest_ma10 < latest_ma20:
+                ma_bull_score -= 3
+            if latest_ma10 < latest_ma20 < latest_ma60:
+                ma_bull_score -= 2
+            
+            bull_count = 0
+            bear_count = 0
+            for offset in range(SMOOTH_DAYS):
+                idx = -(1 + offset)
+                idx_10 = -(11 + offset)
+                if abs(idx_10) > len(ma20):
+                    break
+                now_val = ma20.iloc[idx]
+                ago_val = ma20.iloc[idx_10]
+                if now_val <= 0 or ago_val <= 0:
+                    break
+                slope = (now_val - ago_val) / ago_val * 100
+                if slope > SLOPE_THRESHOLD:
+                    bull_count += 1
+                elif slope < -SLOPE_THRESHOLD:
+                    bear_count += 1
+            
+            ma_slope_score = 0
+            if bull_count >= SMOOTH_DAYS:
+                ma_slope_score = 3
+            elif bear_count >= SMOOTH_DAYS:
+                ma_slope_score = -3
+            
+            index_score = 0
+            if index_change_pct > 1.0:
+                index_score = 2
+            elif index_change_pct > 0:
+                index_score = 1
+            elif index_change_pct < -1.0:
+                index_score = -2
+            elif index_change_pct < 0:
+                index_score = -1
+            
+            volume_score = 0
+            if volume_data is not None and len(volume_data) >= 20:
+                recent_vol = volume_data.tail(5).mean()
+                avg_vol = volume_data.tail(20).mean()
+                if avg_vol > 0:
+                    vol_ratio = recent_vol / avg_vol
+                    if vol_ratio > 1.3:
+                        volume_score = 1
+                    elif vol_ratio < 0.7:
+                        volume_score = -1
+            
+            volatility_score = 0
+            if len(df) >= 20:
+                recent_20 = df.tail(20)
+                high_20 = recent_20['high'].max()
+                low_20 = recent_20['low'].min()
+                volatility = (high_20 - low_20) / low_20 * 100 if low_20 > 0 else 0
+                if volatility > 30:
+                    volatility_score = -2
+                elif volatility < 15:
+                    volatility_score = 1
+            
+            total_score = ma_bull_score + ma_slope_score + index_score + volume_score + volatility_score
+            
+            if total_score >= 5:
+                regime = MarketRegime.BULL
+                strength = min(100, 50 + total_score * 5)
+            elif total_score <= -5:
+                regime = MarketRegime.BEAR
+                strength = max(0, 50 + total_score * 5)
+            else:
+                regime = MarketRegime.SIDEWAYS
+                strength = 50 + total_score * 3
+            
+            return regime, int(strength)
+            
+        except Exception:
+            return MarketRegime.SIDEWAYS, 50
+    
     def analyze(
         self,
         df: pd.DataFrame,
@@ -367,6 +485,10 @@ class StockTrendAnalyzer:
     def format_analysis(self, result: TrendAnalysisResult) -> str:
         """格式化分析结果（完整版）"""
         return AnalysisFormatter.format_analysis(result)
+    
+    def format_enhanced(self, result: TrendAnalysisResult) -> str:
+        """格式化分析结果（增强版：更易读、更便于决策）"""
+        return AnalysisFormatter.format_enhanced(result)
     
     def format_for_llm(self, result: TrendAnalysisResult) -> str:
         """格式化分析结果（精简版，供LLM使用）"""
