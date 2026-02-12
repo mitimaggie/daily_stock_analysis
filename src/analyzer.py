@@ -298,7 +298,7 @@ class GeminiAnalyzer:
             
         except Exception as e:
             logger.error(f"AI分析失败: {e}")
-            return AnalysisResult(code, name, 50, "错误", "分析出错", success=False, error_message=str(e))
+            return AnalysisResult(code, name, 50, "分析异常", "观望", success=False, error_message=str(e))
 
     def _call_api_with_fallback(
         self, system_prompt: str, prompt: str, use_light_model: bool, cfg: Any

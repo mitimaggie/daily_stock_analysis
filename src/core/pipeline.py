@@ -1185,8 +1185,12 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.debug(f"预警监控启动跳过: {e}")
 
-        # 汇总推送 (如果没开单股推送)
-        if results and send_notification and not dry_run and not single_stock_notify:
-            self._send_notifications(results)
+        # 汇总推送 (如果没开单股推送) — 过滤掉分析失败的结果
+        successful_results = [r for r in results if getattr(r, 'success', True)]
+        if successful_results and send_notification and not dry_run and not single_stock_notify:
+            self._send_notifications(successful_results)
+            if len(successful_results) < len(results):
+                failed_count = len(results) - len(successful_results)
+                logger.warning(f"📊 推送报告已过滤 {failed_count} 只分析失败的股票")
             
         return results
