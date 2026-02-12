@@ -11,6 +11,7 @@ import { HistoryList } from '../components/history';
 import { TaskPanel } from '../components/tasks';
 import { Watchlist } from '../components/watchlist';
 import { useTaskStream } from '../hooks';
+import { ChatPanel } from '../components/chat/ChatPanel';
 
 /**
  * 首页 - 重新设计的布局
@@ -80,6 +81,9 @@ const HomePage: React.FC = () => {
 
   // 移动端侧边栏状态
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // AI 对话面板状态
+  const [chatOpen, setChatOpen] = useState(false);
 
   // 持久化总资金和展开状态
   useEffect(() => {
@@ -491,16 +495,31 @@ const HomePage: React.FC = () => {
         </aside>
 
         {/* 右侧报告区 */}
-        <section className="flex-1 overflow-y-auto p-3 lg:p-4">
+        <section className={`flex-1 overflow-y-auto p-3 lg:p-4 transition-all duration-200 ${chatOpen ? 'mr-0' : ''}`}>
           {isLoadingReport ? (
             <div className="flex flex-col items-center justify-center h-full gap-3">
               <div className="w-10 h-10 border-[3px] border-cyan/15 border-t-cyan rounded-full animate-spin" />
               <p className="text-[13px] text-white/30">加载报告中...</p>
             </div>
           ) : selectedReport ? (
-            <div className="max-w-4xl mx-auto animate-fade-in">
-              <ReportSummary data={selectedReport} isHistory />
-            </div>
+            <>
+              <div className="max-w-4xl mx-auto animate-fade-in">
+                <ReportSummary data={selectedReport} isHistory />
+              </div>
+
+              {/* AI 对话浮动按钮 */}
+              {!chatOpen && (
+                <button
+                  onClick={() => setChatOpen(true)}
+                  className="fixed bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-cyan/20 border border-cyan/30 text-cyan hover:bg-cyan/30 hover:scale-105 shadow-lg shadow-cyan/10 transition-all flex items-center justify-center"
+                  title="AI 深度探讨"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </button>
+              )}
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
@@ -517,6 +536,26 @@ const HomePage: React.FC = () => {
             </div>
           )}
         </section>
+
+        {/* AI 对话侧边栏 */}
+        {chatOpen && selectedReport?.meta?.queryId && (
+          <aside className="w-[380px] flex-shrink-0 h-full animate-slide-left hidden md:block">
+            <ChatPanel
+              queryId={selectedReport.meta.queryId}
+              onClose={() => setChatOpen(false)}
+            />
+          </aside>
+        )}
+
+        {/* 移动端: 对话全屏覆盖 */}
+        {chatOpen && selectedReport?.meta?.queryId && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <ChatPanel
+              queryId={selectedReport.meta.queryId}
+              onClose={() => setChatOpen(false)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
