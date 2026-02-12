@@ -1,6 +1,8 @@
 import React from 'react';
 import type { AnalysisResult, AnalysisReport } from '../../types/analysis';
 import { ReportOverview } from './ReportOverview';
+import { ScoreTrend } from './ScoreTrend';
+import { TradeLog } from '../trade/TradeLog';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
 import { ReportDetails } from './ReportDetails';
@@ -31,6 +33,19 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         meta={meta}
         summary={summary}
         isHistory={isHistory}
+      />
+
+      {/* 历史评分趋势 */}
+      <ScoreTrend stockCode={meta.stockCode} currentQueryId={queryId} />
+
+      {/* 交易日志 */}
+      <TradeLog
+        stockCode={meta.stockCode}
+        stockName={meta.stockName}
+        analysisScore={summary.sentimentScore}
+        analysisAdvice={summary.operationAdvice}
+        queryId={queryId}
+        currentPrice={meta.currentPrice}
       />
 
       {/* 策略点位区 */}

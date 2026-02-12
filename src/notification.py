@@ -466,7 +466,8 @@ class NotificationService:
     def generate_dashboard_report(
         self,
         results: List[AnalysisResult],
-        report_date: Optional[str] = None
+        report_date: Optional[str] = None,
+        position_info: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         生成决策仪表盘格式的日报（详细版）
@@ -547,6 +548,69 @@ class NotificationService:
                     f"### 🚨 交易暂停: {qe.get('trading_halt_reason', '未知')}",
                     "",
                 ])
+
+            # ========== P0 风控警告 ==========
+            # 不交易过滤器
+            no_trade_reasons = qe.get('no_trade_reasons', [])
+            if no_trade_reasons:
+                severity = qe.get('no_trade_severity', 'soft')
+                header = "🚫 不建议交易" if severity == "hard" else "⚠️ 交易风险提示"
+                report_lines.extend([f"### {header}", ""])
+                for reason in no_trade_reasons:
+                    report_lines.append(f"- {reason}")
+                report_lines.append("")
+
+            # 止损触发回溯
+            if qe.get('stop_loss_breached'):
+                report_lines.extend([
+                    "### 🚨 止损触发警告",
+                    "",
+                    f"> {qe.get('stop_loss_breach_detail', '止损位已被盘中击穿')}",
+                    "",
+                ])
+
+            # 成交量异动
+            vol_extreme = qe.get('volume_extreme', '')
+            vol_trend_3d = qe.get('volume_trend_3d', '')
+            if vol_extreme or vol_trend_3d:
+                vol_parts = []
+                if vol_extreme == "天量":
+                    vol_parts.append("📈 **天量**：成交量创近60日新高，注意变盘信号")
+                elif vol_extreme == "地量":
+                    vol_parts.append("📉 **地量**：成交量创近60日新低，关注底部信号")
+                if vol_trend_3d:
+                    vol_parts.append(f"📊 **{vol_trend_3d}**：连续3日量能趋势一致")
+                if vol_parts:
+                    report_lines.extend(["### 📊 量能异动", ""])
+                    for vp in vol_parts:
+                        report_lines.append(f"- {vp}")
+                    report_lines.append("")
+
+            # ========== P3 情绪极端 + 估值区间 ==========
+            sentiment_extreme = qe.get('sentiment_extreme', '')
+            sentiment_detail = qe.get('sentiment_extreme_detail', '')
+            valuation_zone = qe.get('valuation_zone', '')
+            pe_pct = qe.get('pe_percentile', -1)
+            margin_trend = qe.get('margin_trend', '')
+            margin_days = qe.get('margin_trend_days', 0)
+
+            p3_items = []
+            if sentiment_extreme:
+                emoji = "🔴" if "贪婪" in sentiment_extreme else "🟢" if "恐慌" in sentiment_extreme else "🟡"
+                p3_items.append(f"{emoji} **{sentiment_extreme}**: {sentiment_detail}")
+            if valuation_zone:
+                zone_emoji = "🟢" if "低估" in valuation_zone else "🔴" if "高估" in valuation_zone else "🟡"
+                pe_tag = f"（PE历史{pe_pct:.0f}%分位）" if pe_pct >= 0 else ""
+                p3_items.append(f"{zone_emoji} **{valuation_zone}**{pe_tag}")
+            if margin_trend:
+                m_emoji = "📈" if "流入" in margin_trend else "📉"
+                p3_items.append(f"{m_emoji} {margin_trend}（连续{margin_days}日）")
+
+            if p3_items:
+                report_lines.extend(["### 🎭 市场情绪", ""])
+                for item in p3_items:
+                    report_lines.append(f"- {item}")
+                report_lines.append("")
 
             # ========== ② 量化 vs AI 双视角（表格）==========
             llm_advice = getattr(result, 'llm_advice', '')
@@ -658,6 +722,10 @@ class NotificationService:
                     "",
                 ])
 
+                # 用户持仓诊断（需要 position_info）
+                if position_info:
+                    self._render_position_diagnosis(report_lines, result, position_info, pos_pct)
+
                 concrete_position = getattr(result, 'concrete_position', '')
                 if concrete_position:
                     report_lines.extend([f"💰 {concrete_position}", ""])
@@ -665,6 +733,26 @@ class NotificationService:
                 tp_plan = qe.get('take_profit_plan', '') if qe else ''
                 if tp_plan:
                     report_lines.extend([f"📋 {tp_plan}", ""])
+
+            # ========== ⑨ 盘中关键价位监控 ==========
+            watchlist = qe.get('intraday_watchlist', []) if qe else []
+            if watchlist:
+                type_emoji = {
+                    'stop_loss': '🔴', 'buy': '🟢', 'breakout': '🔵',
+                    'take_profit': '🟡', 'support': '🟠', 'resistance': '⚪',
+                }
+                report_lines.extend(["### 📍 盘中关键价位", ""])
+                report_lines.extend([
+                    "| 价位 | 类型 | 触发动作 |",
+                    "|------|------|----------|",
+                ])
+                for item in watchlist:
+                    emoji = type_emoji.get(item.get('type', ''), '⚪')
+                    report_lines.append(
+                        f"| {item['price']:.2f} | {emoji} {item['action']} | {item['desc']} |"
+                    )
+                cur_price = qe.get('current_price', 0)
+                report_lines.extend(["", f"> 当前价: **{cur_price:.2f}** | 从高到低排列，关注价格接近时的信号", ""])
 
             # ========== 兜底（无 dashboard 或分析失败）==========
             if not dashboard or (not qe and not core):
@@ -1108,6 +1196,57 @@ class NotificationService:
         res_signals = qe.get('resonance_signals', [])
         if res_signals:
             lines.append(f"🔥 **多指标共振**: {', '.join(res_signals)}")
+
+    def _render_position_diagnosis(
+        self,
+        lines: List[str],
+        result: AnalysisResult,
+        position_info: Dict[str, Any],
+        suggested_pct: float = 0,
+    ) -> None:
+        """渲染用户持仓诊断（浮盈浮亏/仓位占比/个性化建议）"""
+        total_capital = position_info.get('total_capital', 0) or 0
+        pos_amount = position_info.get('position_amount', 0) or 0
+        cost_price = position_info.get('cost_price', 0) or 0
+
+        if not (total_capital > 0 or pos_amount > 0 or cost_price > 0):
+            return
+
+        snapshot = getattr(result, 'market_snapshot', None) or {}
+        try:
+            current_price = float(snapshot.get('close', 0) or snapshot.get('price', 0) or 0)
+        except (TypeError, ValueError):
+            current_price = 0.0
+
+        diag_items = []
+
+        # 浮盈浮亏
+        if cost_price > 0 and current_price > 0:
+            pnl_pct = (current_price - cost_price) / cost_price * 100
+            pnl_emoji = "📈" if pnl_pct >= 0 else "📉"
+            diag_items.append(
+                f"{pnl_emoji} **浮动盈亏**: 成本 {cost_price:.2f} → 现价 {current_price:.2f}，"
+                f"{'盈利' if pnl_pct >= 0 else '亏损'} **{abs(pnl_pct):.2f}%**"
+            )
+            if pos_amount > 0:
+                pnl_amount = pos_amount * pnl_pct / 100
+                diag_items[-1] += f"（约 {'+' if pnl_amount >= 0 else ''}{pnl_amount / 10000:.2f} 万元）"
+
+        # 仓位占比
+        if total_capital > 0 and pos_amount > 0:
+            actual_pct = pos_amount / total_capital * 100
+            diag_items.append(f"📊 **当前仓位**: {actual_pct:.1f}%（{pos_amount / 10000:.1f}万 / {total_capital / 10000:.1f}万）")
+            if suggested_pct > 0:
+                if actual_pct > suggested_pct * 1.5:
+                    diag_items.append(f"⚠️ 仓位偏重（建议≤{suggested_pct}%），考虑适当减仓")
+                elif actual_pct < suggested_pct * 0.5 and suggested_pct > 0:
+                    diag_items.append(f"💡 仓位偏轻（建议{suggested_pct}%），可考虑逢低加仓")
+
+        if diag_items:
+            lines.extend(["#### 📋 您的持仓诊断", ""])
+            for item in diag_items:
+                lines.append(f"- {item}")
+            lines.append("")
 
     def _append_market_snapshot(self, lines: List[str], result: AnalysisResult) -> None:
         """在推送内容中追加「当日行情」表格（来自 result.market_snapshot）"""

@@ -46,12 +46,19 @@ export const analysisApi = {
    * @returns 任务接受响应或抛出 409 错误
    */
   analyzeAsync: async (data: AnalysisRequest): Promise<{ taskId: string; status: string; message?: string }> => {
-    const requestData = {
+    const requestData: Record<string, unknown> = {
       stock_code: data.stockCode,
       report_type: data.reportType || 'detailed',
       force_refresh: data.forceRefresh || false,
       async_mode: true,
     };
+    if (data.positionInfo) {
+      requestData.position_info = {
+        total_capital: data.positionInfo.totalCapital,
+        position_amount: data.positionInfo.positionAmount,
+        cost_price: data.positionInfo.costPrice,
+      };
+    }
 
     const response = await apiClient.post<Record<string, unknown>>(
       '/api/v1/analysis/analyze',

@@ -36,7 +36,8 @@ class AnalysisService:
         report_type: str = "detailed",
         force_refresh: bool = False,
         query_id: Optional[str] = None,
-        send_notification: bool = True
+        send_notification: bool = True,
+        position_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行股票分析
@@ -82,7 +83,8 @@ class AnalysisService:
                 code=stock_code,
                 skip_analysis=False,
                 single_stock_notify=send_notification,
-                report_type=rt
+                report_type=rt,
+                position_info=position_info,
             )
             
             if result is None:

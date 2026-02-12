@@ -1,7 +1,9 @@
 import type React from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ReportMeta, ReportSummary as ReportSummaryType } from '../../types/analysis';
 import { ScoreGauge, Card } from '../common';
 import { formatDateTime } from '../../utils/format';
+import apiClient from '../../api';
 
 interface ReportOverviewProps {
   meta: ReportMeta;
@@ -16,6 +18,50 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   meta,
   summary
 }) => {
+  // 盘中自动刷新价格
+  const [livePrice, setLivePrice] = useState<number | undefined>(meta.currentPrice ?? undefined);
+  const [liveChangePct, setLiveChangePct] = useState<number | undefined>(meta.changePct ?? undefined);
+  const [lastUpdate, setLastUpdate] = useState<string>('');
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    setLivePrice(meta.currentPrice ?? undefined);
+    setLiveChangePct(meta.changePct ?? undefined);
+    setLastUpdate('');
+  }, [meta.stockCode, meta.currentPrice, meta.changePct]);
+
+  useEffect(() => {
+    const isTrading = () => {
+      const now = new Date();
+      const day = now.getDay();
+      if (day === 0 || day === 6) return false;
+      const h = now.getHours(), m = now.getMinutes();
+      const t = h * 60 + m;
+      return t >= 9 * 60 + 15 && t <= 15 * 60;
+    };
+
+    const fetchQuote = async () => {
+      if (!isTrading() || !meta.stockCode) return;
+      try {
+        const res = await apiClient.get(`/api/v1/stocks/${meta.stockCode}/quote`);
+        const d = res.data;
+        if (d.current_price) {
+          setLivePrice(d.current_price);
+          setLiveChangePct(d.change_percent ?? undefined);
+          setLastUpdate(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        }
+      } catch { /* 静默失败 */ }
+    };
+
+    if (isTrading() && meta.stockCode) {
+      fetchQuote();
+      timerRef.current = setInterval(fetchQuote, 30000);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [meta.stockCode]);
+
+  const displayPrice = livePrice ?? meta.currentPrice;
+  const displayChangePct = liveChangePct ?? meta.changePct;
   // 根据涨跌幅获取颜色
   const getPriceChangeColor = (changePct: number | undefined): string => {
     if (changePct === undefined || changePct === null) return 'text-muted';
@@ -45,15 +91,20 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   <h2 className="text-2xl font-bold text-white">
                     {meta.stockName || meta.stockCode}
                   </h2>
-                  {/* 价格和涨跌幅 */}
-                  {meta.currentPrice != null && (
+                  {/* 价格和涨跌幅（盘中自动刷新） */}
+                  {displayPrice != null && (
                     <div className="flex items-baseline gap-2">
-                      <span className={`text-xl font-bold font-mono ${getPriceChangeColor(meta.changePct)}`}>
-                        {meta.currentPrice.toFixed(2)}
+                      <span className={`text-xl font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                        {displayPrice.toFixed(2)}
                       </span>
-                      <span className={`text-sm font-semibold font-mono ${getPriceChangeColor(meta.changePct)}`}>
-                        {formatChangePct(meta.changePct)}
+                      <span className={`text-sm font-semibold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                        {formatChangePct(displayChangePct)}
                       </span>
+                      {lastUpdate && (
+                        <span className="text-[10px] text-muted/60 font-mono">
+                          {lastUpdate}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

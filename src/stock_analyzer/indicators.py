@@ -276,40 +276,47 @@ class TechnicalIndicators:
     def detect_kdj_divergence(df: pd.DataFrame, lookback: int = 30) -> str:
         """
         KDJ 背离检测：价格新高/新低但 J 值未同步
+        双窗口检测：30日（短期）+ 60日（中期，捕捉更大级别顶底）
         
         Args:
             df: 包含 J 列的 DataFrame
-            lookback: 回看天数
+            lookback: 基础回看天数（兼容旧调用）
             
         Returns:
-            "KDJ底背离" / "KDJ顶背离" / ""
+            "KDJ底背离" / "KDJ顶背离" / "KDJ底背离(中期)" / "KDJ顶背离(中期)" / ""
         """
-        if df is None or len(df) < lookback or 'J' not in df.columns:
+        if df is None or 'J' not in df.columns:
             return ""
         try:
-            recent = df.tail(lookback)
-            half = lookback // 2
-            first_half = recent.head(half)
-            second_half = recent.tail(half)
+            # 双窗口：短期30日 + 中期60日
+            for window, label_suffix in [(lookback, ""), (60, "(中期)")]:
+                if len(df) < window:
+                    continue
+                recent = df.tail(window)
+                half = window // 2
+                first_half = recent.head(half)
+                second_half = recent.tail(half)
 
-            price_high_1 = first_half['high'].max()
-            price_high_2 = second_half['high'].max()
-            j_high_1 = first_half['J'].max()
-            j_high_2 = second_half['J'].max()
+                price_high_1 = first_half['high'].max()
+                price_high_2 = second_half['high'].max()
+                j_high_1 = first_half['J'].max()
+                j_high_2 = second_half['J'].max()
 
-            price_low_1 = first_half['low'].min()
-            price_low_2 = second_half['low'].min()
-            j_low_1 = first_half['J'].min()
-            j_low_2 = second_half['J'].min()
+                price_low_1 = first_half['low'].min()
+                price_low_2 = second_half['low'].min()
+                j_low_1 = first_half['J'].min()
+                j_low_2 = second_half['J'].min()
 
-            # 价格创新高但 J 值未新高（阈值：价格高1%以上，J值低5以上）
-            if (price_high_2 > price_high_1 * 1.01 and 
-                j_high_2 < j_high_1 - 5):
-                return "KDJ顶背离"
-            # 价格创新低但 J 值未新低
-            if (price_low_2 < price_low_1 * 0.99 and 
-                j_low_2 > j_low_1 + 5):
-                return "KDJ底背离"
+                # 中期窗口用更宽松的阈值
+                price_thr = 1.02 if window >= 60 else 1.01
+                j_thr = 8 if window >= 60 else 5
+
+                if (price_high_2 > price_high_1 * price_thr and 
+                    j_high_2 < j_high_1 - j_thr):
+                    return f"KDJ顶背离{label_suffix}"
+                if (price_low_2 < price_low_1 * (2 - price_thr) and 
+                    j_low_2 > j_low_1 + j_thr):
+                    return f"KDJ底背离{label_suffix}"
             return ""
         except Exception:
             return ""

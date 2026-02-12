@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { HistoryItem, AnalysisReport, TaskInfo } from '../types/analysis';
+import type { HistoryItem, AnalysisReport, TaskInfo, PositionInfo } from '../types/analysis';
 import { historyApi } from '../api/history';
 import { analysisApi, DuplicateTaskError } from '../api/analysis';
 import { validateStockCode } from '../utils/validation';
@@ -23,6 +23,16 @@ const HomePage: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [inputError, setInputError] = useState<string>();
 
+  // 持仓信息状态（从 localStorage 恢复）
+  const [showPosition, setShowPosition] = useState(() => {
+    return localStorage.getItem('dsa_show_position') === 'true';
+  });
+  const [totalCapital, setTotalCapital] = useState(() => {
+    return localStorage.getItem('dsa_total_capital') || '';
+  });
+  const [positionAmount, setPositionAmount] = useState('');
+  const [costPrice, setCostPrice] = useState('');
+
 // 历史列表状态
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -41,6 +51,25 @@ const HomePage: React.FC = () => {
 
   // 用于跟踪当前分析请求，避免竞态条件
   const analysisRequestIdRef = useRef<number>(0);
+
+  // 持久化总资金和展开状态
+  useEffect(() => {
+    localStorage.setItem('dsa_show_position', String(showPosition));
+  }, [showPosition]);
+  useEffect(() => {
+    if (totalCapital) localStorage.setItem('dsa_total_capital', totalCapital);
+  }, [totalCapital]);
+
+  // 构建持仓信息（有任意一项有效值时才传递）
+  const buildPositionInfo = (): PositionInfo | undefined => {
+    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined; // 万元→元
+    const pa = positionAmount ? parseFloat(positionAmount) * 10000 : undefined;
+    const cp = costPrice ? parseFloat(costPrice) : undefined;
+    if (tc || pa || cp) {
+      return { totalCapital: tc, positionAmount: pa, costPrice: cp };
+    }
+    return undefined;
+  };
 
   // 更新任务列表中的任务
   const updateTask = useCallback((updatedTask: TaskInfo) => {
@@ -190,6 +219,7 @@ const HomePage: React.FC = () => {
       const response = await analysisApi.analyzeAsync({
         stockCode: normalized,
         reportType: 'detailed',
+        positionInfo: buildPositionInfo(),
       });
 
       // 清空输入框
@@ -263,6 +293,18 @@ const HomePage: React.FC = () => {
           </div>
           <button
             type="button"
+            onClick={() => setShowPosition((v) => !v)}
+            className={`text-xs px-2 py-1.5 rounded border transition-colors ${
+              showPosition
+                ? 'border-cyan/40 text-cyan bg-cyan/10'
+                : 'border-white/10 text-muted hover:text-secondary'
+            }`}
+            title="填写持仓信息获取个性化建议"
+          >
+            💼 持仓
+          </button>
+          <button
+            type="button"
             onClick={handleAnalyze}
             disabled={!stockCode || isAnalyzing}
             className="btn-primary flex items-center gap-1.5 whitespace-nowrap"
@@ -280,6 +322,49 @@ const HomePage: React.FC = () => {
             )}
           </button>
         </div>
+        {/* 持仓信息面板（可折叠） */}
+        {showPosition && (
+          <div className="flex items-center gap-3 mt-2 max-w-2xl">
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-muted whitespace-nowrap">总资金(万)</label>
+              <input
+                type="number"
+                value={totalCapital}
+                onChange={(e) => setTotalCapital(e.target.value)}
+                placeholder="100"
+                className="input-terminal w-20 text-xs py-1"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-muted whitespace-nowrap">持仓(万)</label>
+              <input
+                type="number"
+                value={positionAmount}
+                onChange={(e) => setPositionAmount(e.target.value)}
+                placeholder="10"
+                className="input-terminal w-20 text-xs py-1"
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-muted whitespace-nowrap">成本价</label>
+              <input
+                type="number"
+                step="0.01"
+                value={costPrice}
+                onChange={(e) => setCostPrice(e.target.value)}
+                placeholder="35.00"
+                className="input-terminal w-24 text-xs py-1"
+              />
+            </div>
+            {(totalCapital || positionAmount) && (
+              <span className="text-xs text-muted">
+                仓位: {totalCapital && positionAmount
+                  ? `${((parseFloat(positionAmount) / parseFloat(totalCapital)) * 100).toFixed(1)}%`
+                  : '--'}
+              </span>
+            )}
+          </div>
+        )}
       </header>
 
       {/* 主内容区 */}

@@ -247,6 +247,39 @@ class TrendAnalysisResult:
     # === 缺口检测 ===
     gap_type: str = ""                     # "向上跳空" / "向下跳空" / ""
     
+    # === 不交易过滤器（P0级风控）===
+    no_trade: bool = False                     # True=当前不适合交易（比trading_halt更广）
+    no_trade_reasons: List[str] = field(default_factory=list)  # 不交易原因列表
+    no_trade_severity: str = ""                # "hard"=绝对不交易 / "soft"=建议不交易
+    liquidity_warning: str = ""                # 流动性警告
+    sideways_warning: str = ""                 # 横盘警告
+    market_risk_cap: int = 100                 # 大盘风险导致的仓位上限(%)
+    
+    # === 止损触发回溯（P0级风控）===
+    stop_loss_breached: bool = False           # 盘中最低价是否跌破止损位
+    stop_loss_breach_detail: str = ""          # 止损触发详情
+    stop_loss_breach_level: str = ""           # 触发的止损级别: "intraday"/"short"/"mid"
+    intraday_low: float = 0.0                 # 当日盘中最低价
+    
+    # === 成交量异动检测 ===
+    volume_extreme: str = ""                   # "天量"/"地量"/""
+    volume_trend_3d: str = ""                  # "连续放量"/"连续缩量"/""
+    
+    # === 盘中关键价位监控清单 ===
+    intraday_watchlist: List[Dict[str, Any]] = field(default_factory=list)  # [{price, type, action, desc, priority}]
+    
+    # === 估值增强（P3）===
+    pe_percentile: float = -1.0             # 当前PE在历史中的百分位(0-100)，-1=无数据
+    valuation_zone: str = ""                # "历史低估区"/"历史合理区"/"历史高估区"/""
+    
+    # === 情绪极端检测（P3）===
+    profit_ratio: float = -1.0              # 获利盘比例(0-100%)，-1=无数据
+    trapped_ratio: float = -1.0             # 套牢盘比例(0-100%)，-1=无数据
+    sentiment_extreme: str = ""             # "极度贪婪"/"极度恐慌"/""
+    sentiment_extreme_detail: str = ""      # 详细描述
+    margin_trend: str = ""                  # "融资连续流入"/"融资连续流出"/""
+    margin_trend_days: int = 0              # 连续天数
+    
     # === 信号详情 ===
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)

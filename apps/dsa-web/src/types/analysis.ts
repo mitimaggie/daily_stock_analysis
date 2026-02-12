@@ -5,11 +5,19 @@
 
 // ============ 请求类型 ============
 
+/** 用户持仓信息（可选，用于个性化分析） */
+export interface PositionInfo {
+  totalCapital?: number;   // 总资金（元）
+  positionAmount?: number; // 持仓金额（元）
+  costPrice?: number;      // 持仓均价
+}
+
 export interface AnalysisRequest {
   stockCode: string;
   reportType?: 'simple' | 'detailed';
   forceRefresh?: boolean;
   asyncMode?: boolean;
+  positionInfo?: PositionInfo;
 }
 
 // ============ 报告类型 ============

@@ -284,7 +284,7 @@ class StockTrendAnalyzer:
         MarketRegime.BEAR:     {"trend": 13, "bias": 17, "volume": 17, "support": 13, "macd": 12, "rsi": 13, "kdj": 15},
     }
 
-    def analyze(self, df: pd.DataFrame, code: str, market_regime: MarketRegime = MarketRegime.SIDEWAYS, index_returns: pd.Series = None, valuation: dict = None, capital_flow: dict = None, sector_context: dict = None, chip_data: dict = None, fundamental_data: dict = None, quote_extra: dict = None) -> TrendAnalysisResult:
+    def analyze(self, df: pd.DataFrame, code: str, market_regime: MarketRegime = MarketRegime.SIDEWAYS, index_returns: pd.Series = None, valuation: dict = None, capital_flow: dict = None, sector_context: dict = None, chip_data: dict = None, fundamental_data: dict = None, quote_extra: dict = None, time_horizon: str = "", market_snapshot: dict = None) -> TrendAnalysisResult:
         result = TrendAnalysisResult(code=code)
         
         if df is None or df.empty or len(df) < 30:

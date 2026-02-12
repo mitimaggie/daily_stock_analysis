@@ -173,6 +173,136 @@ def get_fundamental_data(code: str) -> Dict[str, Any]:
     return _fetcher.get_f10_data(code)
 
 
+# ============ P3: PE 历史数据（估值分位数）============
+
+_pe_history_cache: Dict[str, list] = {}  # L1 内存缓存
+_PE_HISTORY_TTL_HOURS = 24.0  # DB 缓存 24 小时
+
+def get_pe_history(code: str, period: str = '近一年') -> Optional[list]:
+    """
+    获取个股 PE(TTM) 历史数据，用于计算估值分位数。
+    
+    数据源：百度股市通（通过 akshare 封装），稳定可靠。
+    返回：PE 值列表（近1年约250个交易日），或 None。
+    
+    缓存策略：L1 内存 → L2 DB(24h) → L3 网络
+    """
+    # L1: 进程内存
+    if code in _pe_history_cache:
+        return _pe_history_cache[code]
+    
+    # L2: SQLite 缓存
+    db = _get_db()
+    if db:
+        cached = db.get_cache('pe_history', code, ttl_hours=_PE_HISTORY_TTL_HOURS)
+        if cached and 'values' in cached:
+            _pe_history_cache[code] = cached['values']
+            return cached['values']
+    
+    # L3: 网络请求
+    try:
+        import akshare as ak
+        _rate_limited_sleep()
+        df = ak.stock_zh_valuation_baidu(symbol=code, indicator='市盈率(TTM)', period=period)
+        if df is None or df.empty:
+            return None
+        
+        pe_values = [float(v) for v in df['value'].dropna().tolist() if float(v) > 0]
+        if len(pe_values) < 20:
+            return None
+        
+        # 回写缓存
+        _pe_history_cache[code] = pe_values
+        if db:
+            db.set_cache('pe_history', code, {'values': pe_values})
+        
+        logger.info(f"📊 [{code}] PE历史获取成功: {len(pe_values)}条, 范围 {min(pe_values):.1f}~{max(pe_values):.1f}")
+        return pe_values
+    
+    except Exception as e:
+        logger.debug(f"[{code}] PE历史获取失败: {e}")
+        return None
+
+
+# ============ P3: 融资余额历史（情绪极端检测）============
+
+_margin_history_cache: Dict[str, list] = {}
+_MARGIN_HISTORY_TTL_HOURS = 12.0
+
+def get_margin_history(code: str, days: int = 10) -> Optional[list]:
+    """
+    获取个股近N日融资余额历史，用于检测融资连续流入/流出趋势。
+    
+    数据源：上交所/深交所融资融券明细（通过 akshare），按日期获取全市场再筛选。
+    由于接口是按日期获取全市场数据，效率较低，因此使用较长缓存。
+    
+    返回：融资余额列表（从旧到新），或 None。
+    
+    缓存策略：L1 内存 → L2 DB(12h) → L3 网络
+    """
+    # L1: 进程内存
+    if code in _margin_history_cache:
+        return _margin_history_cache[code]
+    
+    # L2: SQLite 缓存
+    db = _get_db()
+    if db:
+        cached = db.get_cache('margin_history', code, ttl_hours=_MARGIN_HISTORY_TTL_HOURS)
+        if cached and 'values' in cached:
+            _margin_history_cache[code] = cached['values']
+            return cached['values']
+    
+    # L3: 网络请求
+    try:
+        import akshare as ak
+        from datetime import datetime, timedelta
+        
+        # 判断交易所
+        is_sh = code.startswith(('6', '5', '9'))
+        
+        margin_values = []
+        # 获取最近N个交易日的数据
+        for offset in range(days + 5, 0, -1):  # 多取几天以应对非交易日
+            date = (datetime.now() - timedelta(days=offset)).strftime('%Y%m%d')
+            try:
+                _rate_limited_sleep()
+                if is_sh:
+                    df = ak.stock_margin_detail_sse(date=date)
+                    code_col = '标的证券代码'
+                    balance_col = '融资余额'
+                else:
+                    df = ak.stock_margin_detail_szse(date=date)
+                    code_col = '证券代码' if '证券代码' in df.columns else df.columns[1]
+                    balance_col = '融资余额' if '融资余额' in df.columns else df.columns[3]
+                
+                if df is not None and not df.empty:
+                    row = df[df[code_col].astype(str) == code]
+                    if not row.empty:
+                        balance = float(row.iloc[0][balance_col])
+                        if balance > 0:
+                            margin_values.append(balance)
+            except Exception:
+                continue
+            
+            if len(margin_values) >= days:
+                break
+        
+        if len(margin_values) < 5:
+            return None
+        
+        # 回写缓存
+        _margin_history_cache[code] = margin_values
+        if db:
+            db.set_cache('margin_history', code, {'values': margin_values})
+        
+        logger.info(f"📊 [{code}] 融资余额历史获取成功: {len(margin_values)}条")
+        return margin_values
+    
+    except Exception as e:
+        logger.debug(f"[{code}] 融资余额历史获取失败: {e}")
+        return None
+
+
 def get_industry_pe_median(code: str) -> Optional[float]:
     """获取个股所属行业的 PE 中位数（L1内存 -> L2 DB -> 网络）"""
     # L1: 进程内存

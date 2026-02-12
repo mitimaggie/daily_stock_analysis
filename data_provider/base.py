@@ -496,8 +496,21 @@ class DataFetcherManager:
                     continue
         return None
 
+    _sector_context_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
+    _SECTOR_CONTEXT_TTL = 3600  # 1小时（板块归属不会频繁变化）
+
     def get_stock_sector_context(self, stock_code: str, stock_pct_chg: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """获取个股所属板块及相对强弱（板块今日涨跌 vs 个股涨跌）"""
+        # 检查缓存
+        cached = self._sector_context_cache.get(stock_code)
+        if cached and time.time() - cached['ts'] < self._SECTOR_CONTEXT_TTL:
+            # 缓存命中，但需要更新 stock_pct 和 relative（因为个股涨跌幅可能变化）
+            result = cached['data'].copy()
+            if stock_pct_chg is not None and result.get('sector_pct') is not None:
+                result['stock_pct'] = stock_pct_chg
+                result['relative'] = round(stock_pct_chg - result['sector_pct'], 2)
+            return result
+
         for f in self._fetchers:
             try:
                 if not hasattr(f, 'get_stock_belong_board') and not hasattr(f, 'get_belong_board'):
@@ -525,7 +538,10 @@ class DataFetcherManager:
                 rel = None
                 if stock_pct_chg is not None and sector_pct is not None:
                     rel = round(stock_pct_chg - sector_pct, 2)
-                return {'sector_name': name or '未知', 'sector_pct': sector_pct, 'stock_pct': stock_pct_chg, 'relative': rel}
+                result = {'sector_name': name or '未知', 'sector_pct': sector_pct, 'stock_pct': stock_pct_chg, 'relative': rel}
+                # 写入缓存
+                self._sector_context_cache[stock_code] = {'data': result, 'ts': time.time()}
+                return result
             except Exception:
                 continue
         return None

@@ -336,6 +336,38 @@ class ScoringSystem:
                     downgrade = downgrade - 3  # 加重扣分
                     result.valuation_verdict += "(PEG过高,增速不匹配)"
         
+        # P3: 历史估值分位数（基于PE历史数据）
+        pe_hist = valuation.get('pe_history')  # list of historical PE values
+        if pe_hist and isinstance(pe_hist, (list, tuple)) and result.pe_ratio > 0:
+            valid_pe = [p for p in pe_hist if isinstance(p, (int, float)) and p > 0]
+            if len(valid_pe) >= 20:
+                below_count = sum(1 for p in valid_pe if p <= result.pe_ratio)
+                result.pe_percentile = round(below_count / len(valid_pe) * 100, 1)
+                if result.pe_percentile <= 20:
+                    result.valuation_zone = "历史低估区"
+                    v_score = min(10, v_score + 2)
+                    downgrade = min(0, downgrade + 3)
+                    result.valuation_verdict += f"(PE历史{result.pe_percentile:.0f}%分位,低估区)"
+                elif result.pe_percentile >= 80:
+                    result.valuation_zone = "历史高估区"
+                    v_score = max(0, v_score - 2)
+                    downgrade = downgrade - 3
+                    result.valuation_verdict += f"(PE历史{result.pe_percentile:.0f}%分位,高估区)"
+                else:
+                    result.valuation_zone = "历史合理区"
+        
+        # P3: 简易DCF估值参考（基于PEG和增长率）
+        growth_rate = valuation.get('revenue_growth') or valuation.get('profit_growth')
+        if isinstance(growth_rate, (int, float)) and growth_rate > 0 and result.pe_ratio > 0:
+            # 简易合理PE = 增长率 * PEG合理倍数(1.0)
+            fair_pe = growth_rate * 1.0
+            if fair_pe > 5:  # 增长率>5%才有参考意义
+                pe_premium = result.pe_ratio / fair_pe
+                if pe_premium > 2.0:
+                    result.valuation_verdict += f"(DCF视角:PE/{fair_pe:.0f}={pe_premium:.1f}x,偏贵)"
+                elif pe_premium < 0.5:
+                    result.valuation_verdict += f"(DCF视角:PE/{fair_pe:.0f}={pe_premium:.1f}x,便宜)"
+        
         result.valuation_score = v_score
         result.valuation_downgrade = downgrade
         
@@ -636,6 +668,102 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
     
     @staticmethod
+    def detect_sentiment_extreme(result: TrendAnalysisResult, chip_data: dict = None,
+                                  capital_flow: dict = None, df: pd.DataFrame = None):
+        """
+        P3 情绪极端检测：综合获利盘/套牢盘比例 + 融资余额趋势
+        
+        - 获利盘>90% → 极度贪婪（短期回调概率高）
+        - 套牢盘>80% → 极度恐慌（上方压力巨大）
+        - 融资余额连续5日增加/减少 → 杠杆情绪趋势
+        """
+        details = []
+        adj = 0
+        
+        # --- 1. 获利盘/套牢盘比例 ---
+        if chip_data and isinstance(chip_data, dict):
+            profit_ratio = chip_data.get('profit_ratio')
+            if isinstance(profit_ratio, (int, float)):
+                pr = profit_ratio * 100 if profit_ratio <= 1.0 else profit_ratio
+                result.profit_ratio = pr
+                result.trapped_ratio = 100 - pr
+                
+                if pr > 90:
+                    details.append(f"🔴 获利盘{pr:.0f}%（极高），短期回调概率大，获利了结压力沉重")
+                    adj -= 3
+                    result.sentiment_extreme = "极度贪婪"
+                elif pr > 80:
+                    details.append(f"🟡 获利盘{pr:.0f}%（偏高），注意获利抛压")
+                    adj -= 1
+                elif pr < 10:
+                    details.append(f"🟢 获利盘仅{pr:.0f}%（极低），套牢盘{100-pr:.0f}%，上方压力巨大但抛压已枯竭")
+                    adj += 2
+                    if not result.sentiment_extreme:
+                        result.sentiment_extreme = "极度恐慌"
+                elif pr < 20:
+                    details.append(f"🟡 获利盘{pr:.0f}%（偏低），套牢盘{100-pr:.0f}%，上方有较大压力")
+                    adj += 1
+        
+        # --- 2. 融资余额趋势（杠杆情绪指标）---
+        if capital_flow and isinstance(capital_flow, dict):
+            margin_history = capital_flow.get('margin_history')  # list of recent margin balances
+            
+            if margin_history and isinstance(margin_history, (list, tuple)) and len(margin_history) >= 5:
+                # 分别检测连续增加和连续减少
+                consecutive_up = 0
+                for i in range(len(margin_history) - 1, 0, -1):
+                    curr, prev_val = margin_history[i], margin_history[i - 1]
+                    if isinstance(curr, (int, float)) and isinstance(prev_val, (int, float)) and curr > prev_val:
+                        consecutive_up += 1
+                    else:
+                        break
+                
+                consecutive_down = 0
+                for i in range(len(margin_history) - 1, 0, -1):
+                    curr, prev_val = margin_history[i], margin_history[i - 1]
+                    if isinstance(curr, (int, float)) and isinstance(prev_val, (int, float)) and curr < prev_val:
+                        consecutive_down += 1
+                    else:
+                        break
+                
+                if consecutive_up >= 5:
+                    result.margin_trend = "融资连续流入"
+                    result.margin_trend_days = consecutive_up
+                    details.append(f"📈 融资余额连续{consecutive_up}日增加，杠杆资金看多")
+                    adj += 1
+                elif consecutive_down >= 5:
+                    result.margin_trend = "融资连续流出"
+                    result.margin_trend_days = consecutive_down
+                    details.append(f"📉 融资余额连续{consecutive_down}日减少，杠杆资金撤退")
+                    adj -= 1
+        
+        # --- 3. 价格位置 + 量能综合判断情绪 ---
+        if df is not None and len(df) >= 60:
+            # 近60日涨幅
+            price_60d_ago = float(df.iloc[-60]['close'])
+            if price_60d_ago > 0:
+                gain_60d = (result.current_price - price_60d_ago) / price_60d_ago * 100
+                if gain_60d > 50 and result.volume_extreme == "天量":
+                    if not result.sentiment_extreme:
+                        result.sentiment_extreme = "极度贪婪"
+                    details.append(f"⚠️ 60日涨幅{gain_60d:.0f}%+天量，市场情绪过热")
+                    adj -= 2
+                elif gain_60d < -30 and result.volume_extreme == "地量":
+                    if not result.sentiment_extreme:
+                        result.sentiment_extreme = "极度恐慌"
+                    details.append(f"💡 60日跌幅{abs(gain_60d):.0f}%+地量，恐慌情绪可能见底")
+                    adj += 2
+        
+        # --- 汇总 ---
+        if details:
+            result.sentiment_extreme_detail = "；".join(details)
+        
+        if adj != 0:
+            result.signal_score = max(0, min(100, result.signal_score + adj))
+            result.score_breakdown['sentiment_extreme'] = adj
+            ScoringSystem.update_buy_signal(result)
+
+    @staticmethod
     def score_quote_extra(result: TrendAnalysisResult, quote_extra: dict = None):
         """行情附加数据评分：换手率异常检测 + 52周高低位"""
         if not quote_extra or not isinstance(quote_extra, dict):
@@ -778,6 +906,48 @@ class ScoringSystem:
             result.risk_factors.append("向下跳空缺口，短期风险")
             result.score_breakdown['gap_adj'] = -2
 
+        # === 成交量异动评分（P1）===
+        vol_ext = getattr(result, 'volume_extreme', '')
+        vol_trend_3d = getattr(result, 'volume_trend_3d', '')
+        if vol_ext == "天量":
+            # 天量 = 变盘信号：上涨中天量可能见顶，下跌中天量可能见底
+            price_up = result.bias_ma5 > 0
+            if price_up:
+                adj -= 2
+                result.risk_factors.append("天量上涨：成交量创60日新高，警惕变盘见顶")
+                result.score_breakdown['vol_extreme'] = -2
+            else:
+                adj += 2
+                result.signal_reasons.append("天量下跌：放量杀跌可能是恐慌底，关注反弹")
+                result.score_breakdown['vol_extreme'] = 2
+        elif vol_ext == "地量":
+            # 地量 = 底部信号（下跌中）或观望信号（上涨中）
+            price_down = result.bias_ma5 < -2
+            if price_down:
+                adj += 2
+                result.signal_reasons.append("地量下跌：成交量创60日新低，抛压枯竭，关注底部")
+                result.score_breakdown['vol_extreme'] = 2
+            else:
+                adj -= 1
+                result.risk_factors.append("地量：成交量极低，市场关注度不足")
+                result.score_breakdown['vol_extreme'] = -1
+        
+        if vol_trend_3d == "连续放量":
+            # 连续放量 + 上涨 = 趋势确认；连续放量 + 下跌 = 加速下跌
+            if result.bias_ma5 > 0:
+                adj += 1
+                result.signal_reasons.append("连续3日放量上涨，趋势确认")
+                result.score_breakdown['vol_trend_3d'] = 1
+            else:
+                adj -= 1
+                result.risk_factors.append("连续3日放量下跌，加速下跌风险")
+                result.score_breakdown['vol_trend_3d'] = -1
+        elif vol_trend_3d == "连续缩量":
+            if result.bias_ma5 < 0:
+                adj += 1
+                result.signal_reasons.append("连续3日缩量回调，洗盘特征")
+                result.score_breakdown['vol_trend_3d'] = 1
+
         # 应用修正
         if adj != 0:
             result.signal_score = max(0, min(100, result.signal_score + adj))
@@ -790,7 +960,7 @@ class ScoringSystem:
                    'cross_resonance', 'sector_adj', 'chip_adj', 'fundamental_adj',
                    'week52_risk', 'week52_opp', 'liquidity_risk', 'resonance_adj',
                    'limit_adj', 'limit_risk', 'vp_divergence', 'vwap_adj', 'turnover_adj', 'gap_adj',
-                   'timeframe_resonance']
+                   'timeframe_resonance', 'vol_extreme', 'vol_trend_3d', 'sentiment_extreme']
         
         pos_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) > 0)
         neg_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) < 0)

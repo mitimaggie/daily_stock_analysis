@@ -24,6 +24,13 @@ class TaskStatusEnum(str, Enum):
     FAILED = "failed"
 
 
+class PositionInfoModel(BaseModel):
+    """用户持仓信息（可选，用于个性化分析）"""
+    total_capital: Optional[float] = Field(None, description="总资金（元）")
+    position_amount: Optional[float] = Field(None, description="持仓金额（元）")
+    cost_price: Optional[float] = Field(None, description="持仓均价")
+
+
 class AnalyzeRequest(BaseModel):
     """分析请求模型"""
     
@@ -49,6 +56,10 @@ class AnalyzeRequest(BaseModel):
     async_mode: bool = Field(
         False,
         description="是否使用异步模式"
+    )
+    position_info: Optional[PositionInfoModel] = Field(
+        None,
+        description="用户持仓信息（可选）"
     )
     
     class Config:

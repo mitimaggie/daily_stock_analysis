@@ -21,6 +21,8 @@ class AnalysisFormatter:
         'week52_risk': '52周高位', 'week52_opp': '52周低位', 'liquidity_risk': '流动性',
         'limit_adj': '涨跌停', 'limit_risk': '连板风险', 'vp_divergence': '量价背离',
         'vwap_adj': 'VWAP', 'turnover_adj': '换手率', 'gap_adj': '缺口',
+        'vol_extreme': '量能异动', 'vol_trend_3d': '量能趋势',
+        'sentiment_extreme': '情绪极端',
     }
     
     @staticmethod
@@ -118,6 +120,24 @@ class AnalysisFormatter:
             lines.append(f"止盈(短)={result.take_profit_short:.2f} 止盈(中)={result.take_profit_mid:.2f} 移动止盈={result.take_profit_trailing:.2f}")
         if result.risk_reward_ratio > 0:
             lines.append(f"R:R={result.risk_reward_ratio:.1f}:1({result.risk_reward_verdict})")
+        # P0 风控信号
+        if result.no_trade:
+            lines.append(f"🚫不交易过滤({result.no_trade_severity}): {'; '.join(result.no_trade_reasons)}")
+        if result.stop_loss_breached:
+            lines.append(f"🚨止损已触发: {result.stop_loss_breach_detail}")
+        if result.volume_extreme:
+            lines.append(f"量能异动: {result.volume_extreme}")
+        if result.volume_trend_3d:
+            lines.append(f"量能趋势: {result.volume_trend_3d}")
+        if result.liquidity_warning:
+            lines.append(f"流动性: {result.liquidity_warning}")
+        # P3 情绪极端
+        if result.sentiment_extreme:
+            lines.append(f"🎭情绪: {result.sentiment_extreme} | {result.sentiment_extreme_detail}")
+        if result.valuation_zone:
+            lines.append(f"估值区间: {result.valuation_zone}" + (f" PE历史{result.pe_percentile:.0f}%分位" if result.pe_percentile >= 0 else ""))
+        if result.margin_trend:
+            lines.append(f"融资趋势: {result.margin_trend}({result.margin_trend_days}日)")
         lines.append(f"仓位={result.suggested_position_pct}%")
         lines.append(f"空仓建议: {result.advice_for_empty}")
         lines.append(f"持仓建议: {result.advice_for_holding}")

@@ -349,20 +349,34 @@ class StockAnalysisPipeline:
                 _f10_val = fundamental_data.get('valuation', {}) or {}
                 if 'peg' in _f10_val:
                     _valuation['peg'] = _f10_val['peg']
-                # 行业PE中位数（用于相对估值判断）
+                # 行业PE中位数（用于相对估值判断）+ PE历史（P3估值分位数）
                 try:
-                    from data_provider.fundamental_fetcher import get_industry_pe_median
+                    from data_provider.fundamental_fetcher import get_industry_pe_median, get_pe_history
                     if not fast_mode:
                         ind_pe = get_industry_pe_median(code)
                         if ind_pe and ind_pe > 0:
                             _valuation['industry_pe_median'] = ind_pe
+                        # P3: PE历史数据（用于估值分位数计算）
+                        pe_hist = get_pe_history(code)
+                        if pe_hist:
+                            _valuation['pe_history'] = pe_hist
                 except Exception:
                     pass
-                # 资金面数据（如有）
+                # 资金面数据（如有）+ 融资余额历史（P3情绪极端检测）
                 _capital_flow = {}
                 try:
                     if hasattr(self.fetcher_manager, 'get_capital_flow'):
                         _capital_flow = self.fetcher_manager.get_capital_flow(code) or {}
+                    # P3: 融资余额历史（用于情绪极端检测）
+                    # 注意：此接口每天需N次全市场请求，效率较低，仅在显式开启时使用
+                    if not fast_mode and getattr(self.config, 'enable_margin_history', False):
+                        try:
+                            from data_provider.fundamental_fetcher import get_margin_history
+                            margin_hist = get_margin_history(code)
+                            if margin_hist:
+                                _capital_flow['margin_history'] = margin_hist
+                        except Exception:
+                            pass
                     # 注入日均成交额（万元），供资金面阈值相对化使用
                     if daily_df is not None and len(daily_df) >= 20:
                         _avg_amount = (daily_df['close'] * daily_df['volume']).tail(20).mean()
@@ -392,7 +406,12 @@ class StockAnalysisPipeline:
                 _time_horizon = getattr(self.config, 'time_horizon', 'auto') or 'auto'
                 if _time_horizon == 'auto':
                     _time_horizon = 'short' if is_market_intraday() else ''
-                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=sector_context, chip_data=_chip_dict, fundamental_data=fundamental_data or None, quote_extra=_quote_extra, time_horizon=_time_horizon)
+                # 复用已获取的大盘快照供 P0 风控使用（snap 在上方已获取，有60s缓存）
+                try:
+                    _market_snap = snap if isinstance(snap, dict) and snap.get('success') else None
+                except NameError:
+                    _market_snap = None
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_valuation or None, capital_flow=_capital_flow or None, sector_context=sector_context, chip_data=_chip_dict, fundamental_data=fundamental_data or None, quote_extra=_quote_extra, time_horizon=_time_horizon, market_snapshot=_market_snap)
                 if quote.price:
                     trend_result.current_price = quote.price
                 # === P4-3: 资金面连续性检测（基于历史分析记录） ===
@@ -502,6 +521,7 @@ class StockAnalysisPipeline:
         report_type: ReportType = ReportType.SIMPLE,
         skip_data_fetch: bool = False,
         market_overview_override: Optional[str] = None,
+        position_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
@@ -810,7 +830,7 @@ class StockAnalysisPipeline:
             
             if single_stock_notify and self.notifier.is_available():
                 try:
-                    report = self.notifier.generate_dashboard_report([result])
+                    report = self.notifier.generate_dashboard_report([result], position_info=position_info)
                     self.notifier.send(report)
                 except Exception as e:
                     logger.warning(f"[{code}] 推送失败: {e}")
@@ -925,6 +945,17 @@ class StockAnalysisPipeline:
                 f"📊 多股同时高分: {', '.join(high_score)} 评分均≥70，"
                 f"检查是否属于同一板块/概念，避免集中踩雷"
             )
+
+        # 5. 评分离散度检查（全部评分接近说明分析可能趋同）
+        all_scores = [r.sentiment_score for r in results]
+        if len(all_scores) >= 3:
+            avg = sum(all_scores) / len(all_scores)
+            max_diff = max(all_scores) - min(all_scores)
+            if max_diff <= 10:
+                warnings.append(
+                    f"📊 评分趋同提醒: {total}只股票评分极差仅{max_diff}分（均值{avg:.0f}），"
+                    f"可能存在分析趋同，建议关注个股差异化因素"
+                )
 
         return warnings
 

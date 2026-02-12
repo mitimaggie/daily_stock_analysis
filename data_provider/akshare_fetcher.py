@@ -288,11 +288,16 @@ class AkshareFetcher(BaseFetcher):
         bottom = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.tail(n).iterrows()]
         return (top, bottom)
 
+    # 资金流向缓存（个股级别，TTL 10分钟，避免批量分析时重复请求东财被封）
+    _capital_flow_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
+    _CAPITAL_FLOW_TTL = 600  # 10分钟
+
     def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """获取个股资金流向（东方财富）
 
         数据来源: ak.stock_individual_fund_flow
         返回最近一个交易日的主力/超大单/大单/中单/小单净流入数据。
+        带10分钟内存缓存，避免批量分析时重复请求。
 
         Returns:
             dict with keys: main_net_flow (万元), main_net_flow_pct (%),
@@ -300,6 +305,11 @@ class AkshareFetcher(BaseFetcher):
         """
         if _is_us_code(stock_code) or _is_etf_code(stock_code):
             return None
+
+        # 检查缓存
+        cached = self._capital_flow_cache.get(stock_code)
+        if cached and time.time() - cached['ts'] < self._CAPITAL_FLOW_TTL:
+            return cached['data']
 
         import akshare as ak
 
@@ -326,6 +336,8 @@ class AkshareFetcher(BaseFetcher):
                 'super_large_net': round(super_large / 10000, 2) if super_large else 0,
                 'large_net': round(large / 10000, 2) if large else 0,
             }
+            # 写入缓存
+            self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time()}
             logger.info(f"💰 [{stock_code}] 资金流向: 主力净流入={result['main_net_flow']:.0f}万 ({result['main_net_flow_pct']:.1f}%)")
             return result
 

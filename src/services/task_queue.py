@@ -199,6 +199,7 @@ class AnalysisTaskQueue:
         stock_name: Optional[str] = None,
         report_type: str = "detailed",
         force_refresh: bool = False,
+        position_info: Optional[Dict[str, Any]] = None,
     ) -> TaskInfo:
         """
         提交分析任务
@@ -243,6 +244,7 @@ class AnalysisTaskQueue:
                 stock_code,
                 report_type,
                 force_refresh,
+                position_info,
             )
             self._futures[task_id] = future
             
@@ -325,6 +327,7 @@ class AnalysisTaskQueue:
         stock_code: str,
         report_type: str,
         force_refresh: bool,
+        position_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -361,6 +364,7 @@ class AnalysisTaskQueue:
                 report_type=report_type,
                 force_refresh=force_refresh,
                 query_id=task_id,
+                position_info=position_info,
             )
             
             if result:
