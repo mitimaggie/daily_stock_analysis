@@ -4,7 +4,7 @@ import { getSentimentLabel } from '../../types/analysis';
 
 interface ScoreGaugeProps {
   score: number;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   showLabel?: boolean;
   className?: string;
 }
@@ -63,6 +63,7 @@ export const ScoreGauge: React.FC<ScoreGaugeProps> = ({
 
   // 尺寸配置
   const sizeConfig = {
+    xs: { width: 72, stroke: 6, fontSize: 'text-lg', labelSize: 'text-[9px]', gap: 4 },
     sm: { width: 100, stroke: 8, fontSize: 'text-2xl', labelSize: 'text-xs', gap: 6 },
     md: { width: 140, stroke: 10, fontSize: 'text-4xl', labelSize: 'text-sm', gap: 8 },
     lg: { width: 180, stroke: 12, fontSize: 'text-5xl', labelSize: 'text-base', gap: 10 },

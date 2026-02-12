@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import type { ReportMeta, ReportSummary as ReportSummaryType } from '../../types/analysis';
-import { ScoreGauge, Card } from '../common';
+import { ScoreGauge } from '../common';
 import { formatDateTime } from '../../utils/format';
 import apiClient from '../../api';
 
@@ -81,50 +81,44 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
 
   return (
     <div className="space-y-3">
-      {/* Hero: 股票名 + 价格 + 评分 */}
-      <Card variant="gradient" padding="md">
-        <div className="flex items-start justify-between gap-4">
-          {/* 左侧：股票信息 */}
+      {/* Hero: 股票名 + 价格 + 评分（紧凑一行） */}
+      <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-3 flex-wrap">
-              <h2 className="text-xl font-bold text-white">
-                {meta.stockName || meta.stockCode}
-              </h2>
-              <span className="font-mono text-xs text-white/40">{meta.stockCode}</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-base font-bold text-white">{meta.stockName || meta.stockCode}</span>
+              <span className="font-mono text-[11px] text-white/30">{meta.stockCode}</span>
+              <span className="text-[11px] text-white/20">{formatDateTime(meta.createdAt)}</span>
             </div>
             {displayPrice != null && (
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className={`text-2xl font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className={`text-lg font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
                   {displayPrice.toFixed(2)}
                 </span>
-                <span className={`text-sm font-semibold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                <span className={`text-[13px] font-semibold font-mono ${getPriceChangeColor(displayChangePct)}`}>
                   {formatChangePct(displayChangePct)}
                 </span>
                 {lastUpdate && (
-                  <span className="text-[10px] text-white/30 font-mono">{lastUpdate}</span>
+                  <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>
                 )}
               </div>
             )}
-            <div className="text-[11px] text-white/30 mt-1">{formatDateTime(meta.createdAt)}</div>
           </div>
-          {/* 右侧：评分仪表盘 */}
-          <div className="flex-shrink-0">
-            <ScoreGauge score={summary.sentimentScore} size="md" />
-          </div>
+          <ScoreGauge score={summary.sentimentScore} size="xs" showLabel={true} />
         </div>
-      </Card>
+      </div>
 
-      {/* 操作建议 + 趋势预测（简洁横排） */}
+      {/* 操作建议 + 趋势预测 */}
       <div className="grid grid-cols-2 gap-2">
         <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-3">
-          <div className="text-[10px] text-success/70 font-medium mb-1">操作建议</div>
-          <p className="text-[13px] text-white font-medium leading-snug">
+          <div className="text-[11px] text-white/30 mb-1">操作建议</div>
+          <p className="text-[13px] text-white/90 leading-snug">
             {summary.operationAdvice || '暂无建议'}
           </p>
         </div>
         <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-3">
-          <div className="text-[10px] text-warning/70 font-medium mb-1">趋势预测</div>
-          <p className="text-[13px] text-white font-medium leading-snug">
+          <div className="text-[11px] text-white/30 mb-1">趋势预测</div>
+          <p className="text-[13px] text-white/90 leading-snug">
             {summary.trendPrediction || '暂无预测'}
           </p>
         </div>
