@@ -34,6 +34,31 @@ const HomePage: React.FC = () => {
   const [positionAmount, setPositionAmount] = useState('');
   const [costPrice, setCostPrice] = useState('');
 
+  // 按股票代码持久化持仓信息
+  const savePositionForStock = useCallback((code: string, pa: string, cp: string) => {
+    if (!code) return;
+    const key = `dsa_pos_${code.replace(/\./g, '_')}`;
+    if (pa || cp) {
+      localStorage.setItem(key, JSON.stringify({ pa, cp }));
+    }
+  }, []);
+
+  const loadPositionForStock = useCallback((code: string) => {
+    if (!code) return;
+    const key = `dsa_pos_${code.replace(/\./g, '_')}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const { pa, cp } = JSON.parse(raw);
+        setPositionAmount(pa || '');
+        setCostPrice(cp || '');
+        return;
+      }
+    } catch { /* ignore */ }
+    setPositionAmount('');
+    setCostPrice('');
+  }, []);
+
   // 历史列表状态
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -148,6 +173,7 @@ const HomePage: React.FC = () => {
 
       if (autoSelectFirst && response.items.length > 0 && !selectedReport) {
         const firstItem = response.items[0];
+        loadPositionForStock(firstItem.stockCode);
         setIsLoadingReport(true);
         try {
           const report = await historyApi.getDetail(firstItem.queryId);
@@ -179,12 +205,18 @@ const HomePage: React.FC = () => {
   }, []);
 
   // 点击历史项加载报告
-  const handleHistoryClick = async (queryId: string) => {
+  const handleHistoryClick = async (queryId: string, itemStockCode?: string) => {
     analysisRequestIdRef.current += 1;
     setIsLoadingReport(true);
+    // 加载该股票的持仓信息
+    if (itemStockCode) loadPositionForStock(itemStockCode);
     try {
       const report = await historyApi.getDetail(queryId);
       setSelectedReport(report);
+      // 若未传 stockCode，从报告中加载
+      if (!itemStockCode && report.meta?.stockCode) {
+        loadPositionForStock(report.meta.stockCode);
+      }
     } catch (err) {
       console.error('Failed to fetch report:', err);
     } finally {
@@ -205,6 +237,9 @@ const HomePage: React.FC = () => {
     setIsAnalyzing(true);
     setLoading(true);
     setStoreError(null);
+
+    // 保存持仓信息到 localStorage（按股票代码）
+    savePositionForStock(normalized, positionAmount, costPrice);
 
     const currentRequestId = ++analysisRequestIdRef.current;
 
@@ -445,7 +480,8 @@ const HomePage: React.FC = () => {
               hasMore={hasMore}
               selectedQueryId={selectedReport?.meta.queryId}
               onItemClick={(queryId) => {
-                handleHistoryClick(queryId);
+                const item = historyItems.find(h => h.queryId === queryId);
+                handleHistoryClick(queryId, item?.stockCode);
                 setSidebarOpen(false);
               }}
               onLoadMore={handleLoadMore}
