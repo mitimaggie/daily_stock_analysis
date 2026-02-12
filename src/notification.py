@@ -520,12 +520,15 @@ class NotificationService:
             signal_text, signal_emoji, signal_tag = self._get_signal_level(result)
             dashboard = result.dashboard if hasattr(result, 'dashboard') and result.dashboard else {}
             qe = dashboard.get('quant_extras', {}) if dashboard else {}
+            core = dashboard.get('core_conclusion', {}) if dashboard else {}
+            intel = dashboard.get('intelligence', {}) if dashboard else {}
+            battle = dashboard.get('battle_plan', {}) if dashboard else {}
 
             # 股票名称
             raw_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
             stock_name = self._escape_md(raw_name)
 
-            # ========== 标题行 ==========
+            # ========== ① 标题行 ==========
             llm_score = getattr(result, 'llm_score', None)
             score_tag = f"量化评分: **{result.sentiment_score}**"
             if llm_score is not None:
@@ -545,7 +548,7 @@ class NotificationService:
                     "",
                 ])
 
-            # ========== 量化 vs AI 双视角（表格）==========
+            # ========== ② 量化 vs AI 双视角（表格）==========
             llm_advice = getattr(result, 'llm_advice', '')
             llm_reasoning = getattr(result, 'llm_reasoning', '')
             if llm_score is not None and llm_advice:
@@ -555,7 +558,6 @@ class NotificationService:
                     divergence_tag = " 🔴 **严重分歧**"
                 elif diff >= 10:
                     divergence_tag = " 🟡 **有分歧**"
-                # 量化核心逻辑摘要（从 signal_reasons 提炼）
                 quant_reasons = qe.get('signal_reasons', [])
                 quant_logic = '、'.join(quant_reasons[:3]) if quant_reasons else qe.get('buy_signal', result.operation_advice)
                 report_lines.extend([
@@ -569,36 +571,36 @@ class NotificationService:
                     "",
                 ])
 
-            # ========== AI 视角（详细分析）==========
-            if result.analysis_summary:
+            # ========== ③ 核心结论（AI 综合视角，一句话）==========
+            one_sentence = core.get('one_sentence', '') if core else ''
+            conclusion_text = one_sentence or result.analysis_summary
+            if conclusion_text:
+                report_lines.extend([
+                    "### 📌 核心结论",
+                    "",
+                    f"> {conclusion_text}",
+                    "",
+                ])
+
+            # ========== ③.5 AI 视角（详细分析展开）==========
+            if result.analysis_summary and result.analysis_summary != conclusion_text:
                 report_lines.extend([
                     f"> 💡 **AI 视角**: {result.analysis_summary}",
                     "",
                 ])
+
+            # ========== ④ 当日行情表格 ==========
+            self._append_market_snapshot(report_lines, result)
+
+            # ========== ⑤ 量化诊断（展开：指标+资金+筹码+估值+共振+风险）==========
+            if qe:
+                self._render_quant_diagnosis(report_lines, qe, result.sentiment_score)
+            # 风险提示（合并到量化诊断后）
             if result.risk_warning:
                 report_lines.append(f"⚠️ **风险提示**：{result.risk_warning}")
                 report_lines.append("")
 
-            # ========== 当日行情 ==========
-            self._append_market_snapshot(report_lines, result)
-
-            # ========== 多维量化诊断 ==========
-            if qe:
-                self._render_quant_diagnosis(report_lines, qe, result.sentiment_score)
-
-            # ========== 核心结论 ==========
-            core = dashboard.get('core_conclusion', {}) if dashboard else {}
-            one_sentence = core.get('one_sentence', result.analysis_summary)
-            if one_sentence and one_sentence != result.analysis_summary:
-                report_lines.extend([
-                    "### 📌 核心结论",
-                    "",
-                    f"> {one_sentence}",
-                    "",
-                ])
-
-            # ========== 重要信息（舆情/业绩/风险/利好）==========
-            intel = dashboard.get('intelligence', {}) if dashboard else {}
+            # ========== ⑥ 重要信息（基本面 + 舆情）==========
             if intel:
                 intel_items = []
                 if intel.get('earnings_outlook'):
@@ -619,10 +621,9 @@ class NotificationService:
                         report_lines.append(f"- {item}")
                     report_lines.append("")
 
-            # ========== 作战计划（表格）==========
-            battle = dashboard.get('battle_plan', {}) if dashboard else {}
-            has_battle = bool(battle)
+            # ========== ⑦ 作战计划（表格）==========
             sniper = battle.get('sniper_points', {}) if battle else {}
+            has_battle = bool(battle)
             sl = qe.get('stop_loss_short', 0) if qe else 0
             buy_anchor = qe.get('ideal_buy_anchor', 0) if qe else 0
             tp_short = qe.get('take_profit_short', 0) if qe else 0
@@ -631,8 +632,6 @@ class NotificationService:
 
             if has_battle or sl > 0 or tp_short > 0:
                 report_lines.extend(["### 🎯 作战计划", ""])
-
-                # 点位表格（合并 AI 狙击点 + 量化锚点）
                 report_lines.extend([
                     "| 买点 | 止损 | 短线目标 | 中线目标 | R:R |",
                     "|------|------|----------|----------|-----|",
@@ -647,7 +646,7 @@ class NotificationService:
                     "",
                 ])
 
-                # 仓位建议
+                # ========== ⑧ 持仓建议 ==========
                 pos_pct = qe.get('suggested_position_pct', 0) if qe else 0
                 advice_empty = (qe.get('advice_for_empty', '') if qe else '') or core.get('position_advice', {}).get('no_position', result.operation_advice)
                 advice_hold = (qe.get('advice_for_holding', '') if qe else '') or core.get('position_advice', {}).get('has_position', '继续持有')
@@ -659,12 +658,10 @@ class NotificationService:
                     "",
                 ])
 
-                # 具体手数建议
                 concrete_position = getattr(result, 'concrete_position', '')
                 if concrete_position:
                     report_lines.extend([f"💰 {concrete_position}", ""])
 
-                # 止盈方案
                 tp_plan = qe.get('take_profit_plan', '') if qe else ''
                 if tp_plan:
                     report_lines.extend([f"📋 {tp_plan}", ""])
