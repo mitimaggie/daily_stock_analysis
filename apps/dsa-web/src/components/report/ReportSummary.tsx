@@ -68,6 +68,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
           stopLoss={strategy?.stopLoss}
           takeProfit={strategy?.takeProfit}
+          holdingStrategy={strategy?.holdingStrategy}
         />
       )}
 

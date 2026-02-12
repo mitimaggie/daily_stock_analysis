@@ -131,6 +131,25 @@ class AnalysisService:
         score = getattr(result, "sentiment_score", 50)
         sentiment_label = self._get_sentiment_label(score)
         
+        # 从 quant_extras 提取持仓者专用策略
+        qe = dashboard.get("quant_extras") or {}
+        holding_strategy = None
+        if qe:
+            holding_trailing_stop = qe.get("take_profit_trailing", 0) or 0
+            holding_target_mid = qe.get("take_profit_mid", 0) or 0
+            entry_pct = qe.get("suggested_position_pct", 0) or 0
+            holding_strategy = {
+                # 空仓入场策略
+                "entry_stop_loss": sniper_points.get("stop_loss"),
+                "entry_take_profit": sniper_points.get("take_profit"),
+                "entry_position_pct": entry_pct,
+                "entry_advice": pos_advice.get("no_position", ""),
+                # 持仓者策略（移动止盈 = 持仓止损线）
+                "holding_trailing_stop": f"{holding_trailing_stop:.2f}" if holding_trailing_stop else None,
+                "holding_target": f"{holding_target_mid:.2f}" if holding_target_mid else None,
+                "holding_advice": pos_advice.get("has_position", ""),
+            }
+        
         # 构建报告结构（全部 getattr 兼容本仓库 AnalysisResult 字段）
         report = {
             "meta": {
@@ -154,6 +173,7 @@ class AnalysisService:
                 "secondary_buy": sniper_points.get("secondary_buy"),
                 "stop_loss": sniper_points.get("stop_loss"),
                 "take_profit": sniper_points.get("take_profit"),
+                "holding_strategy": holding_strategy,
             },
             "details": {
                 "news_summary": getattr(result, "news_summary", "") or "",

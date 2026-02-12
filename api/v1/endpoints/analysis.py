@@ -42,6 +42,7 @@ from api.v1.schemas.history import (
     ReportSummary,
     ReportStrategy,
     ReportDetails,
+    HoldingStrategy,
 )
 from src.config import Config
 from src.services.task_queue import (
@@ -518,11 +519,16 @@ def _build_analysis_report(
 
     strategy = None
     if strategy_data:
+        hs_data = strategy_data.get("holding_strategy")
+        holding_strategy = None
+        if hs_data and isinstance(hs_data, dict):
+            holding_strategy = HoldingStrategy(**hs_data)
         strategy = ReportStrategy(
             ideal_buy=strategy_data.get("ideal_buy"),
             secondary_buy=strategy_data.get("secondary_buy"),
             stop_loss=strategy_data.get("stop_loss"),
-            take_profit=strategy_data.get("take_profit")
+            take_profit=strategy_data.get("take_profit"),
+            holding_strategy=holding_strategy,
         )
 
     details = None

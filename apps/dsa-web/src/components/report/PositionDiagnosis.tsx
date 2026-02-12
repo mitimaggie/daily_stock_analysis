@@ -1,4 +1,5 @@
 import type React from 'react';
+import type { HoldingStrategy } from '../../types/analysis';
 import { Card } from '../common';
 
 interface PositionDiagnosisProps {
@@ -14,11 +15,12 @@ interface PositionDiagnosisProps {
   suggestedPositionPct?: number;
   stopLoss?: string;
   takeProfit?: string;
+  holdingStrategy?: HoldingStrategy;
 }
 
 /**
  * 持仓诊断组件
- * 基于用户输入的持仓信息，计算浮盈浮亏、仓位占比、个性化建议
+ * 基于用户输入的持仓信息，区分空仓/持仓场景展示策略
  */
 export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
   positionInfo,
@@ -26,6 +28,7 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
   suggestedPositionPct,
   stopLoss,
   takeProfit,
+  holdingStrategy,
 }) => {
   const totalCapital = (positionInfo.total_capital ?? positionInfo.totalCapital ?? 0);
   const posAmount = (positionInfo.position_amount ?? positionInfo.positionAmount ?? 0);
@@ -34,6 +37,18 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
   if (!totalCapital && !posAmount && !costPrice) return null;
 
   const price = currentPrice ?? 0;
+  const hasPosition = totalCapital > 0 && posAmount > 0;
+
+  // 持仓者使用 holdingStrategy 的止损/止盈，空仓用默认 strategy 的
+  const hs = holdingStrategy;
+  const effectiveStopLoss = hasPosition && hs?.holdingTrailingStop
+    ? hs.holdingTrailingStop : stopLoss;
+  const effectiveTakeProfit = hasPosition && hs?.holdingTarget
+    ? hs.holdingTarget : takeProfit;
+  const effectiveStopLabel = hasPosition && hs?.holdingTrailingStop
+    ? '移动止盈线距成本' : '止损距成本';
+  const effectiveProfitLabel = hasPosition && hs?.holdingTarget
+    ? '中线目标距成本' : '止盈距成本';
 
   // 浮盈浮亏
   const hasPnl = costPrice > 0 && price > 0;
@@ -41,16 +56,18 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
   const pnlAmount = hasPnl && posAmount > 0 ? posAmount * pnlPct / 100 : 0;
 
   // 仓位占比
-  const hasPosition = totalCapital > 0 && posAmount > 0;
   const actualPct = hasPosition ? (posAmount / totalCapital) * 100 : 0;
 
-  // 止盈距离（基于成本价）
-  const stopLossNum = stopLoss ? parseFloat(stopLoss) : 0;
-  const takeProfitNum = takeProfit ? parseFloat(takeProfit) : 0;
+  // 止盈止损距离（基于成本价）
+  const stopLossNum = effectiveStopLoss ? parseFloat(effectiveStopLoss) : 0;
+  const takeProfitNum = effectiveTakeProfit ? parseFloat(effectiveTakeProfit) : 0;
   const stopLossFromCost = costPrice > 0 && stopLossNum > 0
     ? ((stopLossNum - costPrice) / costPrice * 100) : null;
   const takeProfitFromCost = costPrice > 0 && takeProfitNum > 0
     ? ((takeProfitNum - costPrice) / costPrice * 100) : null;
+
+  // 持仓建议文本
+  const holdingAdviceText = hs?.holdingAdvice;
 
   return (
     <Card variant="bordered" padding="md">
@@ -94,36 +111,39 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
               <div className="text-[10px] text-muted mb-1">持仓金额</div>
               <div className="text-sm font-bold font-mono text-white">{(posAmount / 10000).toFixed(1)}万</div>
             </div>
-            <div className="bg-surface-2 rounded-lg p-2.5 text-center">
-              <div className="text-[10px] text-muted mb-1">建议仓位</div>
-              <div className="text-sm font-bold font-mono text-cyan">
-                {suggestedPositionPct != null ? `${suggestedPositionPct}%` : '--'}
+            {hs?.entryPositionPct != null && (
+              <div className="bg-surface-2 rounded-lg p-2.5 text-center">
+                <div className="text-[10px] text-muted mb-1">空仓建议仓位</div>
+                <div className="text-sm font-bold font-mono text-white/50">
+                  {hs.entryPositionPct}%
+                </div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* 仓位建议 */}
-        {hasPosition && suggestedPositionPct != null && suggestedPositionPct > 0 && (
-          <div className="text-[11px] text-muted">
-            {actualPct > suggestedPositionPct * 1.5 && (
-              <span className="text-warning">⚠️ 仓位偏重（建议≤{suggestedPositionPct}%），考虑适当减仓</span>
             )}
-            {actualPct < suggestedPositionPct * 0.5 && (
-              <span className="text-cyan">💡 仓位偏轻（建议{suggestedPositionPct}%），可考虑逢低加仓</span>
-            )}
-            {actualPct >= suggestedPositionPct * 0.5 && actualPct <= suggestedPositionPct * 1.5 && (
-              <span className="text-success">✅ 仓位合理（建议{suggestedPositionPct}%）</span>
+            {!hs?.entryPositionPct && suggestedPositionPct != null && (
+              <div className="bg-surface-2 rounded-lg p-2.5 text-center">
+                <div className="text-[10px] text-muted mb-1">空仓建议仓位</div>
+                <div className="text-sm font-bold font-mono text-white/50">
+                  {suggestedPositionPct}%
+                </div>
+              </div>
             )}
           </div>
         )}
 
-        {/* 止盈止损距离（基于成本价） */}
+        {/* 持仓建议（来自 AI 持仓者策略） */}
+        {hasPosition && holdingAdviceText && (
+          <div className="text-[11px] p-2.5 rounded-lg bg-cyan/5 border border-cyan/15 text-white/70 leading-relaxed">
+            <span className="text-cyan font-medium mr-1">持仓策略:</span>
+            {holdingAdviceText}
+          </div>
+        )}
+
+        {/* 止盈止损距离（基于成本价，持仓者用移动止盈线） */}
         {costPrice > 0 && (stopLossFromCost !== null || takeProfitFromCost !== null) && (
           <div className="grid grid-cols-2 gap-2">
             {stopLossFromCost !== null && (
               <div className="bg-surface-2 rounded-lg p-2.5">
-                <div className="text-[10px] text-muted mb-1">止损距成本</div>
+                <div className="text-[10px] text-muted mb-1">{effectiveStopLabel}</div>
                 <div className="flex items-baseline gap-1">
                   <span className="text-sm font-bold font-mono text-danger">{stopLossNum.toFixed(2)}</span>
                   <span className={`text-[10px] font-mono ${stopLossFromCost >= 0 ? 'text-success' : 'text-danger'}`}>
@@ -134,7 +154,7 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
             )}
             {takeProfitFromCost !== null && (
               <div className="bg-surface-2 rounded-lg p-2.5">
-                <div className="text-[10px] text-muted mb-1">止盈距成本</div>
+                <div className="text-[10px] text-muted mb-1">{effectiveProfitLabel}</div>
                 <div className="flex items-baseline gap-1">
                   <span className="text-sm font-bold font-mono text-success">{takeProfitNum.toFixed(2)}</span>
                   <span className={`text-[10px] font-mono ${takeProfitFromCost >= 0 ? 'text-success' : 'text-danger'}`}>

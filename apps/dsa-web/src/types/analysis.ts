@@ -53,12 +53,26 @@ export interface ReportSummary {
   positionAdvice?: PositionAdvice;
 }
 
+/** 持仓者专用策略（区分空仓/持仓场景） */
+export interface HoldingStrategy {
+  // 空仓入场策略
+  entryStopLoss?: string;
+  entryTakeProfit?: string;
+  entryPositionPct?: number;
+  entryAdvice?: string;
+  // 持仓者策略
+  holdingTrailingStop?: string;
+  holdingTarget?: string;
+  holdingAdvice?: string;
+}
+
 /** 策略点位区 */
 export interface ReportStrategy {
   idealBuy?: string;
   secondaryBuy?: string;
   stopLoss?: string;
   takeProfit?: string;
+  holdingStrategy?: HoldingStrategy;
 }
 
 /** 详情区（可折叠） */

@@ -129,13 +129,28 @@ class ReportSummary(BaseModel):
     position_advice: Optional[PositionAdvice] = Field(None, description="空仓/持仓分开展示")
 
 
+class HoldingStrategy(BaseModel):
+    """持仓者专用策略（区分空仓/持仓场景）"""
+    
+    # 空仓入场策略
+    entry_stop_loss: Optional[str] = Field(None, description="入场止损价")
+    entry_take_profit: Optional[str] = Field(None, description="入场止盈价")
+    entry_position_pct: Optional[int] = Field(None, description="建议入场仓位(%)")
+    entry_advice: Optional[str] = Field(None, description="空仓建议")
+    # 持仓者策略
+    holding_trailing_stop: Optional[str] = Field(None, description="持仓移动止盈/止损线")
+    holding_target: Optional[str] = Field(None, description="持仓中线目标价")
+    holding_advice: Optional[str] = Field(None, description="持仓建议")
+
+
 class ReportStrategy(BaseModel):
     """策略点位区"""
     
     ideal_buy: Optional[str] = Field(None, description="理想买入价")
     secondary_buy: Optional[str] = Field(None, description="第二买入价")
-    stop_loss: Optional[str] = Field(None, description="止损价")
-    take_profit: Optional[str] = Field(None, description="止盈价")
+    stop_loss: Optional[str] = Field(None, description="止损价（空仓入场用）")
+    take_profit: Optional[str] = Field(None, description="止盈价（空仓入场用）")
+    holding_strategy: Optional[HoldingStrategy] = Field(None, description="持仓者专用策略")
 
 
 class ReportDetails(BaseModel):
