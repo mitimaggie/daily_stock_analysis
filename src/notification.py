@@ -520,114 +520,108 @@ class NotificationService:
             signal_text, signal_emoji, signal_tag = self._get_signal_level(result)
             dashboard = result.dashboard if hasattr(result, 'dashboard') and result.dashboard else {}
             qe = dashboard.get('quant_extras', {}) if dashboard else {}
-            core = dashboard.get('core_conclusion', {}) if dashboard else {}
-            intel = dashboard.get('intelligence', {}) if dashboard else {}
-            battle = dashboard.get('battle_plan', {}) if dashboard else {}
-            llm_score = getattr(result, 'llm_score', None)
 
+            # 股票名称
             raw_name = result.name if result.name and not result.name.startswith('股票') else f'股票{result.code}'
             stock_name = self._escape_md(raw_name)
 
-            # ========== ① 标题 ==========
-            score_tag = f"评分 {result.sentiment_score}"
+            # ========== 标题行 ==========
+            llm_score = getattr(result, 'llm_score', None)
+            score_tag = f"量化评分: **{result.sentiment_score}**"
             if llm_score is not None:
-                score_tag = f"量化 {result.sentiment_score} / AI {llm_score}"
-            # Q1: 排名信息
-            rank_info = getattr(result, 'score_rank', '')
-            rank_suffix = f" | 排名{rank_info}" if rank_info else ""
+                score_tag += f" / AI评分: **{llm_score}**"
+            time_tag = f" | 分析于 {result.analysis_time}" if getattr(result, 'analysis_time', '') else ""
             report_lines.extend([
-                f"## {signal_emoji} {stock_name}（{result.code}）",
-                f"**{signal_text}** | {score_tag}{rank_suffix} | {result.trend_prediction}",
+                f"## {signal_emoji} {stock_name} ({result.code})",
+                "",
+                f"> **{signal_text}** | {score_tag} | {result.trend_prediction}{time_tag}",
+                "",
             ])
 
-            # ========== 改进1: 今日变化对比（前置显示）==========
-            signal_changes = getattr(result, 'signal_changes', [])
-            if signal_changes:
-                changes_text = " | ".join(signal_changes[:5])
-                report_lines.append(f"📈 **今日变化**: {changes_text}")
-            elif not getattr(result, 'is_first_analysis', True):
-                score_change = getattr(result, 'score_change', None)
-                if score_change is not None and score_change != 0:
-                    arrow = '⬆️' if score_change > 0 else '⬇️'
-                    report_lines.append(f"📈 **今日变化**: {arrow}评分{score_change:+d}")
-
-            # ========== 改进6: 量化vs AI分歧高亮 ==========
-            divergence_alert = getattr(result, 'divergence_alert', '')
-            if divergence_alert:
-                report_lines.append(f"{divergence_alert}")
-
-            # Q9: 评分短板/优势
-            score_weakness = getattr(result, 'score_weakness', '')
-            score_strength = getattr(result, 'score_strength', '')
-            if score_weakness or score_strength:
-                parts = []
-                if score_strength:
-                    parts.append(f"💪 {score_strength}")
-                if score_weakness:
-                    parts.append(f"⚡ {score_weakness}")
-                report_lines.append(" | ".join(parts))
-
-            report_lines.append("")  # 空行分隔标题区和内容区
-
-            # ========== 交易暂停 ==========
+            # ========== 交易暂停警告（最高优先级）==========
             if qe.get('trading_halt'):
-                report_lines.append(f"🚨 **交易暂停**: {qe.get('trading_halt_reason', '未知')}")
+                report_lines.extend([
+                    f"### 🚨 交易暂停: {qe.get('trading_halt_reason', '未知')}",
+                    "",
+                ])
 
-            # ========== ② 重要信息速览 ==========
-            one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
-            if one_sentence:
-                report_lines.append(f"**📋 重要信息速览**")
-                report_lines.append(f"💭 {one_sentence}")
+            # ========== 量化 vs AI 双视角（表格）==========
+            llm_advice = getattr(result, 'llm_advice', '')
+            llm_reasoning = getattr(result, 'llm_reasoning', '')
+            if llm_score is not None and llm_advice:
+                diff = abs((llm_score or 0) - result.sentiment_score)
+                divergence_tag = ""
+                if diff >= 20:
+                    divergence_tag = " 🔴 **严重分歧**"
+                elif diff >= 10:
+                    divergence_tag = " 🟡 **有分歧**"
+                # 量化核心逻辑摘要（从 signal_reasons 提炼）
+                quant_reasons = qe.get('signal_reasons', [])
+                quant_logic = '、'.join(quant_reasons[:3]) if quant_reasons else qe.get('buy_signal', result.operation_advice)
+                report_lines.extend([
+                    "### 🔀 量化 vs AI",
+                    "",
+                    f"| | 量化模型 | AI 研判 |{divergence_tag}",
+                    "|---|---|---|",
+                    f"| **评分** | {result.sentiment_score} | {llm_score} |",
+                    f"| **建议** | {result.operation_advice} | {llm_advice} |",
+                    f"| **逻辑** | {quant_logic} | {llm_reasoning or '与量化一致'} |",
+                    "",
+                ])
 
-            # ========== ③ 业绩预期等补充信息 ==========
-            has_intel = one_sentence is not None
-            if intel:
-                if intel.get('earnings_outlook'):
-                    if not has_intel:
-                        report_lines.append(f"📋 重要信息速览")
-                        has_intel = True
-                    report_lines.append(f"📊 业绩预期：{intel['earnings_outlook']}")
-                if intel.get('sentiment_summary') and not one_sentence:
-                    if not has_intel:
-                        report_lines.append(f"📋 重要信息速览")
-                        has_intel = True
-                    report_lines.append(f"💭 舆情情绪：{intel['sentiment_summary']}")
-
-            # 风险警报
-            risk_alerts = intel.get('risk_alerts', []) if intel else []
-            risk_factors = qe.get('risk_factors', []) if qe else []
-            all_risks = risk_alerts + risk_factors
-            if all_risks:
-                if not has_intel:
-                    report_lines.append("")
-                report_lines.append("🚨 风险警报：")
-                for i, r in enumerate(all_risks[:3], 1):
-                    report_lines.append(f"风险点{i}：{r}")
-
-            # 利好催化
-            catalysts = intel.get('positive_catalysts', []) if intel else []
-            if catalysts:
-                report_lines.append("✨ 利好催化：")
-                for i, c in enumerate(catalysts[:2], 1):
-                    report_lines.append(f"利好{i}：{c}")
-
-            # 最新动态
-            if intel and intel.get('latest_news'):
-                report_lines.append(f"📢 **最新动态**：{intel['latest_news']}")
-
-            # AI 详细分析
-            if result.analysis_summary and result.analysis_summary != one_sentence:
-                report_lines.append(f"> {result.analysis_summary}")
+            # ========== AI 视角（详细分析）==========
+            if result.analysis_summary:
+                report_lines.extend([
+                    f"> 💡 **AI 视角**: {result.analysis_summary}",
+                    "",
+                ])
             if result.risk_warning:
                 report_lines.append(f"⚠️ **风险提示**：{result.risk_warning}")
+                report_lines.append("")
 
-            report_lines.append("")  # 空行分隔
+            # ========== 当日行情 ==========
+            self._append_market_snapshot(report_lines, result)
 
-            # ========== ④ 量化诊断（简洁文本）==========
+            # ========== 多维量化诊断 ==========
             if qe:
                 self._render_quant_diagnosis(report_lines, qe, result.sentiment_score)
 
-            # ========== ⑤ 作战计划（简洁文本）==========
+            # ========== 核心结论 ==========
+            core = dashboard.get('core_conclusion', {}) if dashboard else {}
+            one_sentence = core.get('one_sentence', result.analysis_summary)
+            if one_sentence and one_sentence != result.analysis_summary:
+                report_lines.extend([
+                    "### 📌 核心结论",
+                    "",
+                    f"> {one_sentence}",
+                    "",
+                ])
+
+            # ========== 重要信息（舆情/业绩/风险/利好）==========
+            intel = dashboard.get('intelligence', {}) if dashboard else {}
+            if intel:
+                intel_items = []
+                if intel.get('earnings_outlook'):
+                    intel_items.append(f"📊 **业绩预期**: {intel['earnings_outlook']}")
+                if intel.get('sentiment_summary'):
+                    intel_items.append(f"💭 **舆情情绪**: {intel['sentiment_summary']}")
+                risk_alerts = intel.get('risk_alerts', [])
+                for alert in risk_alerts[:3]:
+                    intel_items.append(f"🚨 {alert}")
+                catalysts = intel.get('positive_catalysts', [])
+                for cat in catalysts[:3]:
+                    intel_items.append(f"✨ {cat}")
+                if intel.get('latest_news'):
+                    intel_items.append(f"📢 {intel['latest_news']}")
+                if intel_items:
+                    report_lines.extend(["### 📰 重要信息", ""])
+                    for item in intel_items:
+                        report_lines.append(f"- {item}")
+                    report_lines.append("")
+
+            # ========== 作战计划（表格）==========
+            battle = dashboard.get('battle_plan', {}) if dashboard else {}
+            has_battle = bool(battle)
             sniper = battle.get('sniper_points', {}) if battle else {}
             sl = qe.get('stop_loss_short', 0) if qe else 0
             buy_anchor = qe.get('ideal_buy_anchor', 0) if qe else 0
@@ -635,60 +629,63 @@ class NotificationService:
             tp_mid = qe.get('take_profit_mid', 0) if qe else 0
             rr = qe.get('risk_reward_ratio', 0) if qe else 0
 
-            if battle or sl > 0 or tp_short > 0:
-                buy_val = self._clean_sniper_value(sniper.get('ideal_buy')) if sniper.get('ideal_buy') else (f"{buy_anchor:.2f}" if buy_anchor > 0 else "-")
-                sl_val = self._clean_sniper_value(sniper.get('stop_loss')) if sniper.get('stop_loss') else (f"{sl:.2f}" if sl > 0 else "-")
-                tp_s_val = f"{tp_short:.2f}" if tp_short > 0 else "-"
-                tp_m_val = f"{tp_mid:.2f}" if tp_mid > 0 else "-"
-                rr_val = f"{rr:.1f}:1" if rr > 0 else "-"
+            if has_battle or sl > 0 or tp_short > 0:
+                report_lines.extend(["### 🎯 作战计划", ""])
 
-                report_lines.append("")
-                report_lines.append(f"**🎯 作战计划**")
-                report_lines.append(f"买入 {buy_val} | 止损 {sl_val} | 短线目标 {tp_s_val} | 中线目标 {tp_m_val} | R:R {rr_val}")
+                # 点位表格（合并 AI 狙击点 + 量化锚点）
+                report_lines.extend([
+                    "| 买点 | 止损 | 短线目标 | 中线目标 | R:R |",
+                    "|------|------|----------|----------|-----|",
+                ])
+                buy_val = self._clean_sniper_value(sniper.get('ideal_buy')) if sniper.get('ideal_buy') else (f"{buy_anchor:.2f}" if buy_anchor > 0 else "N/A")
+                sl_val = self._clean_sniper_value(sniper.get('stop_loss')) if sniper.get('stop_loss') else (f"{sl:.2f}" if sl > 0 else "N/A")
+                tp_s_val = f"{tp_short:.2f}" if tp_short > 0 else "N/A"
+                tp_m_val = f"{tp_mid:.2f}" if tp_mid > 0 else "N/A"
+                rr_val = f"{rr:.1f}:1" if rr > 0 else "N/A"
+                report_lines.extend([
+                    f"| {buy_val} | {sl_val} | {tp_s_val} | {tp_m_val} | {rr_val} |",
+                    "",
+                ])
 
-                # 持仓建议 - 分行显示，更清晰
-                pos_advice = core.get('position_advice', {}) if core else {}
+                # 仓位建议
                 pos_pct = qe.get('suggested_position_pct', 0) if qe else 0
-                advice_empty = (qe.get('advice_for_empty', '') if qe else '') or pos_advice.get('no_position', result.operation_advice)
-                advice_hold = (qe.get('advice_for_holding', '') if qe else '') or pos_advice.get('has_position', '继续持有')
-                pct_note = f"（仓位≤{pos_pct}%）" if pos_pct > 0 else ""
-                report_lines.append(f"🆕 空仓者：{advice_empty}{pct_note}")
-                report_lines.append(f"💼 持仓者：{advice_hold}")
+                advice_empty = (qe.get('advice_for_empty', '') if qe else '') or core.get('position_advice', {}).get('no_position', result.operation_advice)
+                advice_hold = (qe.get('advice_for_holding', '') if qe else '') or core.get('position_advice', {}).get('has_position', '继续持有')
+                report_lines.extend([
+                    "### 🏦 持仓建议",
+                    "",
+                    f"- 🆕 **空仓者**: {advice_empty}" + (f" (仓位≤{pos_pct}%)" if pos_pct > 0 else ""),
+                    f"- 💼 **持仓者**: {advice_hold}",
+                    "",
+                ])
 
-                # 改进3: 具体手数建议
+                # 具体手数建议
                 concrete_position = getattr(result, 'concrete_position', '')
                 if concrete_position:
-                    report_lines.append(f"💰 {concrete_position}")
+                    report_lines.extend([f"💰 {concrete_position}", ""])
 
+                # 止盈方案
                 tp_plan = qe.get('take_profit_plan', '') if qe else ''
                 if tp_plan:
-                    report_lines.append(f"📋 {tp_plan}")
+                    report_lines.extend([f"📋 {tp_plan}", ""])
 
-            # ========== ⑥ 量化 vs AI（仅有分歧时展示）==========
-            llm_advice = getattr(result, 'llm_advice', '')
-            llm_reasoning = getattr(result, 'llm_reasoning', '')
-            if llm_score is not None and llm_advice:
-                divergence_tag = self._calc_divergence_tag(
-                    result.sentiment_score, llm_score,
-                    result.operation_advice, llm_advice
-                )
-                if divergence_tag:
-                    report_lines.append(f"🔀 **量化 vs AI**{divergence_tag}：量化({result.sentiment_score}, {result.operation_advice}) vs AI({llm_score}, {llm_advice})，{llm_reasoning or '原因未知'}")
-
-            # ========== ⑦ 兜底 ==========
+            # ========== 兜底（无 dashboard 或分析失败）==========
             if not dashboard or (not qe and not core):
+                fallback_items = []
                 if result.analysis_summary:
-                    report_lines.append(f"> {result.analysis_summary}")
+                    fallback_items.append(f"> {result.analysis_summary}")
                 if result.operation_advice:
-                    report_lines.append(f"**建议**: {result.operation_advice}")
+                    fallback_items.append(f"**建议**: {result.operation_advice}")
                 if result.buy_reason:
-                    report_lines.append(f"💡 {result.buy_reason}")
+                    fallback_items.append(f"**💡 操作理由**: {result.buy_reason}")
                 if result.risk_warning:
-                    report_lines.append(f"⚠️ {result.risk_warning}")
-                if not result.analysis_summary and not result.operation_advice:
-                    report_lines.append("*分析数据获取失败，请稍后重试*")
+                    fallback_items.append(f"**⚠️ 风险提示**: {result.risk_warning}")
+                if not fallback_items:
+                    fallback_items.append("*分析数据获取失败，请稍后重试*")
+                report_lines.extend(fallback_items)
+                report_lines.append("")
 
-            report_lines.extend(["", "---", ""])
+            report_lines.extend(["---", ""])
         
         # 底部（去除免责声明）
         report_lines.extend([
