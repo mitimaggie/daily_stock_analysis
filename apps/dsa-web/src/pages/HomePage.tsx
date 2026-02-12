@@ -344,16 +344,47 @@ const HomePage: React.FC = () => {
 
           {/* 操作按钮组 */}
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowPosition((v) => !v)}
-              className={`header-btn-icon ${showPosition ? 'text-cyan border-cyan/30 bg-cyan/8' : ''}`}
-              title="持仓信息"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-            </button>
+            {/* 持仓按钮 + 弹出浮窗 */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowPosition((v) => !v)}
+                className={`header-btn-icon ${showPosition ? 'text-cyan border-cyan/30 bg-cyan/8' : ''}`}
+                title="持仓信息"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </button>
+
+              {/* 持仓信息浮窗 */}
+              {showPosition && (
+                <div className="absolute top-full right-0 mt-2 w-64 p-3 rounded-xl bg-[#111118] border border-white/10 shadow-xl shadow-black/40 animate-slide-up z-[60]">
+                  <div className="text-[11px] text-white/40 font-medium mb-2.5 tracking-wider uppercase">持仓信息</div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">总资金(万)</label>
+                      <input type="number" value={totalCapital} onChange={(e) => setTotalCapital(e.target.value)} placeholder="100" className="header-input flex-1 text-xs py-1.5" />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">持仓(万)</label>
+                      <input type="number" value={positionAmount} onChange={(e) => setPositionAmount(e.target.value)} placeholder="10" className="header-input flex-1 text-xs py-1.5" />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">成本价</label>
+                      <input type="number" step="0.01" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} placeholder="35.00" className="header-input flex-1 text-xs py-1.5" />
+                    </div>
+                  </div>
+                  {(totalCapital || positionAmount) && (
+                    <div className="mt-2 pt-2 border-t border-white/5 text-[11px] text-white/40 font-mono text-right">
+                      仓位 {totalCapital && positionAmount
+                        ? `${((parseFloat(positionAmount) / parseFloat(totalCapital)) * 100).toFixed(1)}%`
+                        : '--'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <button
               type="button"
@@ -376,50 +407,6 @@ const HomePage: React.FC = () => {
             </button>
           </div>
         </div>
-
-        {/* 持仓信息面板（可折叠） */}
-        {showPosition && (
-          <div className="flex items-center gap-4 px-4 pb-3 pt-1 border-t border-white/5 animate-slide-up lg:pl-[300px]">
-            <div className="flex items-center gap-1.5">
-              <label className="text-[11px] text-white/30 whitespace-nowrap">总资金(万)</label>
-              <input
-                type="number"
-                value={totalCapital}
-                onChange={(e) => setTotalCapital(e.target.value)}
-                placeholder="100"
-                className="header-input w-20 text-xs py-1.5"
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <label className="text-[11px] text-white/30 whitespace-nowrap">持仓(万)</label>
-              <input
-                type="number"
-                value={positionAmount}
-                onChange={(e) => setPositionAmount(e.target.value)}
-                placeholder="10"
-                className="header-input w-20 text-xs py-1.5"
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <label className="text-[11px] text-white/30 whitespace-nowrap">成本价</label>
-              <input
-                type="number"
-                step="0.01"
-                value={costPrice}
-                onChange={(e) => setCostPrice(e.target.value)}
-                placeholder="35.00"
-                className="header-input w-24 text-xs py-1.5"
-              />
-            </div>
-            {(totalCapital || positionAmount) && (
-              <span className="text-[11px] text-white/40 font-mono">
-                仓位 {totalCapital && positionAmount
-                  ? `${((parseFloat(positionAmount) / parseFloat(totalCapital)) * 100).toFixed(1)}%`
-                  : '--'}
-              </span>
-            )}
-          </div>
-        )}
       </header>
 
       {/* ========== 主内容区 ========== */}
