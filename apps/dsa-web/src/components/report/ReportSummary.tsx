@@ -48,7 +48,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const effectiveNewsContent = details?.newsContent ?? newsContent;
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-3 animate-fade-in">
       {/* 概览区（首屏） */}
       <ReportOverview
         meta={meta}
@@ -56,6 +56,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         isHistory={isHistory}
         hasPositionInfo={!!positionInfo}
       />
+
+      {/* 策略点位（紧跟概览，可操作信息优先） */}
+      <ReportStrategy strategy={strategy} />
 
       {/* 持仓诊断（有持仓信息时显示） */}
       {positionInfo && (
@@ -68,7 +71,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
-      {/* 量化分析详情 */}
+      {/* 量化分析 */}
       {quantExtras && <QuantAnalysis data={quantExtras} />}
 
       {/* AI 分析视角 */}
@@ -78,6 +81,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           counterArguments={counterArguments}
         />
       )}
+
+      {/* 资讯区 */}
+      <ReportNews queryId={queryId} newsContentFallback={effectiveNewsContent} />
 
       {/* 历史评分趋势 */}
       <ScoreTrend stockCode={meta.stockCode} currentQueryId={queryId} />
@@ -91,12 +97,6 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         queryId={queryId}
         currentPrice={meta.currentPrice}
       />
-
-      {/* 策略点位区 */}
-      <ReportStrategy strategy={strategy} />
-
-      {/* 资讯区 */}
-      <ReportNews queryId={queryId} newsContentFallback={effectiveNewsContent} />
 
       {/* 透明度与追溯区 */}
       <ReportDetails details={details} queryId={queryId} />

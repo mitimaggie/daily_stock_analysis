@@ -80,126 +80,80 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      {/* 主信息区 - 两列布局 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 左侧：股票信息与结论 */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* 股票头部 */}
-          <Card variant="gradient" padding="md">
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-2xl font-bold text-white">
-                    {meta.stockName || meta.stockCode}
-                  </h2>
-                  {/* 价格和涨跌幅（盘中自动刷新） */}
-                  {displayPrice != null && (
-                    <div className="flex items-baseline gap-2">
-                      <span className={`text-xl font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
-                        {displayPrice.toFixed(2)}
-                      </span>
-                      <span className={`text-sm font-semibold font-mono ${getPriceChangeColor(displayChangePct)}`}>
-                        {formatChangePct(displayChangePct)}
-                      </span>
-                      {lastUpdate && (
-                        <span className="text-[10px] text-muted/60 font-mono">
-                          {lastUpdate}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 mt-1.5">
-                  <span className="font-mono text-xs text-cyan bg-cyan/10 px-1.5 py-0.5 rounded">
-                    {meta.stockCode}
-                  </span>
-                  <span className="text-xs text-muted flex items-center gap-1">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    {formatDateTime(meta.createdAt)}
-                  </span>
-                </div>
-              </div>
+    <div className="space-y-3">
+      {/* Hero: 股票名 + 价格 + 评分 */}
+      <Card variant="gradient" padding="md">
+        <div className="flex items-start justify-between gap-4">
+          {/* 左侧：股票信息 */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-3 flex-wrap">
+              <h2 className="text-xl font-bold text-white">
+                {meta.stockName || meta.stockCode}
+              </h2>
+              <span className="font-mono text-xs text-white/40">{meta.stockCode}</span>
             </div>
-
-            {/* 关键结论 */}
-            <div className="border-t border-white/5 pt-4">
-              <span className="label-uppercase">KEY INSIGHTS</span>
-              <p className="text-white text-sm leading-relaxed mt-1.5 whitespace-pre-wrap text-left">
-                {summary.analysisSummary || '暂无分析结论'}
-              </p>
-            </div>
-          </Card>
-
-          {/* 持仓建议（仅在用户输入了持仓信息时显示） */}
-          {hasPositionInfo && (summary.positionAdvice?.noPosition || summary.positionAdvice?.hasPosition) ? (
-            <Card variant="bordered" padding="sm" hoverable>
-              <h4 className="text-xs font-medium text-cyan mb-3">持仓建议</h4>
-              <div className="space-y-3 text-sm">
-                {summary.positionAdvice.noPosition && (
-                  <div className="flex gap-2">
-                    <span className="text-cyan flex-shrink-0">空仓者</span>
-                    <p className="text-white/90 leading-relaxed">{summary.positionAdvice.noPosition}</p>
-                  </div>
-                )}
-                {summary.positionAdvice.hasPosition && (
-                  <div className="flex gap-2">
-                    <span className="text-warning flex-shrink-0">持仓者</span>
-                    <p className="text-white/90 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
-                  </div>
+            {displayPrice != null && (
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className={`text-2xl font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                  {displayPrice.toFixed(2)}
+                </span>
+                <span className={`text-sm font-semibold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                  {formatChangePct(displayChangePct)}
+                </span>
+                {lastUpdate && (
+                  <span className="text-[10px] text-white/30 font-mono">{lastUpdate}</span>
                 )}
               </div>
-            </Card>
-          ) : null}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* 操作建议 */}
-            <Card variant="bordered" padding="sm" hoverable>
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                </div>
-                <div>
-                  <h4 className="text-xs font-medium text-success mb-0.5">操作建议</h4>
-                  <p className="text-white text-sm font-medium">
-                    {summary.operationAdvice || '暂无建议'}
-                  </p>
-                </div>
-              </div>
-            </Card>
-
-            {/* 趋势预测 */}
-            <Card variant="bordered" padding="sm" hoverable>
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                  </svg>
-                </div>
-                <div>
-                  <h4 className="text-xs font-medium text-warning mb-0.5">趋势预测</h4>
-                  <p className="text-white text-sm font-medium">
-                    {summary.trendPrediction || '暂无预测'}
-                  </p>
-                </div>
-              </div>
-            </Card>
+            )}
+            <div className="text-[11px] text-white/30 mt-1">{formatDateTime(meta.createdAt)}</div>
+          </div>
+          {/* 右侧：评分仪表盘 */}
+          <div className="flex-shrink-0">
+            <ScoreGauge score={summary.sentimentScore} size="md" />
           </div>
         </div>
+      </Card>
 
-        {/* 右侧：情绪指标 */}
-        <div className="space-y-4">
-          <Card variant="bordered" padding="md" className="!overflow-visible">
-            <div className="text-center">
-              <h3 className="text-sm font-medium text-white mb-4">Market Sentiment</h3>
-              <ScoreGauge score={summary.sentimentScore} size="lg" />
-            </div>
-          </Card>
+      {/* 操作建议 + 趋势预测（简洁横排） */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-3">
+          <div className="text-[10px] text-success/70 font-medium mb-1">操作建议</div>
+          <p className="text-[13px] text-white font-medium leading-snug">
+            {summary.operationAdvice || '暂无建议'}
+          </p>
+        </div>
+        <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-3">
+          <div className="text-[10px] text-warning/70 font-medium mb-1">趋势预测</div>
+          <p className="text-[13px] text-white font-medium leading-snug">
+            {summary.trendPrediction || '暂无预测'}
+          </p>
         </div>
       </div>
+
+      {/* 关键结论 */}
+      <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+        <p className="text-sm text-white/85 leading-relaxed whitespace-pre-wrap text-left">
+          {summary.analysisSummary || '暂无分析结论'}
+        </p>
+      </div>
+
+      {/* 持仓建议：空仓者建议始终显示，持仓者建议仅在用户填写持仓信息时显示 */}
+      {(summary.positionAdvice?.noPosition || (hasPositionInfo && summary.positionAdvice?.hasPosition)) && (
+        <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4 space-y-2.5">
+          {summary.positionAdvice?.noPosition && (
+            <div className="flex gap-2 items-start">
+              <span className="text-[11px] text-cyan bg-cyan/10 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
+              <p className="text-sm text-white/80 leading-relaxed">{summary.positionAdvice.noPosition}</p>
+            </div>
+          )}
+          {hasPositionInfo && summary.positionAdvice?.hasPosition && (
+            <div className="flex gap-2 items-start">
+              <span className="text-[11px] text-warning bg-warning/10 px-1.5 py-0.5 rounded flex-shrink-0">持仓</span>
+              <p className="text-sm text-white/80 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

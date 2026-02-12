@@ -696,6 +696,7 @@ body {
 .bg-base { background: var(--bg-base); }
 .bg-card { background: var(--bg-card); }
 .bg-elevated { background: var(--bg-elevated); }
+.bg-surface-2 { background: var(--bg-elevated); }
 
 .border-accent { border-color: var(--border-accent); }
 .border-purple { border-color: var(--border-purple); }

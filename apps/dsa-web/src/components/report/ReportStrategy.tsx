@@ -1,6 +1,5 @@
 import type React from 'react';
 import type { ReportStrategy as ReportStrategyType } from '../../types/analysis';
-import { Card } from '../common';
 
 interface ReportStrategyProps {
   strategy?: ReportStrategyType;
@@ -17,21 +16,17 @@ const StrategyItem: React.FC<StrategyItemProps> = ({
   value,
   color,
 }) => (
-  <div className="relative overflow-hidden rounded-lg bg-elevated border border-white/5 p-3 hover:border-white/10 transition-colors">
-    <div className="flex flex-col">
-      <span className="text-xs text-muted mb-0.5">{label}</span>
-      <span
-        className="text-lg font-bold font-mono"
-        style={{ color: value ? color : 'var(--text-muted)' }}
-      >
-        {value || '—'}
-      </span>
+  <div className="flex items-center justify-between py-1.5">
+    <div className="flex items-center gap-2">
+      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: color }} />
+      <span className="text-xs text-white/50">{label}</span>
     </div>
-    {/* 底部指示条 */}
-    <div
-      className="absolute bottom-0 left-0 right-0 h-0.5"
-      style={{ background: `linear-gradient(90deg, ${color}00, ${color}, ${color}00)` }}
-    />
+    <span
+      className="text-sm font-bold font-mono"
+      style={{ color: value ? color : 'var(--text-muted)' }}
+    >
+      {value || '—'}
+    </span>
   </div>
 );
 
@@ -67,16 +62,12 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({ strategy }) => {
   ];
 
   return (
-    <Card variant="bordered" padding="md">
-      <div className="mb-3 flex items-baseline gap-2">
-        <span className="label-uppercase">STRATEGY POINTS</span>
-        <h3 className="text-base font-semibold text-white">狙击点位</h3>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+      <div className="grid grid-cols-2 gap-x-6">
         {strategyItems.map((item) => (
           <StrategyItem key={item.label} {...item} />
         ))}
       </div>
-    </Card>
+    </div>
   );
 };

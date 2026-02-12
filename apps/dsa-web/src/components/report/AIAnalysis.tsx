@@ -1,6 +1,5 @@
 import type React from 'react';
 import { useState } from 'react';
-import { Card } from '../common';
 
 interface AIAnalysisProps {
   intelligence: Record<string, any>;
@@ -22,17 +21,14 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
   const earningsOutlook = intelligence.earnings_outlook ?? intelligence.earningsOutlook ?? '';
 
   return (
-    <Card variant="bordered" padding="md">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
       <button
         type="button"
         className="w-full flex items-center justify-between text-left mb-3"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex items-baseline gap-2">
-          <span className="label-uppercase">AI PERSPECTIVE</span>
-          <h3 className="text-base font-semibold text-white">AI 分析视角</h3>
-        </div>
-        <span className="text-xs text-muted">{expanded ? '▲' : '▼'}</span>
+        <h3 className="text-sm font-semibold text-white/70">AI 分析视角</h3>
+        <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
       </button>
 
       {expanded && (
@@ -101,6 +97,6 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
           )}
         </div>
       )}
-    </Card>
+    </div>
   );
 };
