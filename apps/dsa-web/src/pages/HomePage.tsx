@@ -9,6 +9,7 @@ import { useAnalysisStore } from '../stores/analysisStore';
 import { ReportSummary } from '../components/report';
 import { HistoryList } from '../components/history';
 import { TaskPanel } from '../components/tasks';
+import { Watchlist } from '../components/watchlist';
 import { useTaskStream } from '../hooks';
 
 /**
@@ -51,6 +52,9 @@ const HomePage: React.FC = () => {
 
   // 用于跟踪当前分析请求，避免竞态条件
   const analysisRequestIdRef = useRef<number>(0);
+
+  // 移动端侧边栏状态
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // 持久化总资金和展开状态
   useEffect(() => {
@@ -252,6 +256,35 @@ const HomePage: React.FC = () => {
     }
   };
 
+  // 自选股：单只分析
+  const handleWatchlistAnalyze = useCallback((code: string) => {
+    setStockCode(code);
+    // 延迟触发分析，让 state 更新
+    setTimeout(() => {
+      const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
+      if (btn) btn.click();
+    }, 50);
+  }, []);
+
+  // 自选股：批量分析
+  const handleBatchAnalyze = useCallback(async (codes: string[]) => {
+    setDuplicateError(null);
+    setStoreError(null);
+    for (const code of codes) {
+      try {
+        await analysisApi.analyzeAsync({
+          stockCode: code,
+          reportType: 'detailed',
+          positionInfo: buildPositionInfo(),
+        });
+      } catch (err) {
+        if (!(err instanceof DuplicateTaskError)) {
+          console.error(`Batch analyze ${code} failed:`, err);
+        }
+      }
+    }
+  }, [buildPositionInfo]);
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* 分析失败时顶部 toast 提示 */}
@@ -269,8 +302,19 @@ const HomePage: React.FC = () => {
         </div>
       )}
       {/* 顶部输入栏 */}
-      <header className="flex-shrink-0 px-4 py-3 border-b border-white/5">
-        <div className="flex items-center gap-2 max-w-2xl">
+      <header className="flex-shrink-0 px-3 sm:px-4 py-3 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          {/* 移动端侧边栏切换 */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(v => !v)}
+            className="lg:hidden text-muted hover:text-white p-1.5 rounded-lg bg-elevated border border-white/10"
+            aria-label="切换侧边栏"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
           <div className="flex-1 relative">
             <input
               type="text"
@@ -307,6 +351,7 @@ const HomePage: React.FC = () => {
             type="button"
             onClick={handleAnalyze}
             disabled={!stockCode || isAnalyzing}
+            data-analyze-btn
             className="btn-primary flex items-center gap-1.5 whitespace-nowrap"
           >
             {isAnalyzing ? (
@@ -368,9 +413,29 @@ const HomePage: React.FC = () => {
       </header>
 
       {/* 主内容区 */}
-      <main className="flex-1 flex overflow-hidden p-3 gap-3">
-{/* 左侧：任务面板 + 历史列表 */}
-        <div className="flex flex-col gap-3 w-64 flex-shrink-0 overflow-hidden">
+      <main className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 relative">
+        {/* 移动端遮罩层 */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+{/* 左侧：自选股 + 任务面板 + 历史列表 */}
+        <div className={`flex flex-col gap-3 w-64 flex-shrink-0 overflow-hidden
+          fixed lg:static inset-y-0 left-0 z-40 bg-base p-3 lg:p-0
+          transform transition-transform duration-200 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        `}>
+          {/* 自选股 */}
+          <Watchlist
+            currentCode={stockCode}
+            onAnalyze={handleWatchlistAnalyze}
+            onBatchAnalyze={handleBatchAnalyze}
+            isAnalyzing={isAnalyzing}
+          />
+
           {/* 任务面板 */}
           <TaskPanel tasks={activeTasks} />
 
@@ -381,14 +446,17 @@ const HomePage: React.FC = () => {
             isLoadingMore={isLoadingMore}
             hasMore={hasMore}
             selectedQueryId={selectedReport?.meta.queryId}
-            onItemClick={handleHistoryClick}
+            onItemClick={(queryId) => {
+              handleHistoryClick(queryId);
+              setSidebarOpen(false);
+            }}
             onLoadMore={handleLoadMore}
             className="max-h-[62vh] overflow-hidden"
           />
         </div>
 
         {/* 右侧报告详情 */}
-        <section className="flex-1 overflow-y-auto pl-1">
+        <section className="flex-1 overflow-y-auto pl-0 lg:pl-1 w-full">
           {isLoadingReport ? (
             <div className="flex flex-col items-center justify-center h-full">
               <div className="w-10 h-10 border-3 border-cyan/20 border-t-cyan rounded-full animate-spin" />

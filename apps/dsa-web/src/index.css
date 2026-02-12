@@ -737,3 +737,30 @@ body {
     padding-left: 88px;
   }
 }
+
+/* 移动端输入框和按钮缩小 */
+@media (max-width: 640px) {
+  .input-terminal {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .btn-primary {
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+
+  .label-uppercase {
+    font-size: 10px;
+  }
+}
+
+/* 移动端卡片间距优化 */
+@media (max-width: 1024px) {
+  .dock-nav {
+    display: none;
+  }
+  .dock-safe-area {
+    padding-left: 0;
+  }
+}

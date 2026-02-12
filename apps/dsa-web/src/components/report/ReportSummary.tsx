@@ -9,6 +9,7 @@ import { ReportDetails } from './ReportDetails';
 import { QuantAnalysis } from './QuantAnalysis';
 import { AIAnalysis } from './AIAnalysis';
 import { PositionDiagnosis } from './PositionDiagnosis';
+import { KLineChart } from './KLineChart';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -55,6 +56,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         summary={summary}
         isHistory={isHistory}
       />
+
+      {/* K线图表 */}
+      <KLineChart stockCode={meta.stockCode} stockName={meta.stockName} />
 
       {/* 持仓诊断（有持仓信息时显示） */}
       {positionInfo && (

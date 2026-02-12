@@ -7,3 +7,4 @@ export * from './ScoreTrend';
 export * from './QuantAnalysis';
 export * from './AIAnalysis';
 export * from './PositionDiagnosis';
+export * from './KLineChart';

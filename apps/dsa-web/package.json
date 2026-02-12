@@ -12,6 +12,7 @@
   "dependencies": {
     "axios": "^1.13.4",
     "camelcase-keys": "^10.0.2",
+    "lightweight-charts": "^5.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^9.0.1",
