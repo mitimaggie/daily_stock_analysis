@@ -1113,19 +1113,37 @@ class NotificationService:
             lines.append(f"🔥 **多指标共振**: {', '.join(res_signals)}")
 
     def _append_market_snapshot(self, lines: List[str], result: AnalysisResult) -> None:
-        """在推送内容中追加「当日行情」（简洁文本格式）"""
+        """在推送内容中追加「当日行情」表格（来自 result.market_snapshot）"""
         snapshot = getattr(result, 'market_snapshot', None)
         if not snapshot:
             return
         is_intraday = snapshot.get('is_intraday', False)
-        label = "盘中" if is_intraday else "收盘"
-        close_val = snapshot.get('close', snapshot.get('price', 'N/A'))
-        pct = snapshot.get('pct_chg', 'N/A')
-        high = snapshot.get('high', 'N/A')
-        low = snapshot.get('low', 'N/A')
-        vol = snapshot.get('volume', 'N/A')
-        amount = snapshot.get('amount', 'N/A')
-        lines.append(f"📈 **{label}行情**：{close_val}（{pct}）| 最高 {high} | 最低 {low} | 成交量 {vol} | 成交额 {amount}")
+        section_title = "### 📈 当日行情（盘中）" if is_intraday else "### 📈 当日行情"
+        close_header = "最新价" if is_intraday else "收盘"
+        vol_header = "成交量(截至当前)" if is_intraday else "成交量"
+        amount_header = "成交额(截至当前)" if is_intraday else "成交额"
+        lines.extend([
+            section_title,
+            "",
+            f"| {close_header} | 昨收 | 开盘 | 最高 | 最低 | 涨跌幅 | 涨跌额 | 振幅 | {vol_header} | {amount_header} |",
+            "|------|------|------|------|------|-------|-------|------|--------|--------|",
+            f"| {snapshot.get('close', 'N/A')} | {snapshot.get('prev_close', 'N/A')} | "
+            f"{snapshot.get('open', 'N/A')} | {snapshot.get('high', 'N/A')} | "
+            f"{snapshot.get('low', 'N/A')} | {snapshot.get('pct_chg', 'N/A')} | "
+            f"{snapshot.get('change_amount', 'N/A')} | {snapshot.get('amplitude', 'N/A')} | "
+            f"{snapshot.get('volume', 'N/A')} | {snapshot.get('amount', 'N/A')} |",
+        ])
+        if snapshot.get("price") is not None and snapshot.get("price") != 'N/A':
+            raw_source = snapshot.get('source', 'N/A')
+            display_source = self._SOURCE_DISPLAY_NAMES.get(raw_source, raw_source)
+            lines.extend([
+                "",
+                "| 当前价 | 量比 | 换手率 | 行情来源 |",
+                "|-------|------|--------|----------|",
+                f"| {snapshot.get('price', 'N/A')} | {snapshot.get('volume_ratio', 'N/A')} | "
+                f"{snapshot.get('turnover_rate', 'N/A')} | {display_source} |",
+            ])
+        lines.append("")
     
     def send_to_wechat(self, content: str) -> bool:
         """
