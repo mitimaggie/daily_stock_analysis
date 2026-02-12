@@ -736,14 +736,24 @@ dashboard: {{
         low = today.get('low')
 
         # 用实时行情覆盖可能过时的日线数据，确保表格与当前价一致
-        rt_price = realtime.get('price')
-        if rt_price and rt_price > 0:
+        # 强制转 float 避免 pandas/numpy 类型导致比较失败
+        try:
+            rt_price = float(realtime.get('price') or 0)
+        except (TypeError, ValueError):
+            rt_price = 0.0
+        if rt_price > 0:
             close = rt_price
-        rt_high = realtime.get('high')
-        if rt_high and rt_high > 0:
+        try:
+            rt_high = float(realtime.get('high') or 0)
+        except (TypeError, ValueError):
+            rt_high = 0.0
+        if rt_high > 0:
             high = max(float(high or 0), rt_high)
-        rt_low = realtime.get('low')
-        if rt_low and rt_low > 0:
+        try:
+            rt_low = float(realtime.get('low') or 0)
+        except (TypeError, ValueError):
+            rt_low = 0.0
+        if rt_low > 0:
             low = min(float(low or 999999), rt_low) if low and float(low) > 0 else rt_low
         rt_open = realtime.get('open_price')
         if rt_open and rt_open > 0:
@@ -765,10 +775,13 @@ dashboard: {{
                 change_amount = None
 
         is_intraday = context.get('is_intraday', False)
+        # close 和 price 统一为同一个值（实时价优先），避免"最新价"和"当前价"不一致
+        formatted_price = self._format_price(close)
         snapshot = {
             "date": context.get('date', '未知'),
             "is_intraday": is_intraday,
-            "close": self._format_price(close),
+            "close": formatted_price,
+            "price": formatted_price,
             "open": self._format_price(today.get('open')),
             "high": self._format_price(high),
             "low": self._format_price(low),
@@ -784,7 +797,6 @@ dashboard: {{
             if hasattr(src, 'value'):
                 src = src.value
             snapshot.update({
-                "price": self._format_price(realtime.get('price')),
                 "volume_ratio": realtime.get('volume_ratio') if realtime.get('volume_ratio') is not None else 'N/A',
                 "turnover_rate": self._format_percent(realtime.get('turnover_rate')),
                 "source": src if src is not None else 'N/A',
