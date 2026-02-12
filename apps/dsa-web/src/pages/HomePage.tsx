@@ -379,7 +379,7 @@ const HomePage: React.FC = () => {
 
         {/* 持仓信息面板（可折叠） */}
         {showPosition && (
-          <div className="flex items-center gap-4 px-4 pb-3 pt-1 border-t border-white/5 animate-slide-up">
+          <div className="flex items-center gap-4 px-4 pb-3 pt-1 border-t border-white/5 animate-slide-up lg:pl-[300px]">
             <div className="flex items-center gap-1.5">
               <label className="text-[11px] text-white/30 whitespace-nowrap">总资金(万)</label>
               <input
