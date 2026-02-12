@@ -14,11 +14,22 @@ interface ReportNewsProps {
 /**
  * 资讯区组件 - 终端风格
  */
+/** 检测是否为原始数据表格（股票代码+数字堆砌） */
+function isRawDataTable(text: string): boolean {
+  if (!text) return false;
+  // 多个6位数字（股票代码）+ 大量浮点数 = 原始数据表
+  const codeCount = (text.match(/\b\d{6}\b/g) || []).length;
+  const numCount = (text.match(/\b\d+\.\d+\b/g) || []).length;
+  return codeCount >= 2 && numCount >= 4;
+}
+
 /** 解析原始新闻文本为结构化条目 */
 function parseNewsText(text: string): { title: string; time?: string }[] {
   const lines = text.split('\n').filter(l => l.trim());
   const results: { title: string; time?: string }[] = [];
   for (const line of lines) {
+    // 跳过原始数据表格行
+    if (isRawDataTable(line)) continue;
     // 匹配格式: "1. 【来源】标题 (时间)" 或 "数字. 标题"
     const match = line.match(/^\d+\.\s*(.+?)(?:\s*\((\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\))?$/);
     if (match) {
@@ -129,7 +140,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
                   <p className="text-sm text-white font-medium leading-snug text-left">
                     {item.title}
                   </p>
-                  {item.snippet && (
+                  {item.snippet && !isRawDataTable(item.snippet) && (
                     <p className="text-xs text-secondary mt-1 text-left">
                       {item.snippet}
                     </p>

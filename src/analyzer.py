@@ -819,6 +819,15 @@ dashboard: {{
             # Gemini
             return self._model.generate_content(f"{self.PROMPT_MACRO}\n\n{prompt}").text
         except Exception as e:
+            err_str = str(e)
+            # 识别常见错误并给出友好提示
+            if '额度已用尽' in err_str or 'quota' in err_str.lower():
+                logger.error(f"[大盘] AI API 额度不足: {e}")
+                return "生成错误: API 额度不足，请检查 API Key 余额或更换 Key"
+            elif '401' in err_str or 'unauthorized' in err_str.lower() or 'invalid' in err_str.lower():
+                logger.error(f"[大盘] AI API 认证失败: {e}")
+                return "生成错误: API Key 无效或已过期，请检查配置"
+            logger.error(f"[大盘] AI 生成失败: {e}")
             return f"生成错误: {e}"
 
 def get_analyzer() -> GeminiAnalyzer:

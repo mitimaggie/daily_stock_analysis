@@ -11,6 +11,7 @@
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
@@ -199,6 +200,12 @@ class HistoryService:
             items: List[Dict[str, str]] = []
             for record in records:
                 snippet = (record.snippet or "").strip()
+                # 过滤原始数据表格（多个股票代码+大量数字堆砌）
+                if snippet:
+                    code_count = len(re.findall(r'\b\d{6}\b', snippet))
+                    num_count = len(re.findall(r'\b\d+\.\d+\b', snippet))
+                    if code_count >= 2 and num_count >= 4:
+                        snippet = ""
                 if len(snippet) > 50:
                     snippet = f"{snippet[:47]}..."
                 items.append({

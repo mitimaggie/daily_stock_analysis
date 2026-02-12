@@ -6,19 +6,37 @@ interface QuantAnalysisProps {
   data: Record<string, unknown>;
 }
 
-/** 量化指标卡片 */
-const MetricCard: React.FC<{
+/** 量化指标行 */
+const MetricRow: React.FC<{
   label: string;
   value: string | number | undefined;
   color?: string;
   sub?: string;
 }> = ({ label, value, color, sub }) => (
-  <div className="bg-surface-2 rounded-lg p-2.5 text-center">
+  <div className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0">
+    <span className="text-[11px] text-muted">{label}</span>
+    <div className="text-right">
+      <span className={`text-sm font-bold font-mono ${color || 'text-white'}`}>
+        {value ?? '--'}
+      </span>
+      {sub && <span className="text-[9px] text-muted ml-1.5">{sub}</span>}
+    </div>
+  </div>
+);
+
+/** 大数字卡片（仅用于顶部核心指标） */
+const CoreMetric: React.FC<{
+  label: string;
+  value: string | number | undefined;
+  color?: string;
+  sub?: string;
+}> = ({ label, value, color, sub }) => (
+  <div className="bg-surface-2 rounded-lg p-3 text-center">
     <div className="text-[10px] text-muted mb-1">{label}</div>
-    <div className={`text-sm font-bold font-mono ${color || 'text-white'}`}>
+    <div className={`text-lg font-bold font-mono ${color || 'text-white'}`}>
       {value ?? '--'}
     </div>
-    {sub && <div className="text-[9px] text-muted mt-0.5">{sub}</div>}
+    {sub && <div className="text-[9px] text-muted mt-0.5 truncate">{sub}</div>}
   </div>
 );
 
@@ -77,27 +95,27 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
 
       {expanded && (
         <div className="space-y-4">
-          {/* 综合评分 + 趋势 */}
+          {/* 核心指标（大数字） */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <MetricCard
+            <CoreMetric
               label="综合评分"
               value={signalScore}
               color={getScoreColor(signalScore)}
               sub={qe.buy_signal ?? qe.buySignal}
             />
-            <MetricCard
+            <CoreMetric
               label="趋势强度"
               value={trendStrength}
               color={getScoreColor(trendStrength)}
               sub={qe.trend_status ?? qe.trendStatus}
             />
-            <MetricCard
+            <CoreMetric
               label="量比"
               value={(qe.volume_ratio ?? qe.volumeRatio)?.toFixed(2)}
               color={(qe.volume_ratio ?? qe.volumeRatio) > 2 ? 'text-warning' : 'text-white'}
               sub={qe.volume_status ?? qe.volumeStatus}
             />
-            <MetricCard
+            <CoreMetric
               label="风险收益比"
               value={(qe.risk_reward_ratio ?? qe.riskRewardRatio)?.toFixed(2)}
               color={(qe.risk_reward_ratio ?? qe.riskRewardRatio) >= 2 ? 'text-success' : 'text-warning'}
@@ -105,107 +123,82 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             />
           </div>
 
-          {/* 技术指标 */}
-          <div>
-            <h4 className="text-xs font-medium text-cyan mb-2">技术指标</h4>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-              <MetricCard label="RSI(12)" value={(qe.rsi ?? qe.rsi12)?.toFixed(1)} color={getRsiColor(qe.rsi ?? qe.rsi12 ?? 50)} sub={qe.rsi_status ?? qe.rsiStatus} />
-              <MetricCard label="KDJ-K" value={(qe.kdj_k ?? qe.kdjK)?.toFixed(1)} color={getRsiColor(qe.kdj_k ?? qe.kdjK ?? 50)} />
-              <MetricCard label="KDJ-J" value={(qe.kdj_j ?? qe.kdjJ)?.toFixed(1)} color={(qe.kdj_j ?? qe.kdjJ) > 100 ? 'text-danger' : (qe.kdj_j ?? qe.kdjJ) < 0 ? 'text-success' : 'text-white'} />
-              <MetricCard label="MACD" value={(qe.macd_bar ?? qe.macdBar)?.toFixed(3)} color={(qe.macd_bar ?? qe.macdBar) > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'} sub={qe.macd_status ?? qe.macdStatus} />
-              <MetricCard label="布林%B" value={(qe.bb_pct_b ?? qe.bbPctB)?.toFixed(2)} color={(qe.bb_pct_b ?? qe.bbPctB) > 0.8 ? 'text-danger' : (qe.bb_pct_b ?? qe.bbPctB) < 0.2 ? 'text-success' : 'text-white'} />
-              <MetricCard label="ATR(14)" value={(qe.atr14)?.toFixed(2)} sub="波动率" />
+          {/* 技术指标 + 均线（两列表格式） */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-surface-2 rounded-lg p-3">
+              <h5 className="text-[10px] text-cyan mb-2 font-medium">技术指标</h5>
+              <MetricRow label="RSI(12)" value={(qe.rsi ?? qe.rsi12)?.toFixed(1)} color={getRsiColor(qe.rsi ?? qe.rsi12 ?? 50)} sub={qe.rsi_status ?? qe.rsiStatus} />
+              <MetricRow label="KDJ" value={`K ${(qe.kdj_k ?? qe.kdjK)?.toFixed(0) ?? '--'} / J ${(qe.kdj_j ?? qe.kdjJ)?.toFixed(0) ?? '--'}`} color={(qe.kdj_j ?? qe.kdjJ) > 100 ? 'text-danger' : (qe.kdj_j ?? qe.kdjJ) < 0 ? 'text-success' : 'text-white'} />
+              <MetricRow label="MACD" value={(qe.macd_bar ?? qe.macdBar)?.toFixed(3)} color={(qe.macd_bar ?? qe.macdBar) > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'} sub={qe.macd_status ?? qe.macdStatus} />
+              <MetricRow label="布林%B" value={(qe.bb_pct_b ?? qe.bbPctB)?.toFixed(2)} color={(qe.bb_pct_b ?? qe.bbPctB) > 0.8 ? 'text-danger' : (qe.bb_pct_b ?? qe.bbPctB) < 0.2 ? 'text-success' : 'text-white'} />
+              <MetricRow label="ATR(14)" value={(qe.atr14)?.toFixed(2)} sub="波动率" />
+            </div>
+            <div className="bg-surface-2 rounded-lg p-3">
+              <h5 className="text-[10px] text-cyan mb-2 font-medium">均线系统</h5>
+              <MetricRow label="MA5" value={(qe.ma5)?.toFixed(2)} />
+              <MetricRow label="MA10" value={(qe.ma10)?.toFixed(2)} />
+              <MetricRow label="MA20" value={(qe.ma20)?.toFixed(2)} />
+              <MetricRow label="MA60" value={(qe.ma60)?.toFixed(2)} />
+              <div className="mt-1.5 text-[10px] text-muted">
+                {qe.ma_alignment ?? qe.maAlignment}
+              </div>
             </div>
           </div>
 
-          {/* 均线系统 */}
-          <div>
-            <h4 className="text-xs font-medium text-cyan mb-2">均线系统</h4>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <MetricCard label="MA5" value={(qe.ma5)?.toFixed(2)} />
-              <MetricCard label="MA10" value={(qe.ma10)?.toFixed(2)} />
-              <MetricCard label="MA20" value={(qe.ma20)?.toFixed(2)} />
-              <MetricCard label="MA60" value={(qe.ma60)?.toFixed(2)} />
-            </div>
-            <div className="mt-1.5 text-[11px] text-muted">
-              {qe.ma_alignment ?? qe.maAlignment}
-            </div>
-          </div>
-
-          {/* 估值 + 资金面 + 筹码 */}
+          {/* 估值 + 资金面 + 筹码（三列表格式） */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {/* 估值 */}
             <div className="bg-surface-2 rounded-lg p-3">
               <h5 className="text-[10px] text-cyan mb-2 font-medium">估值分析</h5>
-              <div className="space-y-1.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-muted">PE(TTM)</span>
-                  <span className="text-white font-mono">{(qe.pe_ratio ?? qe.peRatio)?.toFixed(1) ?? '--'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted">PB</span>
-                  <span className="text-white font-mono">{(qe.pb_ratio ?? qe.pbRatio)?.toFixed(2) ?? '--'}</span>
-                </div>
-                {(qe.pe_percentile ?? qe.pePercentile) != null && (
-                  <div className="flex justify-between">
-                    <span className="text-muted">PE分位数</span>
-                    <span className={`font-mono ${(qe.pe_percentile ?? qe.pePercentile) > 80 ? 'text-danger' : (qe.pe_percentile ?? qe.pePercentile) < 20 ? 'text-success' : 'text-white'}`}>
-                      {(qe.pe_percentile ?? qe.pePercentile)?.toFixed(0)}%
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-muted">估值判断</span>
-                  <span className={`font-medium ${(qe.valuation_score ?? qe.valuationScore) <= 3 ? 'text-danger' : (qe.valuation_score ?? qe.valuationScore) >= 7 ? 'text-success' : 'text-warning'}`}>
-                    {qe.valuation_verdict ?? qe.valuationVerdict ?? '--'}
-                  </span>
-                </div>
-              </div>
+              <MetricRow label="PE(TTM)" value={(qe.pe_ratio ?? qe.peRatio)?.toFixed(1)} />
+              <MetricRow label="PB" value={(qe.pb_ratio ?? qe.pbRatio)?.toFixed(2)} />
+              {(qe.pe_percentile ?? qe.pePercentile) != null && (
+                <MetricRow
+                  label="PE分位数"
+                  value={`${(qe.pe_percentile ?? qe.pePercentile)?.toFixed(0)}%`}
+                  color={(qe.pe_percentile ?? qe.pePercentile) > 80 ? 'text-danger' : (qe.pe_percentile ?? qe.pePercentile) < 20 ? 'text-success' : 'text-white'}
+                />
+              )}
+              <MetricRow
+                label="估值判断"
+                value={qe.valuation_verdict ?? qe.valuationVerdict ?? '--'}
+                color={(qe.valuation_score ?? qe.valuationScore) <= 3 ? 'text-danger' : (qe.valuation_score ?? qe.valuationScore) >= 7 ? 'text-success' : 'text-warning'}
+              />
             </div>
 
             {/* 资金面 */}
             <div className="bg-surface-2 rounded-lg p-3">
               <h5 className="text-[10px] text-cyan mb-2 font-medium">资金面</h5>
-              <div className="space-y-1.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-muted">资金评分</span>
-                  <span className={`font-mono ${(qe.capital_flow_score ?? qe.capitalFlowScore) >= 7 ? 'text-success' : (qe.capital_flow_score ?? qe.capitalFlowScore) <= 3 ? 'text-danger' : 'text-white'}`}>
-                    {qe.capital_flow_score ?? qe.capitalFlowScore ?? '--'}/10
-                  </span>
-                </div>
-                <div className="text-muted leading-relaxed">
-                  {qe.capital_flow_signal ?? qe.capitalFlowSignal ?? '--'}
-                </div>
-                {(qe.suggested_position_pct ?? qe.suggestedPositionPct) != null && (
-                  <div className="flex justify-between">
-                    <span className="text-muted">建议仓位</span>
-                    <span className="text-cyan font-mono">{qe.suggested_position_pct ?? qe.suggestedPositionPct}%</span>
-                  </div>
-                )}
+              <MetricRow
+                label="资金评分"
+                value={`${qe.capital_flow_score ?? qe.capitalFlowScore ?? '--'}/10`}
+                color={(qe.capital_flow_score ?? qe.capitalFlowScore) >= 7 ? 'text-success' : (qe.capital_flow_score ?? qe.capitalFlowScore) <= 3 ? 'text-danger' : 'text-white'}
+              />
+              {(qe.suggested_position_pct ?? qe.suggestedPositionPct) != null && (
+                <MetricRow label="建议仓位" value={`${qe.suggested_position_pct ?? qe.suggestedPositionPct}%`} color="text-cyan" />
+              )}
+              <div className="text-[10px] text-muted mt-1.5 leading-relaxed">
+                {qe.capital_flow_signal ?? qe.capitalFlowSignal ?? '--'}
               </div>
             </div>
 
             {/* 筹码 */}
             <div className="bg-surface-2 rounded-lg p-3">
               <h5 className="text-[10px] text-cyan mb-2 font-medium">筹码分布</h5>
-              <div className="space-y-1.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-muted">筹码评分</span>
-                  <span className={`font-mono ${(qe.chip_score ?? qe.chipScore) >= 7 ? 'text-success' : (qe.chip_score ?? qe.chipScore) <= 3 ? 'text-danger' : 'text-white'}`}>
-                    {qe.chip_score ?? qe.chipScore ?? '--'}/10
-                  </span>
-                </div>
-                {(qe.profit_ratio ?? qe.profitRatio) != null && (
-                  <div className="flex justify-between">
-                    <span className="text-muted">获利盘</span>
-                    <span className={`font-mono ${(qe.profit_ratio ?? qe.profitRatio) > 90 ? 'text-danger' : 'text-white'}`}>
-                      {(qe.profit_ratio ?? qe.profitRatio)?.toFixed(1)}%
-                    </span>
-                  </div>
-                )}
-                <div className="text-muted leading-relaxed">
-                  {qe.chip_signal ?? qe.chipSignal ?? '--'}
-                </div>
+              <MetricRow
+                label="筹码评分"
+                value={`${qe.chip_score ?? qe.chipScore ?? '--'}/10`}
+                color={(qe.chip_score ?? qe.chipScore) >= 7 ? 'text-success' : (qe.chip_score ?? qe.chipScore) <= 3 ? 'text-danger' : 'text-white'}
+              />
+              {(qe.profit_ratio ?? qe.profitRatio) != null && (
+                <MetricRow
+                  label="获利盘"
+                  value={`${(qe.profit_ratio ?? qe.profitRatio)?.toFixed(1)}%`}
+                  color={(qe.profit_ratio ?? qe.profitRatio) > 90 ? 'text-danger' : 'text-white'}
+                />
+              )}
+              <div className="text-[10px] text-muted mt-1.5 leading-relaxed">
+                {qe.chip_signal ?? qe.chipSignal ?? '--'}
               </div>
             </div>
           </div>
