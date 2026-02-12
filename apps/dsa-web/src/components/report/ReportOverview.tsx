@@ -9,6 +9,7 @@ interface ReportOverviewProps {
   meta: ReportMeta;
   summary: ReportSummaryType;
   isHistory?: boolean;
+  hasPositionInfo?: boolean;
 }
 
 /**
@@ -16,7 +17,8 @@ interface ReportOverviewProps {
  */
 export const ReportOverview: React.FC<ReportOverviewProps> = ({
   meta,
-  summary
+  summary,
+  hasPositionInfo = false,
 }) => {
   // 盘中自动刷新价格
   const [livePrice, setLivePrice] = useState<number | undefined>(meta.currentPrice ?? undefined);
@@ -131,8 +133,8 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
             </div>
           </Card>
 
-          {/* 持仓建议（空仓/持仓分开）或 操作建议 + 趋势预测 */}
-          {(summary.positionAdvice?.noPosition || summary.positionAdvice?.hasPosition) ? (
+          {/* 持仓建议（仅在用户输入了持仓信息时显示） */}
+          {hasPositionInfo && (summary.positionAdvice?.noPosition || summary.positionAdvice?.hasPosition) ? (
             <Card variant="bordered" padding="sm" hoverable>
               <h4 className="text-xs font-medium text-cyan mb-3">持仓建议</h4>
               <div className="space-y-3 text-sm">

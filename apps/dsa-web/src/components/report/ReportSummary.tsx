@@ -54,6 +54,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         meta={meta}
         summary={summary}
         isHistory={isHistory}
+        hasPositionInfo={!!positionInfo}
       />
 
       {/* 持仓诊断（有持仓信息时显示） */}
