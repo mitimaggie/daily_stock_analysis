@@ -2660,13 +2660,17 @@ class NotificationService:
 
         try:
             content_len = len(content)
-            # 始终使用 HTML 模板，渲染效果远优于 markdown（表格/标题/分段均正常显示）
+            # 始终使用 HTML 模板 + markdown→HTML 转换，渲染效果远优于 markdown 模板
             template = "html"
+            try:
+                html_content = self._markdown_to_html(content)
+            except Exception:
+                html_content = content  # 转换失败时降级为原始 markdown
 
             payload = {
                 "token": self._pushplus_token,
                 "title": title,
-                "content": content,
+                "content": html_content,
                 "template": template
             }
 
