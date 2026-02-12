@@ -810,7 +810,7 @@ class StockAnalysisPipeline:
             
             if single_stock_notify and self.notifier.is_available():
                 try:
-                    report = self.notifier.generate_single_stock_report(result)
+                    report = self.notifier.generate_dashboard_report([result])
                     self.notifier.send(report)
                 except Exception as e:
                     logger.warning(f"[{code}] 推送失败: {e}")
