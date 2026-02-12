@@ -80,70 +80,60 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   };
 
   return (
-    <div className="space-y-3">
-      {/* Hero: 股票名 + 价格 + 评分（紧凑一行） */}
-      <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2">
-              <span className="text-base font-bold text-white">{meta.stockName || meta.stockCode}</span>
-              <span className="font-mono text-[11px] text-white/30">{meta.stockCode}</span>
-              <span className="text-[11px] text-white/20">{formatDateTime(meta.createdAt)}</span>
-            </div>
-            {displayPrice != null && (
-              <div className="flex items-baseline gap-2 mt-0.5">
-                <span className={`text-lg font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
-                  {displayPrice.toFixed(2)}
-                </span>
-                <span className={`text-[13px] font-semibold font-mono ${getPriceChangeColor(displayChangePct)}`}>
-                  {formatChangePct(displayChangePct)}
-                </span>
-                {lastUpdate && (
-                  <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>
-                )}
-              </div>
-            )}
-          </div>
-          <ScoreGauge score={summary.sentimentScore} size="xs" showLabel={true} />
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4 space-y-3">
+      {/* 第一行：股票名 + 价格 + 评分 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="text-[15px] font-bold text-white">{meta.stockName || meta.stockCode}</span>
+          {displayPrice != null && (
+            <>
+              <span className={`text-[15px] font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                {displayPrice.toFixed(2)}
+              </span>
+              <span className={`text-[12px] font-mono ${getPriceChangeColor(displayChangePct)}`}>
+                {formatChangePct(displayChangePct)}
+              </span>
+            </>
+          )}
+          <span className="text-[11px] text-white/20">{meta.stockCode} · {formatDateTime(meta.createdAt)}</span>
+          {lastUpdate && <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>}
+        </div>
+        <ScoreGauge score={summary.sentimentScore} size="xs" showLabel={false} />
+      </div>
+
+      {/* 操作建议 + 趋势预测（紧凑两行） */}
+      <div className="grid grid-cols-2 gap-x-4 text-[13px]">
+        <div>
+          <span className="text-white/30 text-[11px]">操作建议</span>
+          <p className="text-white/90 leading-snug mt-0.5">{summary.operationAdvice || '暂无'}</p>
+        </div>
+        <div>
+          <span className="text-white/30 text-[11px]">趋势预测</span>
+          <p className="text-white/90 leading-snug mt-0.5">{summary.trendPrediction || '暂无'}</p>
         </div>
       </div>
 
-      {/* 操作建议 + 趋势预测 */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-3">
-          <div className="text-[11px] text-white/30 mb-1">操作建议</div>
-          <p className="text-[13px] text-white/90 leading-snug">
-            {summary.operationAdvice || '暂无建议'}
-          </p>
-        </div>
-        <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-3">
-          <div className="text-[11px] text-white/30 mb-1">趋势预测</div>
-          <p className="text-[13px] text-white/90 leading-snug">
-            {summary.trendPrediction || '暂无预测'}
-          </p>
-        </div>
-      </div>
+      {/* 分割线 */}
+      <div className="border-t border-white/5" />
 
       {/* 关键结论 */}
-      <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-        <p className="text-sm text-white/85 leading-relaxed whitespace-pre-wrap text-left">
-          {summary.analysisSummary || '暂无分析结论'}
-        </p>
-      </div>
+      <p className="text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap text-left">
+        {summary.analysisSummary || '暂无分析结论'}
+      </p>
 
-      {/* 持仓建议：空仓者建议始终显示，持仓者建议仅在用户填写持仓信息时显示 */}
+      {/* 持仓建议 */}
       {(summary.positionAdvice?.noPosition || (hasPositionInfo && summary.positionAdvice?.hasPosition)) && (
-        <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4 space-y-2.5">
+        <div className="border-t border-white/5 pt-3 space-y-2">
           {summary.positionAdvice?.noPosition && (
-            <div className="flex gap-2 items-start">
-              <span className="text-[11px] text-cyan bg-cyan/10 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
-              <p className="text-sm text-white/80 leading-relaxed">{summary.positionAdvice.noPosition}</p>
+            <div className="flex gap-2 items-start text-[13px]">
+              <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
+              <p className="text-white/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
             </div>
           )}
           {hasPositionInfo && summary.positionAdvice?.hasPosition && (
-            <div className="flex gap-2 items-start">
-              <span className="text-[11px] text-warning bg-warning/10 px-1.5 py-0.5 rounded flex-shrink-0">持仓</span>
-              <p className="text-sm text-white/80 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
+            <div className="flex gap-2 items-start text-[13px]">
+              <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">持仓</span>
+              <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
             </div>
           )}
         </div>
