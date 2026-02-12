@@ -160,7 +160,12 @@ class DataFetcherManager:
         # 3. 判断是否需要缝合 / 更新
         try:
             if not df_history.empty:
-                last_date = df_history.iloc[-1]['date'].date()
+                # 健壮的日期解析（兼容 Timestamp/str/date 等类型）
+                raw_date = df_history.iloc[-1]['date']
+                if hasattr(raw_date, 'date'):
+                    last_date = raw_date.date()
+                else:
+                    last_date = pd.Timestamp(str(raw_date)).date()
                 today_date = datetime.now().date()
                 
                 if last_date < today_date:
@@ -169,30 +174,39 @@ class DataFetcherManager:
                     if today_row is not None:
                         df_merged = pd.concat([df_history, today_row], ignore_index=True)
                         return df_merged
-                elif last_date == today_date:
-                    # 3b. 今天的数据已在 DB 中（之前的 run 写入），但可能已过时
-                    #     用最新实时行情刷新最后一行，保证技术分析和报告数据是最新的
-                    if realtime_quote.price and realtime_quote.price > 0:
-                        df_history = df_history.copy()
-                        idx = df_history.index[-1]
-                        df_history.loc[idx, 'close'] = realtime_quote.price
-                        if realtime_quote.high and realtime_quote.high > 0:
-                            df_history.loc[idx, 'high'] = max(float(df_history.loc[idx, 'high'] or 0), realtime_quote.high)
-                        if realtime_quote.low and realtime_quote.low > 0:
-                            cur_low = float(df_history.loc[idx, 'low'] or 999999)
-                            df_history.loc[idx, 'low'] = min(cur_low, realtime_quote.low) if cur_low > 0 else realtime_quote.low
-                        if realtime_quote.volume and realtime_quote.volume > 0:
-                            elapsed_w = self._calc_elapsed_weight()
-                            if elapsed_w > 0.03:
-                                df_history.loc[idx, 'volume'] = realtime_quote.volume / elapsed_w
-                        if realtime_quote.amount and realtime_quote.amount > 0:
-                            df_history.loc[idx, 'amount'] = realtime_quote.amount
-                        if realtime_quote.change_pct is not None:
-                            df_history.loc[idx, 'pct_chg'] = realtime_quote.change_pct
-                        logger.debug(f"[{code}] 已用实时行情刷新今日K线 (close={realtime_quote.price})")
-                        return df_history
+                    else:
+                        logger.warning(f"[{code}] Mock Bar 构造失败，回退到刷新最后一行")
+                        # 回退：即使无法构造 Mock Bar，也要用实时价更新最后一行的 close
+                        # 否则技术分析会用昨日收盘价，导致结论完全错误
+                
+                # 3b. 今天的数据已在 DB 中 或 Mock Bar 构造失败
+                #     用最新实时行情刷新最后一行，保证技术分析和报告数据是最新的
+                rt_price = float(realtime_quote.price or 0)
+                if rt_price > 0:
+                    df_history = df_history.copy()
+                    idx = df_history.index[-1]
+                    old_close = float(df_history.loc[idx, 'close'] or 0)
+                    df_history.loc[idx, 'close'] = rt_price
+                    if realtime_quote.high and realtime_quote.high > 0:
+                        df_history.loc[idx, 'high'] = max(float(df_history.loc[idx, 'high'] or 0), realtime_quote.high)
+                    if realtime_quote.low and realtime_quote.low > 0:
+                        cur_low = float(df_history.loc[idx, 'low'] or 999999)
+                        df_history.loc[idx, 'low'] = min(cur_low, realtime_quote.low) if cur_low > 0 else realtime_quote.low
+                    if realtime_quote.volume and realtime_quote.volume > 0:
+                        elapsed_w = self._calc_elapsed_weight()
+                        if elapsed_w > 0.03:
+                            df_history.loc[idx, 'volume'] = realtime_quote.volume / elapsed_w
+                    if realtime_quote.amount and realtime_quote.amount > 0:
+                        df_history.loc[idx, 'amount'] = realtime_quote.amount
+                    if realtime_quote.change_pct is not None:
+                        df_history.loc[idx, 'pct_chg'] = realtime_quote.change_pct
+                    if abs(old_close - rt_price) > 0.01:
+                        logger.info(f"[{code}] 实时价刷新K线: {old_close:.2f} → {rt_price:.2f} (last_date={last_date})")
+                    return df_history
+                else:
+                    logger.warning(f"[{code}] 实时行情价格无效(price={realtime_quote.price})，返回未刷新的历史数据")
         except Exception as e:
-            logger.error(f"[{code}] 数据缝合判断异常: {e}")
+            logger.error(f"[{code}] 数据缝合判断异常: {e}", exc_info=True)
         
         # 如果无需缝合，直接返回历史
         return df_history
