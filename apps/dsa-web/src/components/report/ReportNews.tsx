@@ -7,14 +7,31 @@ import type { NewsIntelItem } from '../../types/analysis';
 interface ReportNewsProps {
   queryId?: string;
   limit?: number;
+  /** 当结构化新闻API返回空时，回退显示原始新闻文本 */
+  newsContentFallback?: string | null;
 }
 
 /**
  * 资讯区组件 - 终端风格
  */
-export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20 }) => {
+/** 解析原始新闻文本为结构化条目 */
+function parseNewsText(text: string): { title: string; time?: string }[] {
+  const lines = text.split('\n').filter(l => l.trim());
+  const results: { title: string; time?: string }[] = [];
+  for (const line of lines) {
+    // 匹配格式: "1. 【来源】标题 (时间)" 或 "数字. 标题"
+    const match = line.match(/^\d+\.\s*(.+?)(?:\s*\((\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\))?$/);
+    if (match) {
+      results.push({ title: match[1].trim(), time: match[2] });
+    }
+  }
+  return results;
+}
+
+export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, newsContentFallback }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [items, setItems] = useState<NewsIntelItem[]>([]);
+  const [fallbackItems, setFallbackItems] = useState<{ title: string; time?: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const fetchNews = useCallback(async () => {
@@ -34,6 +51,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20 }) =
 
   useEffect(() => {
     setItems([]);
+    setFallbackItems([]);
     setError(null);
 
     if (queryId) {
@@ -41,9 +59,18 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20 }) =
     }
   }, [queryId, fetchNews]);
 
+  // 当结构化新闻为空时，解析原始新闻文本作为回退
+  useEffect(() => {
+    if (!isLoading && items.length === 0 && newsContentFallback) {
+      setFallbackItems(parseNewsText(newsContentFallback));
+    }
+  }, [isLoading, items.length, newsContentFallback]);
+
   if (!queryId) {
     return null;
   }
+
+  const hasContent = items.length > 0 || fallbackItems.length > 0;
 
   return (
     <Card variant="bordered" padding="md">
@@ -86,7 +113,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20 }) =
         </div>
       )}
 
-      {!isLoading && !error && items.length === 0 && (
+      {!isLoading && !error && !hasContent && (
         <div className="text-xs text-muted">暂无相关资讯</div>
       )}
 
@@ -129,7 +156,24 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20 }) =
               </div>
             </div>
           ))}
+        </div>
+      )}
 
+      {/* 回退：从原始新闻文本解析的条目 */}
+      {!isLoading && !error && items.length === 0 && fallbackItems.length > 0 && (
+        <div className="space-y-2 text-left">
+          <div className="text-[10px] text-muted mb-1">来源：Akshare 免费新闻源（可能非最新）</div>
+          {fallbackItems.map((item, index) => (
+            <div
+              key={`fb-${index}`}
+              className="p-2.5 rounded-lg bg-elevated/80 border border-white/5"
+            >
+              <p className="text-sm text-white/90 leading-snug">{item.title}</p>
+              {item.time && (
+                <p className="text-[10px] text-muted mt-1">{item.time}</p>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </Card>

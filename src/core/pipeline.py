@@ -817,6 +817,12 @@ class StockAnalysisPipeline:
                     else:
                         result.concrete_position = f"建议仓位{pct}%，但单价较高，最少需{100 * result.current_price:.0f}元买1手"
 
+            # 注入用户持仓信息到 dashboard，供前端计算盈亏
+            if position_info:
+                dashboard = getattr(result, 'dashboard', None) or {}
+                dashboard['position_info'] = position_info
+                result.dashboard = dashboard
+
             # 标注分析时间戳（盘中多次分析时可区分）
             result.analysis_time = datetime.now().strftime('%H:%M')
             self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score} (时间={result.analysis_time})")

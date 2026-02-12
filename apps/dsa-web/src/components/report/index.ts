@@ -4,3 +4,6 @@ export * from './ReportStrategy';
 export * from './ReportNews';
 export * from './ReportDetails';
 export * from './ScoreTrend';
+export * from './QuantAnalysis';
+export * from './AIAnalysis';
+export * from './PositionDiagnosis';
