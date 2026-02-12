@@ -2660,11 +2660,8 @@ class NotificationService:
 
         try:
             content_len = len(content)
-            # PushPlus markdown 模板对长内容支持有限，超过阈值切换为 html 模板
-            use_html = content_len > 6000
-            template = "html" if use_html else "markdown"
-            if use_html:
-                logger.info(f"PushPlus 内容较长({content_len}字符)，切换为 HTML 模板")
+            # 始终使用 HTML 模板，渲染效果远优于 markdown（表格/标题/分段均正常显示）
+            template = "html"
 
             payload = {
                 "token": self._pushplus_token,
