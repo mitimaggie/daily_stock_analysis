@@ -19,9 +19,15 @@ interface PositionDiagnosisProps {
 }
 
 const STOP_TYPE_LABELS: Record<string, string> = {
-  trailing: '移动止盈线',
+  trailing: '保利止损线',
   mid: '中线止损',
   short: '短线止损',
+};
+
+const STOP_TYPE_HINTS: Record<string, string> = {
+  trailing: '跌破即卖，锁定利润',
+  mid: '中期防守底线',
+  short: '短线纪律止损',
 };
 
 /**
@@ -45,16 +51,21 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
   const price = currentPrice ?? 0;
   const hasPosition = totalCapital > 0 && posAmount > 0;
 
-  // 推荐止损/止盈（持仓者用 holdingStrategy 推荐值，空仓用 strategy 的）
+  // 持仓者：三个关键价位（止损线 / 保利线 / 减仓目标）
+  // 空仓者：用 strategy 的止损/止盈
   const recStop = hasPosition && hs?.recommendedStop ? hs.recommendedStop : (stopLoss ? parseFloat(stopLoss) : 0);
   const recTarget = hasPosition && hs?.recommendedTarget ? hs.recommendedTarget : (takeProfit ? parseFloat(takeProfit) : 0);
   const recStopType = hasPosition ? (hs?.recommendedStopType || '') : '';
   const recStopLabel = hasPosition && recStopType
-    ? `推荐止损 (${STOP_TYPE_LABELS[recStopType] || recStopType})`
-    : '止损距成本';
-  const recTargetLabel = hasPosition
-    ? `推荐止盈 (${hs?.recommendedTargetType === 'mid' ? '中线目标' : '短线目标'})`
-    : '止盈距成本';
+    ? STOP_TYPE_LABELS[recStopType] || recStopType
+    : '止损';
+  const recStopHint = hasPosition && recStopType
+    ? STOP_TYPE_HINTS[recStopType] || ''
+    : '';
+  const recTargetLabel = hasPosition ? '减仓目标' : '止盈';
+  const recTargetHint = hasPosition
+    ? (hs?.recommendedTargetType === 'mid' ? '涨到可分批减仓(中线)' : '涨到可分批减仓(短线)')
+    : '';
 
   // 浮盈浮亏
   const hasPnl = costPrice > 0 && price > 0;
@@ -134,28 +145,59 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
           </div>
         )}
 
-        {/* 推荐止损/止盈（基于成本价） */}
+        {/* 关键价位（持仓者显示三档，空仓显示两档） */}
         {costPrice > 0 && (stopFromCost !== null || targetFromCost !== null) && (
-          <div className="grid grid-cols-2 gap-2">
-            {stopFromCost !== null && (
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <div className="text-[10px] text-muted mb-1">{recStopLabel}</div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-sm font-bold font-mono text-danger">{recStop.toFixed(2)}</span>
-                  <span className={`text-[10px] font-mono ${stopFromCost >= 0 ? 'text-success' : 'text-danger'}`}>
-                    ({stopFromCost >= 0 ? '+' : ''}{stopFromCost.toFixed(1)}%)
-                  </span>
+          <div>
+            <div className="text-[10px] text-muted mb-2">关键价位</div>
+            <div className="grid grid-cols-2 gap-2">
+              {/* 止损位 */}
+              {stopFromCost !== null && (
+                <div className="bg-surface-2 rounded-lg p-2.5">
+                  <div className="text-[10px] text-danger/70 font-medium mb-1">
+                    🛡 {recStopLabel}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-sm font-bold font-mono text-danger">{recStop.toFixed(2)}</span>
+                    <span className={`text-[10px] font-mono ${stopFromCost >= 0 ? 'text-success' : 'text-danger'}`}>
+                      ({stopFromCost >= 0 ? '+' : ''}{stopFromCost.toFixed(1)}%)
+                    </span>
+                  </div>
+                  {recStopHint && <div className="text-[9px] text-white/25 mt-1">{recStopHint}</div>}
                 </div>
-              </div>
-            )}
-            {targetFromCost !== null && (
-              <div className="bg-surface-2 rounded-lg p-2.5">
-                <div className="text-[10px] text-muted mb-1">{recTargetLabel}</div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-sm font-bold font-mono text-success">{recTarget.toFixed(2)}</span>
-                  <span className={`text-[10px] font-mono ${targetFromCost >= 0 ? 'text-success' : 'text-danger'}`}>
-                    ({targetFromCost >= 0 ? '+' : ''}{targetFromCost.toFixed(1)}%)
-                  </span>
+              )}
+              {/* 减仓/止盈目标 */}
+              {targetFromCost !== null && (
+                <div className="bg-surface-2 rounded-lg p-2.5">
+                  <div className="text-[10px] text-success/70 font-medium mb-1">
+                    🎯 {recTargetLabel}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-sm font-bold font-mono text-success">{recTarget.toFixed(2)}</span>
+                    <span className={`text-[10px] font-mono ${targetFromCost >= 0 ? 'text-success' : 'text-danger'}`}>
+                      ({targetFromCost >= 0 ? '+' : ''}{targetFromCost.toFixed(1)}%)
+                    </span>
+                  </div>
+                  {recTargetHint && <div className="text-[9px] text-white/25 mt-1">{recTargetHint}</div>}
+                </div>
+              )}
+            </div>
+
+            {/* 持仓者额外显示：移动止盈线（如果不是推荐止损本身） */}
+            {hasPosition && hs?.trailingStop && hs.trailingStop > 0 && recStopType !== 'trailing' && (
+              <div className="mt-2 bg-[#1a1a2e] rounded-lg p-2.5 border border-cyan/10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-cyan/70 font-medium">📈 移动止盈线（保利线）</div>
+                    <div className="text-[9px] text-white/25 mt-0.5">跌破此价即离场，保护已有利润</div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold font-mono text-cyan">{hs.trailingStop.toFixed(2)}</span>
+                    {costPrice > 0 && (
+                      <span className={`text-[10px] font-mono ml-1 ${hs.trailingStop >= costPrice ? 'text-success' : 'text-danger'}`}>
+                        ({((hs.trailingStop - costPrice) / costPrice * 100) >= 0 ? '+' : ''}{((hs.trailingStop - costPrice) / costPrice * 100).toFixed(1)}%)
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -169,16 +211,16 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
           </div>
         )}
 
-        {/* 所有量化锚点参考 */}
+        {/* 所有量化锚点参考（折叠展示） */}
         {hasPosition && hs && (hs.stopLossShort || hs.trailingStop || hs.stopLossMid) && (
           <div className="border-t border-white/5 pt-2">
-            <div className="text-[10px] text-muted mb-1.5">全部止损止盈锚点</div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-white/40">
-              {hs.trailingStop ? <span>移动止盈 <span className="text-white/60">{hs.trailingStop.toFixed(2)}</span></span> : null}
-              {hs.stopLossShort ? <span>短线止损 <span className="text-white/60">{hs.stopLossShort.toFixed(2)}</span></span> : null}
-              {hs.stopLossMid ? <span>中线止损 <span className="text-white/60">{hs.stopLossMid.toFixed(2)}</span></span> : null}
-              {hs.targetShort ? <span>短线目标 <span className="text-white/60">{hs.targetShort.toFixed(2)}</span></span> : null}
-              {hs.targetMid ? <span>中线目标 <span className="text-white/60">{hs.targetMid.toFixed(2)}</span></span> : null}
+            <div className="text-[10px] text-muted mb-1.5">全部锚点参考</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px]">
+              {hs.trailingStop ? <div className="flex justify-between"><span className="text-white/30">保利线</span><span className="font-mono text-white/50">{hs.trailingStop.toFixed(2)}</span></div> : null}
+              {hs.stopLossShort ? <div className="flex justify-between"><span className="text-white/30">短线止损</span><span className="font-mono text-white/50">{hs.stopLossShort.toFixed(2)}</span></div> : null}
+              {hs.stopLossMid ? <div className="flex justify-between"><span className="text-white/30">中线止损</span><span className="font-mono text-white/50">{hs.stopLossMid.toFixed(2)}</span></div> : null}
+              {hs.targetShort ? <div className="flex justify-between"><span className="text-white/30">短线目标</span><span className="font-mono text-white/50">{hs.targetShort.toFixed(2)}</span></div> : null}
+              {hs.targetMid ? <div className="flex justify-between"><span className="text-white/30">中线目标</span><span className="font-mono text-white/50">{hs.targetMid.toFixed(2)}</span></div> : null}
             </div>
           </div>
         )}

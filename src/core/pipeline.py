@@ -743,9 +743,13 @@ class StockAnalysisPipeline:
                 dashboard['quant_extras'] = trend
 
                 # 生成统一持仓者策略（供 PushPlus / Web / API 共用）
+                # trend 是 dict（来自 _prepare_stock_context 中 trend_result.to_dict()），
+                # generate_holding_strategy 需要属性访问，用 SimpleNamespace 包装
+                from types import SimpleNamespace
                 from src.stock_analyzer.risk_management import RiskManager as _RM
+                _trend_obj = SimpleNamespace(**trend)
                 dashboard['holding_strategy'] = _RM.generate_holding_strategy(
-                    trend_result, cost_price=0.0,
+                    _trend_obj, cost_price=0.0,
                 )
 
                 # 决策类型

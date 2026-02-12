@@ -5,25 +5,89 @@ interface QuantAnalysisProps {
   data: Record<string, unknown>;
 }
 
-/** 量化指标行：有结论时结论放大数字缩小，无结论时数字正常显示 */
-const MetricRow: React.FC<{
+// ============ 结论生成器 ============
+
+/** RSI 结论 */
+function rsiVerdict(val: number, _status: string): { text: string; color: string } {
+  if (val > 80) return { text: `严重超买(${val.toFixed(1)})`, color: 'text-danger' };
+  if (val > 70) return { text: `超买(${val.toFixed(1)})，短线回调风险`, color: 'text-danger' };
+  if (val < 20) return { text: `严重超卖(${val.toFixed(1)})`, color: 'text-success' };
+  if (val < 30) return { text: `超卖(${val.toFixed(1)})，反弹机会`, color: 'text-success' };
+  if (val >= 50) return { text: `偏强(${val.toFixed(1)})`, color: 'text-white/70' };
+  return { text: `偏弱(${val.toFixed(1)})`, color: 'text-white/50' };
+}
+
+/** KDJ 结论 */
+function kdjVerdict(k: number, j: number, kdjStatus: string): { text: string; color: string } {
+  if (j > 100) return { text: `J=${j.toFixed(0)} 严重超买，回调概率大`, color: 'text-danger' };
+  if (j > 80) return { text: `J=${j.toFixed(0)} 高位，注意回调`, color: 'text-[#ff8c00]' };
+  if (j < 0) return { text: `J=${j.toFixed(0)} 严重超卖，反弹在即`, color: 'text-success' };
+  if (j < 20) return { text: `J=${j.toFixed(0)} 低位，关注企稳信号`, color: 'text-success' };
+  if (kdjStatus) return { text: `K${k.toFixed(0)}/J${j.toFixed(0)} ${kdjStatus}`, color: k > 50 ? 'text-white/70' : 'text-white/50' };
+  return { text: `K${k.toFixed(0)}/J${j.toFixed(0)}`, color: 'text-white/60' };
+}
+
+/** MACD 结论 */
+function macdVerdict(bar: number, status: string): { text: string; color: string } {
+  const bullish = bar > 0;
+  const statusMap: Record<string, { text: string; color: string }> = {
+    '零轴上金叉': { text: '零轴上金叉，强买入信号', color: 'text-success' },
+    '金叉': { text: '金叉，趋势转多', color: 'text-success' },
+    '上穿零轴': { text: '上穿零轴，趋势转强', color: 'text-success' },
+    '多头': { text: `多头(柱${bar.toFixed(3)})`, color: 'text-[#ff4d4d]' },
+    '死叉': { text: '死叉，趋势转空', color: 'text-danger' },
+    '下穿零轴': { text: '下穿零轴，趋势走弱', color: 'text-danger' },
+    '空头': { text: `空头(柱${bar.toFixed(3)})`, color: 'text-[#00d46a]' },
+  };
+  if (status && statusMap[status]) return statusMap[status];
+  return { text: `${bullish ? '红柱' : '绿柱'} ${bar.toFixed(3)}`, color: bullish ? 'text-[#ff4d4d]' : 'text-[#00d46a]' };
+}
+
+/** 布林带%B 结论 */
+function bbVerdict(pctB: number): { text: string; color: string } {
+  if (pctB > 1.0) return { text: `${pctB.toFixed(2)} 突破上轨，超强/超买`, color: 'text-danger' };
+  if (pctB > 0.8) return { text: `${pctB.toFixed(2)} 接近上轨，注意回调`, color: 'text-[#ff8c00]' };
+  if (pctB < 0) return { text: `${pctB.toFixed(2)} 跌破下轨，超弱/超卖`, color: 'text-success' };
+  if (pctB < 0.2) return { text: `${pctB.toFixed(2)} 接近下轨，关注支撑`, color: 'text-success' };
+  return { text: `${pctB.toFixed(2)} 中轨附近`, color: 'text-white/50' };
+}
+
+/** 均线排列结论 */
+function maVerdict(alignment: string): { text: string; color: string } {
+  if (!alignment) return { text: '--', color: 'text-white/40' };
+  const lower = alignment.toLowerCase();
+  if (lower.includes('强势多头') || lower.includes('多头排列'))
+    return { text: alignment, color: 'text-success' };
+  if (lower.includes('多头') || lower.includes('偏多'))
+    return { text: alignment, color: 'text-success/80' };
+  if (lower.includes('强势空头') || lower.includes('空头排列'))
+    return { text: alignment, color: 'text-danger' };
+  if (lower.includes('空头') || lower.includes('偏空'))
+    return { text: alignment, color: 'text-danger/80' };
+  return { text: alignment, color: 'text-warning' };
+}
+
+const getScoreColor = (score: number): string => {
+  if (score >= 70) return 'text-success';
+  if (score >= 40) return 'text-warning';
+  return 'text-danger';
+};
+
+// ============ 子组件 ============
+
+/** 技术指标卡片：结论+数值+解读 */
+const IndicatorCard: React.FC<{
   label: string;
-  value?: string | number | undefined;
-  color?: string;
-  sub?: string;
-}> = ({ label, value, color, sub }) => (
-  <div className="flex items-center justify-between py-1.5 border-b border-white/5 last:border-0">
-    <span className="text-[11px] text-muted">{label}</span>
-    <div className="flex items-baseline gap-1.5">
-      {sub ? (
-        <>
-          <span className="text-[10px] font-mono text-white/40">{value ?? '--'}</span>
-          <span className={`text-[13px] font-bold ${color || 'text-white'}`}>{sub}</span>
-        </>
-      ) : (
-        <span className={`text-[13px] font-bold font-mono ${color || 'text-white'}`}>{value ?? '--'}</span>
-      )}
+  conclusion: string;
+  color: string;
+  detail?: string;
+}> = ({ label, conclusion, color, detail }) => (
+  <div className="bg-white/[0.02] rounded-lg p-2.5 border border-white/[0.04]">
+    <div className="flex items-center justify-between mb-1">
+      <span className="text-[10px] text-white/30 font-medium">{label}</span>
     </div>
+    <div className={`text-[12px] font-bold leading-snug ${color}`}>{conclusion}</div>
+    {detail && <div className="text-[10px] text-white/25 mt-1">{detail}</div>}
   </div>
 );
 
@@ -41,19 +105,6 @@ const CoreMetric: React.FC<{
   </div>
 );
 
-
-const getScoreColor = (score: number): string => {
-  if (score >= 70) return 'text-success';
-  if (score >= 40) return 'text-warning';
-  return 'text-danger';
-};
-
-const getRsiColor = (rsi: number): string => {
-  if (rsi > 70) return 'text-danger';
-  if (rsi < 30) return 'text-success';
-  return 'text-white';
-};
-
 /**
  * 量化分析详情组件
  * 展示技术指标、估值、资金面、筹码等量化数据
@@ -66,6 +117,25 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
 
   const signalScore = qe.signal_score ?? qe.signalScore;
   const trendStrength = qe.trend_strength ?? qe.trendStrength;
+
+  // 提取指标值（兼容 snake_case / camelCase）
+  const rsiVal = qe.rsi ?? qe.rsi12 ?? 50;
+  const rsiStatus = qe.rsi_status ?? qe.rsiStatus ?? '';
+  const kdjK = qe.kdj_k ?? qe.kdjK ?? 50;
+  const kdjJ = qe.kdj_j ?? qe.kdjJ ?? 50;
+  const kdjStatus = qe.kdj_status ?? qe.kdjStatus ?? '';
+  const macdBar = qe.macd_bar ?? qe.macdBar ?? 0;
+  const macdStatus = qe.macd_status ?? qe.macdStatus ?? '';
+  const bbPctB = qe.bb_pct_b ?? qe.bbPctB;
+  const maAlignment = qe.ma_alignment ?? qe.maAlignment ?? '';
+  const atr14 = qe.atr14;
+
+  // 生成结论
+  const rsiV = rsiVerdict(rsiVal, rsiStatus);
+  const kdjV = kdjVerdict(kdjK, kdjJ, kdjStatus);
+  const macdV = macdVerdict(macdBar, macdStatus);
+  const bbV = bbPctB != null ? bbVerdict(bbPctB) : null;
+  const maV = maVerdict(maAlignment);
 
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
@@ -124,16 +194,53 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             />
           </div>
 
-          {/* 技术指标（两列紧凑） */}
-          <div className="grid grid-cols-2 gap-x-4 bg-white/[0.03] rounded-lg p-3">
-            <MetricRow label="RSI(12)" value={(qe.rsi ?? qe.rsi12)?.toFixed(1)} color={getRsiColor(qe.rsi ?? qe.rsi12 ?? 50)} sub={qe.rsi_status ?? qe.rsiStatus} />
-            <MetricRow label="MACD" value={(qe.macd_bar ?? qe.macdBar)?.toFixed(3)} color={(qe.macd_bar ?? qe.macdBar) > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'} sub={qe.macd_status ?? qe.macdStatus} />
-            <MetricRow label="KDJ" value={`K${(qe.kdj_k ?? qe.kdjK)?.toFixed(0) ?? '--'}/J${(qe.kdj_j ?? qe.kdjJ)?.toFixed(0) ?? '--'}`} color={(qe.kdj_j ?? qe.kdjJ) > 100 ? 'text-danger' : (qe.kdj_j ?? qe.kdjJ) < 0 ? 'text-success' : 'text-white'} />
-            <MetricRow label="布林%B" value={(qe.bb_pct_b ?? qe.bbPctB)?.toFixed(2)} color={(qe.bb_pct_b ?? qe.bbPctB) > 0.8 ? 'text-danger' : (qe.bb_pct_b ?? qe.bbPctB) < 0.2 ? 'text-success' : 'text-white'} />
-            <MetricRow label="ATR" value={(qe.atr14)?.toFixed(2)} />
-            {(qe.ma_alignment ?? qe.maAlignment) && (
-              <MetricRow label="均线" sub={qe.ma_alignment ?? qe.maAlignment} />
-            )}
+          {/* 技术指标（每个都带结论） */}
+          <div>
+            <h4 className="text-[11px] font-medium text-white/40 mb-2">技术指标</h4>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <IndicatorCard
+                label="RSI(12)"
+                conclusion={rsiV.text}
+                color={rsiV.color}
+                detail={rsiStatus && rsiStatus !== rsiV.text ? rsiStatus : undefined}
+              />
+              <IndicatorCard
+                label="MACD"
+                conclusion={macdV.text}
+                color={macdV.color}
+              />
+              <IndicatorCard
+                label="KDJ"
+                conclusion={kdjV.text}
+                color={kdjV.color}
+                detail={kdjStatus && !kdjV.text.includes(kdjStatus) ? kdjStatus : undefined}
+              />
+              {bbV && (
+                <IndicatorCard
+                  label="布林%B"
+                  conclusion={bbV.text}
+                  color={bbV.color}
+                />
+              )}
+              <IndicatorCard
+                label="均线排列"
+                conclusion={maV.text}
+                color={maV.color}
+                detail={
+                  (qe.ma5 || qe.ma10 || qe.ma20)
+                    ? `MA5=${(qe.ma5)?.toFixed(2) ?? '--'} MA10=${(qe.ma10)?.toFixed(2) ?? '--'} MA20=${(qe.ma20)?.toFixed(2) ?? '--'}`
+                    : undefined
+                }
+              />
+              {atr14 != null && (
+                <IndicatorCard
+                  label="ATR(14)"
+                  conclusion={`${atr14.toFixed(2)}`}
+                  color="text-white/60"
+                  detail={`日波幅 ≈ ${atr14.toFixed(2)} 元`}
+                />
+              )}
+            </div>
           </div>
 
           {/* 估值 + 资金面 + 筹码（结论简洁） */}
