@@ -13,8 +13,8 @@ import { Watchlist } from '../components/watchlist';
 import { useTaskStream } from '../hooks';
 
 /**
- * 首页 - 单页设计
- * 顶部输入 + 左侧历史 + 右侧报告
+ * 首页 - 重新设计的布局
+ * 顶部品牌 + 搜索栏 | 左侧边栏 | 右侧报告
  */
 const HomePage: React.FC = () => {
   const { setLoading, setError: setStoreError, error: storeError } = useAnalysisStore();
@@ -34,7 +34,7 @@ const HomePage: React.FC = () => {
   const [positionAmount, setPositionAmount] = useState('');
   const [costPrice, setCostPrice] = useState('');
 
-// 历史列表状态
+  // 历史列表状态
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -66,7 +66,7 @@ const HomePage: React.FC = () => {
 
   // 构建持仓信息（有任意一项有效值时才传递）
   const buildPositionInfo = (): PositionInfo | undefined => {
-    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined; // 万元→元
+    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
     const pa = positionAmount ? parseFloat(positionAmount) * 10000 : undefined;
     const cp = costPrice ? parseFloat(costPrice) : undefined;
     if (tc || pa || cp) {
@@ -97,23 +97,18 @@ const HomePage: React.FC = () => {
   useTaskStream({
     onTaskCreated: (task) => {
       setActiveTasks((prev) => {
-        // 避免重复添加
         if (prev.some((t) => t.taskId === task.taskId)) return prev;
         return [...prev, task];
       });
     },
     onTaskStarted: updateTask,
     onTaskCompleted: (task) => {
-      // 刷新历史列表
       fetchHistory();
-      // 延迟移除任务，让用户看到完成状态
       setTimeout(() => removeTask(task.taskId), 2000);
     },
     onTaskFailed: (task) => {
       updateTask(task);
-      // 显示错误提示
       setStoreError(task.error || '分析失败');
-      // 延迟移除任务
       setTimeout(() => removeTask(task.taskId), 5000);
     },
     onError: () => {
@@ -122,7 +117,7 @@ const HomePage: React.FC = () => {
     enabled: true,
   });
 
-// 加载历史列表
+  // 加载历史列表
   const fetchHistory = useCallback(async (autoSelectFirst = false, reset = true) => {
     if (reset) {
       setIsLoadingHistory(true);
@@ -147,12 +142,10 @@ const HomePage: React.FC = () => {
         setHistoryItems(prev => [...prev, ...response.items]);
       }
 
-      // 判断是否还有更多数据
       const totalLoaded = reset ? response.items.length : historyItems.length + response.items.length;
       setHasMore(totalLoaded < response.total);
       setCurrentPage(page);
 
-      // 如果需要自动选择第一条，且有数据，且当前没有选中报告
       if (autoSelectFirst && response.items.length > 0 && !selectedReport) {
         const firstItem = response.items[0];
         setIsLoadingReport(true);
@@ -187,9 +180,7 @@ const HomePage: React.FC = () => {
 
   // 点击历史项加载报告
   const handleHistoryClick = async (queryId: string) => {
-    // 取消当前分析请求的结果显示（通过递增 requestId）
     analysisRequestIdRef.current += 1;
-
     setIsLoadingReport(true);
     try {
       const report = await historyApi.getDetail(queryId);
@@ -215,29 +206,24 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setStoreError(null);
 
-    // 记录当前请求的 ID
     const currentRequestId = ++analysisRequestIdRef.current;
 
     try {
-      // 使用异步模式提交分析
       const response = await analysisApi.analyzeAsync({
         stockCode: normalized,
         reportType: 'detailed',
         positionInfo: buildPositionInfo(),
       });
 
-      // 清空输入框
       if (currentRequestId === analysisRequestIdRef.current) {
         setStockCode('');
       }
 
-      // 任务已提交，SSE 会推送更新
       console.log('Task submitted:', response.taskId);
     } catch (err) {
       console.error('Analysis failed:', err);
       if (currentRequestId === analysisRequestIdRef.current) {
         if (err instanceof DuplicateTaskError) {
-          // 显示重复任务错误
           setDuplicateError(`股票 ${err.stockCode} 正在分析中，请等待完成`);
         } else {
           setStoreError(err instanceof Error ? err.message : '分析失败');
@@ -259,7 +245,6 @@ const HomePage: React.FC = () => {
   // 自选股：单只分析
   const handleWatchlistAnalyze = useCallback((code: string) => {
     setStockCode(code);
-    // 延迟触发分析，让 state 更新
     setTimeout(() => {
       const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
       if (btn) btn.click();
@@ -286,124 +271,149 @@ const HomePage: React.FC = () => {
   }, [buildPositionInfo]);
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* 分析失败时顶部 toast 提示 */}
+    <div className="h-screen flex flex-col overflow-hidden">
+      {/* ========== 错误 Toast ========== */}
       {storeError && (
-        <div className="flex-shrink-0 px-4 py-2 bg-danger/15 border-b border-danger/30 flex items-center justify-between gap-2">
-          <span className="text-sm text-danger">{storeError}</span>
+        <div className="flex-shrink-0 px-4 py-2 bg-danger/10 border-b border-danger/20 flex items-center justify-between gap-2 animate-slide-up">
+          <span className="text-[13px] text-danger">{storeError}</span>
           <button
             type="button"
             onClick={() => setStoreError(null)}
-            className="text-danger hover:opacity-80 text-xs px-2 py-1 rounded"
+            className="text-danger/70 hover:text-danger text-xs px-2 py-0.5 rounded hover:bg-danger/10 transition-colors"
             aria-label="关闭"
           >
-            关闭
+            ✕
           </button>
         </div>
       )}
-      {/* 顶部输入栏 */}
-      <header className="flex-shrink-0 px-3 sm:px-4 py-3 border-b border-white/5">
-        <div className="flex items-center gap-2">
+
+      {/* ========== 顶部导航栏 ========== */}
+      <header className="flex-shrink-0 header-bar relative z-50">
+        <div className="flex items-center gap-3 h-full px-4">
+          {/* Logo + 品牌 */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan/80 to-cyan/40 flex items-center justify-center shadow-lg shadow-cyan/20">
+              <svg className="w-4 h-4 text-black" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+            </div>
+            <span className="text-[15px] font-bold text-white/90 hidden sm:block tracking-tight">DSA</span>
+          </div>
+
+          {/* 分隔线 */}
+          <div className="w-px h-5 bg-white/10 hidden sm:block" />
+
           {/* 移动端侧边栏切换 */}
           <button
             type="button"
             onClick={() => setSidebarOpen(v => !v)}
-            className="lg:hidden text-muted hover:text-white p-1.5 rounded-lg bg-elevated border border-white/10"
+            className="lg:hidden text-muted hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-colors"
             aria-label="切换侧边栏"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="flex-1 relative">
-            <input
-              type="text"
-              value={stockCode}
-              onChange={(e) => {
-                setStockCode(e.target.value.toUpperCase());
-                setInputError(undefined);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder="输入股票代码，如 600519、00700、AAPL"
-              disabled={isAnalyzing}
-              className={`input-terminal w-full ${inputError ? 'border-danger/50' : ''}`}
-            />
-            {inputError && (
-              <p className="absolute -bottom-4 left-0 text-xs text-danger">{inputError}</p>
-            )}
-            {duplicateError && (
-              <p className="absolute -bottom-4 left-0 text-xs text-warning">{duplicateError}</p>
+
+          {/* 搜索输入 */}
+          <div className="flex-1 max-w-xl relative">
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={stockCode}
+                onChange={(e) => {
+                  setStockCode(e.target.value.toUpperCase());
+                  setInputError(undefined);
+                  setDuplicateError(null);
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder="股票代码  600519 / HK00700 / AAPL"
+                disabled={isAnalyzing}
+                className={`header-input w-full pl-9 ${inputError ? 'border-danger/40' : ''}`}
+              />
+            </div>
+            {(inputError || duplicateError) && (
+              <p className={`absolute -bottom-5 left-0 text-[11px] ${inputError ? 'text-danger' : 'text-warning'}`}>
+                {inputError || duplicateError}
+              </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => setShowPosition((v) => !v)}
-            className={`text-xs px-2 py-1.5 rounded border transition-colors ${
-              showPosition
-                ? 'border-cyan/40 text-cyan bg-cyan/10'
-                : 'border-white/10 text-muted hover:text-secondary'
-            }`}
-            title="填写持仓信息获取个性化建议"
-          >
-            💼 持仓
-          </button>
-          <button
-            type="button"
-            onClick={handleAnalyze}
-            disabled={!stockCode || isAnalyzing}
-            data-analyze-btn
-            className="btn-primary flex items-center gap-1.5 whitespace-nowrap"
-          >
-            {isAnalyzing ? (
-              <>
-                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+
+          {/* 操作按钮组 */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPosition((v) => !v)}
+              className={`header-btn-icon ${showPosition ? 'text-cyan border-cyan/30 bg-cyan/8' : ''}`}
+              title="持仓信息"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleAnalyze}
+              disabled={!stockCode || isAnalyzing}
+              data-analyze-btn
+              className="header-btn-primary"
+            >
+              {isAnalyzing ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                分析中
-              </>
-            ) : (
-              '分析'
-            )}
-          </button>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              )}
+              <span className="hidden sm:inline">{isAnalyzing ? '分析中' : '分析'}</span>
+            </button>
+          </div>
         </div>
+
         {/* 持仓信息面板（可折叠） */}
         {showPosition && (
-          <div className="flex items-center gap-3 mt-2 max-w-2xl">
+          <div className="flex items-center gap-4 px-4 pb-3 pt-1 border-t border-white/5 animate-slide-up">
             <div className="flex items-center gap-1.5">
-              <label className="text-xs text-muted whitespace-nowrap">总资金(万)</label>
+              <label className="text-[11px] text-white/30 whitespace-nowrap">总资金(万)</label>
               <input
                 type="number"
                 value={totalCapital}
                 onChange={(e) => setTotalCapital(e.target.value)}
                 placeholder="100"
-                className="input-terminal w-20 text-xs py-1"
+                className="header-input w-20 text-xs py-1.5"
               />
             </div>
             <div className="flex items-center gap-1.5">
-              <label className="text-xs text-muted whitespace-nowrap">持仓(万)</label>
+              <label className="text-[11px] text-white/30 whitespace-nowrap">持仓(万)</label>
               <input
                 type="number"
                 value={positionAmount}
                 onChange={(e) => setPositionAmount(e.target.value)}
                 placeholder="10"
-                className="input-terminal w-20 text-xs py-1"
+                className="header-input w-20 text-xs py-1.5"
               />
             </div>
             <div className="flex items-center gap-1.5">
-              <label className="text-xs text-muted whitespace-nowrap">成本价</label>
+              <label className="text-[11px] text-white/30 whitespace-nowrap">成本价</label>
               <input
                 type="number"
                 step="0.01"
                 value={costPrice}
                 onChange={(e) => setCostPrice(e.target.value)}
                 placeholder="35.00"
-                className="input-terminal w-24 text-xs py-1"
+                className="header-input w-24 text-xs py-1.5"
               />
             </div>
             {(totalCapital || positionAmount) && (
-              <span className="text-xs text-muted">
-                仓位: {totalCapital && positionAmount
+              <span className="text-[11px] text-white/40 font-mono">
+                仓位 {totalCapital && positionAmount
                   ? `${((parseFloat(positionAmount) / parseFloat(totalCapital)) * 100).toFixed(1)}%`
                   : '--'}
               </span>
@@ -412,76 +422,79 @@ const HomePage: React.FC = () => {
         )}
       </header>
 
-      {/* 主内容区 */}
-      <main className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 relative">
-        {/* 移动端遮罩层 */}
+      {/* ========== 主内容区 ========== */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* 移动端遮罩 */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 lg:hidden animate-fade-in"
             onClick={() => setSidebarOpen(false)}
           />
         )}
 
-{/* 左侧：自选股 + 任务面板 + 历史列表 */}
-        <div className={`flex flex-col gap-3 w-64 flex-shrink-0 overflow-hidden
-          fixed lg:static inset-y-0 left-0 z-40 bg-base p-3 lg:p-0
-          transform transition-transform duration-200 ease-in-out
+        {/* 左侧边栏 */}
+        <aside className={`sidebar-panel
+          fixed lg:static inset-y-0 left-0 z-40 bg-base lg:bg-transparent
+          transform transition-transform duration-200 ease-out
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}>
-          {/* 自选股 */}
-          <Watchlist
-            currentCode={stockCode}
-            onAnalyze={handleWatchlistAnalyze}
-            onBatchAnalyze={handleBatchAnalyze}
-            isAnalyzing={isAnalyzing}
-          />
+          <div className="flex flex-col gap-2 h-full p-3 lg:p-0 lg:py-3 lg:pl-3 overflow-y-auto">
+            {/* 自选股 */}
+            <Watchlist
+              currentCode={stockCode}
+              onAnalyze={handleWatchlistAnalyze}
+              onBatchAnalyze={handleBatchAnalyze}
+              isAnalyzing={isAnalyzing}
+            />
 
-          {/* 任务面板 */}
-          <TaskPanel tasks={activeTasks} />
+            {/* 任务面板 */}
+            <TaskPanel tasks={activeTasks} />
 
-          {/* 历史列表 */}
-          <HistoryList
-            items={historyItems}
-            isLoading={isLoadingHistory}
-            isLoadingMore={isLoadingMore}
-            hasMore={hasMore}
-            selectedQueryId={selectedReport?.meta.queryId}
-            onItemClick={(queryId) => {
-              handleHistoryClick(queryId);
-              setSidebarOpen(false);
-            }}
-            onLoadMore={handleLoadMore}
-            className="max-h-[62vh] overflow-hidden"
-          />
-        </div>
+            {/* 历史列表 */}
+            <HistoryList
+              items={historyItems}
+              isLoading={isLoadingHistory}
+              isLoadingMore={isLoadingMore}
+              hasMore={hasMore}
+              selectedQueryId={selectedReport?.meta.queryId}
+              onItemClick={(queryId) => {
+                handleHistoryClick(queryId);
+                setSidebarOpen(false);
+              }}
+              onLoadMore={handleLoadMore}
+              className="flex-1 min-h-0 overflow-hidden"
+            />
+          </div>
+        </aside>
 
-        {/* 右侧报告详情 */}
-        <section className="flex-1 overflow-y-auto pl-0 lg:pl-1 w-full">
+        {/* 右侧报告区 */}
+        <section className="flex-1 overflow-y-auto p-3 lg:p-4">
           {isLoadingReport ? (
-            <div className="flex flex-col items-center justify-center h-full">
-              <div className="w-10 h-10 border-3 border-cyan/20 border-t-cyan rounded-full animate-spin" />
-              <p className="mt-3 text-secondary text-sm">加载报告中...</p>
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <div className="w-10 h-10 border-[3px] border-cyan/15 border-t-cyan rounded-full animate-spin" />
+              <p className="text-[13px] text-white/30">加载报告中...</p>
             </div>
           ) : selectedReport ? (
-            <div className="max-w-4xl">
-              {/* 报告内容 */}
+            <div className="max-w-4xl mx-auto animate-fade-in">
               <ReportSummary data={selectedReport} isHistory />
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="w-12 h-12 mb-3 rounded-xl bg-elevated flex items-center justify-center">
-                <svg className="w-6 h-6 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                <svg className="w-7 h-7 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
               </div>
-              <h3 className="text-base font-medium text-white mb-1.5">开始分析</h3>
-              <p className="text-xs text-muted max-w-xs">
-                输入股票代码进行分析，或从左侧选择历史报告查看
-              </p>
+              <div>
+                <h3 className="text-[15px] font-semibold text-white/80 mb-1">开始分析</h3>
+                <p className="text-[12px] text-white/25 max-w-[260px] leading-relaxed">
+                  输入股票代码进行 AI 智能分析，或从左侧选择历史报告
+                </p>
+              </div>
             </div>
           )}
         </section>
-      </main>
+      </div>
     </div>
   );
 };
