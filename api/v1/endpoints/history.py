@@ -26,6 +26,7 @@ from api.v1.schemas.history import (
     ReportStrategy,
     ReportDetails,
     PositionAdvice,
+    HoldingStrategy,
 )
 from api.v1.schemas.common import ErrorResponse
 from src.storage import DatabaseManager
@@ -200,11 +201,16 @@ def get_history_detail(
             position_advice=position_advice
         )
         
+        hs_data = result.get("holding_strategy")
+        holding_strategy = None
+        if hs_data and isinstance(hs_data, dict):
+            holding_strategy = HoldingStrategy(**hs_data)
         strategy = ReportStrategy(
             ideal_buy=result.get("ideal_buy"),
             secondary_buy=result.get("secondary_buy"),
             stop_loss=result.get("stop_loss"),
-            take_profit=result.get("take_profit")
+            take_profit=result.get("take_profit"),
+            holding_strategy=holding_strategy,
         )
         
         details = ReportDetails(

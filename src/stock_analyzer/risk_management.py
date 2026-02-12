@@ -6,7 +6,7 @@
 
 import logging
 import pandas as pd
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 from .types import TrendAnalysisResult, TrendStatus, MarketRegime
 
 logger = logging.getLogger(__name__)
@@ -618,3 +618,186 @@ class RiskManager:
             conflict_text = " | ".join(result._conflict_warnings)
             result.advice_for_empty = f"{result.advice_for_empty} [{conflict_text}]"
             result.advice_for_holding = f"{result.advice_for_holding} [{conflict_text}]"
+
+    @staticmethod
+    def generate_holding_strategy(
+        result: TrendAnalysisResult,
+        cost_price: float = 0.0,
+        current_price: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """生成统一的持仓者策略（供 PushPlus / Web / API 共用）
+
+        根据 评分 × 盈亏状态 × 趋势 三维度推荐止损止盈，
+        同时暴露所有量化锚点让用户自主决策。
+
+        Args:
+            result: 量化分析结果
+            cost_price: 用户持仓成本（0=未知）
+            current_price: 当前价格（默认取 result.current_price）
+
+        Returns:
+            结构化 dict，字段见代码注释
+        """
+        price = current_price if current_price and current_price > 0 else result.current_price
+        score = result.signal_score
+        sl_short = result.stop_loss_short
+        sl_mid = result.stop_loss_mid
+        trailing = result.take_profit_trailing
+        tp_short = result.take_profit_short
+        tp_mid = result.take_profit_mid
+
+        # ---------- 盈亏状态 ----------
+        pnl_pct: Optional[float] = None
+        if cost_price > 0 and price > 0:
+            pnl_pct = (price - cost_price) / cost_price * 100
+
+        # ---------- 推荐止损 ----------
+        rec_stop: float
+        rec_stop_type: str
+        rec_stop_reason: str
+
+        if pnl_pct is not None:
+            # 有成本信息：评分 × 盈亏 综合判断
+            if score >= 70 and pnl_pct >= 5:
+                # 强势盈利：移动止盈线保护利润
+                rec_stop = trailing
+                rec_stop_type = "trailing"
+                rec_stop_reason = f"强势盈利({score}分, +{pnl_pct:.1f}%)，移动止盈线锁定利润"
+            elif score >= 50 and pnl_pct > 0:
+                # 盈利但不强势
+                if trailing > cost_price:
+                    rec_stop = trailing
+                    rec_stop_type = "trailing"
+                    rec_stop_reason = f"移动止盈线({trailing:.2f})高于成本({cost_price:.2f})，可锁定部分利润"
+                else:
+                    rec_stop = sl_short
+                    rec_stop_type = "short"
+                    rec_stop_reason = f"盈利但从高点回落较多，紧守短线止损"
+            elif score >= 50 and pnl_pct <= 0:
+                # 浮亏但技术面中性偏好
+                rec_stop = sl_mid
+                rec_stop_type = "mid"
+                rec_stop_reason = f"暂时浮亏({pnl_pct:.1f}%)但技术面尚可({score}分)，中线止损给反弹空间"
+            elif score >= 35:
+                # 弱势
+                rec_stop = sl_short
+                rec_stop_type = "short"
+                rec_stop_reason = f"技术面偏弱({score}分)，紧守短线止损准备离场"
+            else:
+                # 极弱
+                rec_stop = sl_short
+                rec_stop_type = "short"
+                rec_stop_reason = f"技术面极弱({score}分)，建议尽快止损离场"
+        else:
+            # 无成本信息：纯技术面推荐
+            if score >= 70:
+                rec_stop = trailing
+                rec_stop_type = "trailing"
+                rec_stop_reason = f"强势({score}分)，移动止盈线跟踪"
+            elif score >= 50:
+                rec_stop = sl_mid
+                rec_stop_type = "mid"
+                rec_stop_reason = f"中性({score}分)，中线止损防守"
+            elif score >= 35:
+                rec_stop = sl_short
+                rec_stop_type = "short"
+                rec_stop_reason = f"偏弱({score}分)，短线止损防守"
+            else:
+                rec_stop = sl_short
+                rec_stop_type = "short"
+                rec_stop_reason = f"极弱({score}分)，建议止损离场"
+
+        # ---------- 防护：推荐值为0时降级 ----------
+        if rec_stop <= 0:
+            # 按优先级降级：trailing → short → mid
+            for fallback, fb_type in [(trailing, "trailing"), (sl_short, "short"), (sl_mid, "mid")]:
+                if fallback > 0:
+                    rec_stop = fallback
+                    rec_stop_type = fb_type
+                    _labels = {"trailing": "移动止盈线", "short": "短线止损", "mid": "中线止损"}
+                    rec_stop_reason = f"({_labels.get(fb_type, fb_type)}降级)"
+                    break
+
+        # ---------- 推荐止盈目标 ----------
+        if score >= 70:
+            rec_target = tp_mid
+            rec_target_type = "mid"
+        else:
+            rec_target = tp_short
+            rec_target_type = "short"
+
+        # ---------- 综合建议文本 ----------
+        advice = RiskManager._build_holding_advice_text(
+            score, pnl_pct, rec_stop, rec_stop_type, rec_target, rec_target_type,
+            trailing, sl_short, sl_mid, tp_short, tp_mid, cost_price,
+        )
+
+        return {
+            # 推荐止损
+            "recommended_stop": round(rec_stop, 2),
+            "recommended_stop_type": rec_stop_type,
+            "recommended_stop_reason": rec_stop_reason,
+            # 推荐止盈
+            "recommended_target": round(rec_target, 2),
+            "recommended_target_type": rec_target_type,
+            # 所有锚点
+            "stop_loss_short": round(sl_short, 2),
+            "stop_loss_mid": round(sl_mid, 2),
+            "trailing_stop": round(trailing, 2),
+            "target_short": round(tp_short, 2),
+            "target_mid": round(tp_mid, 2),
+            # 综合建议
+            "advice": advice,
+            # 空仓入场参考
+            "entry_stop_loss": round(sl_short, 2),
+            "entry_position_pct": result.suggested_position_pct,
+            "entry_advice": result.advice_for_empty,
+        }
+
+    @staticmethod
+    def _build_holding_advice_text(
+        score: int,
+        pnl_pct: Optional[float],
+        rec_stop: float,
+        rec_stop_type: str,
+        rec_target: float,
+        rec_target_type: str,
+        trailing: float,
+        sl_short: float,
+        sl_mid: float,
+        tp_short: float,
+        tp_mid: float,
+        cost_price: float,
+    ) -> str:
+        """生成持仓者综合建议文本"""
+        parts: List[str] = []
+
+        if score >= 85:
+            parts.append(f"强势持有({score}分)")
+            parts.append(f"移动止盈{trailing:.2f}跟踪")
+            parts.append(f"目标看{tp_mid:.2f}")
+        elif score >= 70:
+            parts.append(f"持有为主({score}分)")
+            parts.append(f"止盈参考{tp_mid:.2f}")
+            parts.append(f"跌破{rec_stop:.2f}减仓")
+        elif score >= 60:
+            parts.append(f"持有观察({score}分)")
+            parts.append(f"短线目标{tp_short:.2f}")
+            parts.append(f"止损守{rec_stop:.2f}")
+        elif score >= 50:
+            if pnl_pct is not None and pnl_pct > 0:
+                parts.append(f"持股待涨({score}分)")
+                parts.append(f"止盈线{rec_stop:.2f}")
+                parts.append(f"不加仓")
+            else:
+                parts.append(f"耐心持有({score}分)")
+                parts.append(f"止损{rec_stop:.2f}不可破")
+                parts.append(f"反弹至{tp_short:.2f}可减仓")
+        elif score >= 35:
+            parts.append(f"考虑减仓({score}分)")
+            parts.append(f"跌破{rec_stop:.2f}果断离场")
+        else:
+            parts.append(f"建议清仓({score}分)")
+            parts.append(f"止损{rec_stop:.2f}")
+
+        return "，".join(parts)

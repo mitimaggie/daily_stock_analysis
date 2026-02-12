@@ -742,6 +742,12 @@ class StockAnalysisPipeline:
                 # trend 本身就是 TrendAnalysisResult.to_dict() 的输出，直接复用
                 dashboard['quant_extras'] = trend
 
+                # 生成统一持仓者策略（供 PushPlus / Web / API 共用）
+                from src.stock_analyzer.risk_management import RiskManager as _RM
+                dashboard['holding_strategy'] = _RM.generate_holding_strategy(
+                    trend_result, cost_price=0.0,
+                )
+
                 # 决策类型
                 advice = result.operation_advice
                 if '买' in advice or '加仓' in advice:

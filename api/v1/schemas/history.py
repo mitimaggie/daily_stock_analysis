@@ -130,17 +130,27 @@ class ReportSummary(BaseModel):
 
 
 class HoldingStrategy(BaseModel):
-    """持仓者专用策略（区分空仓/持仓场景）"""
+    """统一持仓者策略（供 PushPlus / Web / API 共用）"""
     
-    # 空仓入场策略
-    entry_stop_loss: Optional[str] = Field(None, description="入场止损价")
-    entry_take_profit: Optional[str] = Field(None, description="入场止盈价")
+    # 推荐止损
+    recommended_stop: Optional[float] = Field(None, description="推荐止损价位")
+    recommended_stop_type: Optional[str] = Field(None, description="推荐止损类型: trailing/mid/short")
+    recommended_stop_reason: Optional[str] = Field(None, description="推荐理由")
+    # 推荐止盈
+    recommended_target: Optional[float] = Field(None, description="推荐止盈目标")
+    recommended_target_type: Optional[str] = Field(None, description="推荐止盈类型: short/mid")
+    # 所有量化锚点
+    stop_loss_short: Optional[float] = Field(None, description="短线止损 (1.0 ATR)")
+    stop_loss_mid: Optional[float] = Field(None, description="中线止损 (1.5 ATR)")
+    trailing_stop: Optional[float] = Field(None, description="移动止盈线 (Parabolic SAR)")
+    target_short: Optional[float] = Field(None, description="短线止盈目标")
+    target_mid: Optional[float] = Field(None, description="中线止盈目标 (第一阻力位)")
+    # 综合建议
+    advice: Optional[str] = Field(None, description="持仓综合建议文本")
+    # 空仓入场参考
+    entry_stop_loss: Optional[float] = Field(None, description="入场止损价")
     entry_position_pct: Optional[int] = Field(None, description="建议入场仓位(%)")
     entry_advice: Optional[str] = Field(None, description="空仓建议")
-    # 持仓者策略
-    holding_trailing_stop: Optional[str] = Field(None, description="持仓移动止盈/止损线")
-    holding_target: Optional[str] = Field(None, description="持仓中线目标价")
-    holding_advice: Optional[str] = Field(None, description="持仓建议")
 
 
 class ReportStrategy(BaseModel):

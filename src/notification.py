@@ -711,9 +711,10 @@ class NotificationService:
                 ])
 
                 # ========== ⑧ 持仓建议 ==========
-                pos_pct = qe.get('suggested_position_pct', 0) if qe else 0
-                advice_empty = (qe.get('advice_for_empty', '') if qe else '') or core.get('position_advice', {}).get('no_position', result.operation_advice)
-                advice_hold = (qe.get('advice_for_holding', '') if qe else '') or core.get('position_advice', {}).get('has_position', '继续持有')
+                hs = dashboard.get('holding_strategy') or {} if dashboard else {}
+                pos_pct = hs.get('entry_position_pct', 0) or (qe.get('suggested_position_pct', 0) if qe else 0)
+                advice_empty = hs.get('entry_advice', '') or (qe.get('advice_for_empty', '') if qe else '') or core.get('position_advice', {}).get('no_position', result.operation_advice)
+                advice_hold = hs.get('advice', '') or (qe.get('advice_for_holding', '') if qe else '') or core.get('position_advice', {}).get('has_position', '继续持有')
                 report_lines.extend([
                     "### 🏦 持仓建议",
                     "",
@@ -1079,11 +1080,11 @@ class NotificationService:
 
             lines.append(f"🎯 **作战计划**：买入 {buy_val} | 止损 {sl_val} | 短线目标 {tp_s_val} | 中线目标 {tp_m_val} | R:R {rr_val}")
 
-            # 持仓建议
-            pos_advice = core.get('position_advice', {}) if core else {}
-            pos_pct = qe.get('suggested_position_pct', 0) if qe else 0
-            advice_empty = (qe.get('advice_for_empty', '') if qe else '') or pos_advice.get('no_position', result.operation_advice)
-            advice_hold = (qe.get('advice_for_holding', '') if qe else '') or pos_advice.get('has_position', '继续持有')
+            # 持仓建议（统一从 holding_strategy 取）
+            hs = dashboard.get('holding_strategy') or {} if dashboard else {}
+            pos_pct = hs.get('entry_position_pct', 0) or (qe.get('suggested_position_pct', 0) if qe else 0)
+            advice_empty = hs.get('entry_advice', '') or (qe.get('advice_for_empty', '') if qe else '') or (core.get('position_advice', {}) if core else {}).get('no_position', result.operation_advice)
+            advice_hold = hs.get('advice', '') or (qe.get('advice_for_holding', '') if qe else '') or (core.get('position_advice', {}) if core else {}).get('has_position', '继续持有')
             pct_note = f"（仓位≤{pos_pct}%）" if pos_pct > 0 else ""
             lines.append(f"🆕 空仓者：{advice_empty}{pct_note} | 💼 持仓者：{advice_hold}")
 

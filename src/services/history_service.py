@@ -148,6 +148,7 @@ class HistoryService:
             
             # 从 raw_result 中提取空仓/持仓建议（供前端分开展示）
             position_advice = None
+            holding_strategy = None
             if isinstance(raw_result, dict):
                 dashboard = raw_result.get("dashboard") or {}
                 core = dashboard.get("core_conclusion") or {}
@@ -157,6 +158,11 @@ class HistoryService:
                         "no_position": pos.get("no_position", ""),
                         "has_position": pos.get("has_position", ""),
                     }
+                
+                # 持仓者策略：优先取 pipeline 注入的结构化数据，旧记录降级从 quant_extras 重建
+                holding_strategy = dashboard.get("holding_strategy")
+                if not holding_strategy:
+                    holding_strategy = self._rebuild_holding_strategy_from_qe(dashboard)
             
             return {
                 "query_id": record.query_id,
@@ -174,6 +180,7 @@ class HistoryService:
                 "secondary_buy": str(record.secondary_buy) if record.secondary_buy else None,
                 "stop_loss": str(record.stop_loss) if record.stop_loss else None,
                 "take_profit": str(record.take_profit) if record.take_profit else None,
+                "holding_strategy": holding_strategy,
                 "news_content": record.news_content,
                 "raw_result": raw_result,
                 "context_snapshot": context_snapshot,
@@ -220,6 +227,48 @@ class HistoryService:
             logger.error(f"查询新闻情报失败: {e}", exc_info=True)
             return []
     
+    @staticmethod
+    def _rebuild_holding_strategy_from_qe(dashboard: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """从旧记录的 quant_extras 重建 holding_strategy（兼容旧数据）"""
+        qe = dashboard.get("quant_extras") or {}
+        if not qe:
+            return None
+        bp = dashboard.get("battle_plan") or {}
+        sniper = bp.get("sniper_points") or {}
+        score = qe.get("signal_score", 50)
+        sl_short = qe.get("stop_loss_short", 0) or 0
+        sl_mid = qe.get("stop_loss_mid", 0) or 0
+        trailing = qe.get("take_profit_trailing", 0) or 0
+        tp_short = qe.get("take_profit_short", 0) or 0
+        tp_mid = qe.get("take_profit_mid", 0) or 0
+        entry_pct = qe.get("suggested_position_pct", 0) or 0
+        # 无成本信息，按纯技术面推荐
+        if score >= 70:
+            rec_stop, rec_type = trailing, "trailing"
+            rec_target, rec_t_type = tp_mid, "mid"
+        elif score >= 50:
+            rec_stop, rec_type = sl_mid, "mid"
+            rec_target, rec_t_type = tp_short, "short"
+        else:
+            rec_stop, rec_type = sl_short, "short"
+            rec_target, rec_t_type = tp_short, "short"
+        return {
+            "recommended_stop": round(rec_stop, 2) if rec_stop else None,
+            "recommended_stop_type": rec_type,
+            "recommended_stop_reason": f"技术面评分{score}分（旧记录降级推荐）",
+            "recommended_target": round(rec_target, 2) if rec_target else None,
+            "recommended_target_type": rec_t_type,
+            "stop_loss_short": round(sl_short, 2) if sl_short else None,
+            "stop_loss_mid": round(sl_mid, 2) if sl_mid else None,
+            "trailing_stop": round(trailing, 2) if trailing else None,
+            "target_short": round(tp_short, 2) if tp_short else None,
+            "target_mid": round(tp_mid, 2) if tp_mid else None,
+            "advice": qe.get("advice_for_holding", ""),
+            "entry_stop_loss": round(sl_short, 2) if sl_short else None,
+            "entry_position_pct": entry_pct,
+            "entry_advice": qe.get("advice_for_empty", ""),
+        }
+
     @staticmethod
     def _get_sentiment_label(score: int) -> str:
         from src.services import get_sentiment_label

@@ -53,17 +53,27 @@ export interface ReportSummary {
   positionAdvice?: PositionAdvice;
 }
 
-/** 持仓者专用策略（区分空仓/持仓场景） */
+/** 统一持仓者策略（供 PushPlus / Web / API 共用） */
 export interface HoldingStrategy {
-  // 空仓入场策略
-  entryStopLoss?: string;
-  entryTakeProfit?: string;
+  // 推荐止损
+  recommendedStop?: number;
+  recommendedStopType?: 'trailing' | 'mid' | 'short';
+  recommendedStopReason?: string;
+  // 推荐止盈
+  recommendedTarget?: number;
+  recommendedTargetType?: 'short' | 'mid';
+  // 所有量化锚点
+  stopLossShort?: number;
+  stopLossMid?: number;
+  trailingStop?: number;
+  targetShort?: number;
+  targetMid?: number;
+  // 综合建议
+  advice?: string;
+  // 空仓入场参考
+  entryStopLoss?: number;
   entryPositionPct?: number;
   entryAdvice?: string;
-  // 持仓者策略
-  holdingTrailingStop?: string;
-  holdingTarget?: string;
-  holdingAdvice?: string;
 }
 
 /** 策略点位区 */
