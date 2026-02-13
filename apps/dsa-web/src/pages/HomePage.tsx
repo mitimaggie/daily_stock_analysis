@@ -147,31 +147,17 @@ const HomePage: React.FC = () => {
   });
 
   // 轮询兜底：当有活跃任务时，定期检查任务状态（防止 SSE 丢失事件）
+  const pollCallbacksRef = useRef<{ fetchHistory: () => void; removeTask: (id: string) => void; setError: (e: string) => void }>({
+    fetchHistory: () => {},
+    removeTask: () => {},
+    setError: () => {},
+  });
+
+  // 延后更新 ref（不触发 effect 重跑）
   useEffect(() => {
-    const pendingOrProcessing = activeTasks.filter(
-      (t) => t.status === 'pending' || t.status === 'processing'
-    );
-    if (pendingOrProcessing.length === 0) return;
-
-    const interval = setInterval(async () => {
-      for (const task of pendingOrProcessing) {
-        try {
-          const status = await analysisApi.getStatus(task.taskId);
-          if (status.status === 'completed') {
-            fetchHistory();
-            setTimeout(() => removeTask(task.taskId), 1000);
-          } else if (status.status === 'failed') {
-            setStoreError(status.error || '分析失败');
-            setTimeout(() => removeTask(task.taskId), 3000);
-          }
-        } catch {
-          // 静默失败，等待下次轮询
-        }
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [activeTasks, removeTask]);
+    pollCallbacksRef.current.removeTask = removeTask;
+    pollCallbacksRef.current.setError = setStoreError;
+  });
 
   // 加载历史列表
   const fetchHistory = useCallback(async (autoSelectFirst = false, reset = true) => {
@@ -222,6 +208,38 @@ const HomePage: React.FC = () => {
       setIsLoadingMore(false);
     }
   }, [selectedReport, currentPage, historyItems.length, pageSize]);
+
+  // 更新轮询回调 ref（fetchHistory 已定义）
+  useEffect(() => {
+    pollCallbacksRef.current.fetchHistory = fetchHistory;
+  });
+
+  // 实际轮询 effect
+  useEffect(() => {
+    const pending = activeTasks.filter(
+      (t) => t.status === 'pending' || t.status === 'processing'
+    );
+    if (pending.length === 0) return;
+
+    const interval = setInterval(async () => {
+      for (const task of pending) {
+        try {
+          const s = await analysisApi.getStatus(task.taskId);
+          if (s.status === 'completed') {
+            pollCallbacksRef.current.fetchHistory();
+            setTimeout(() => pollCallbacksRef.current.removeTask(task.taskId), 1000);
+          } else if (s.status === 'failed') {
+            pollCallbacksRef.current.setError(s.error || '分析失败');
+            setTimeout(() => pollCallbacksRef.current.removeTask(task.taskId), 3000);
+          }
+        } catch {
+          // 静默，等下一轮
+        }
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeTasks]);
 
   // 加载更多历史记录
   const handleLoadMore = useCallback(() => {
