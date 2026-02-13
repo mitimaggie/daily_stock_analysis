@@ -85,8 +85,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--schedule', action='store_true', help='启用定时任务')
     parser.add_argument('--market-review', action='store_true', help='仅大盘复盘')
     parser.add_argument('--no-market-review', action='store_true', help='跳过大盘复盘')
-    parser.add_argument('--webui', action='store_true', help='启动WebUI')
-    parser.add_argument('--webui-only', action='store_true', help='仅WebUI')
     parser.add_argument('--serve', action='store_true', help='启动 FastAPI 后端服务（同时执行分析任务）')
     parser.add_argument('--serve-only', action='store_true', help='仅启动 FastAPI 后端服务，不自动执行分析')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='FastAPI 监听地址')
@@ -95,7 +93,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--chip-only', action='store_true', help='仅拉取筹码分布并落库（供定时任务在固定时间跑，分析时用缓存）')
     parser.add_argument('--fast', action='store_true', help='盘中快速模式：跳过外部搜索、用缓存舆情、强制轻量模型、跳过F10')
     parser.add_argument('--backtest', action='store_true', help='回测模式：回填历史分析的实际收益率并输出胜率统计')
-    parser.add_argument('--daemon', action='store_true', help='守护进程模式：启动 WebUI + FastAPI + 定时调度，不立即分析')
+    parser.add_argument('--daemon', action='store_true', help='守护进程模式：启动 FastAPI + 定时调度，不立即分析')
     return parser.parse_args()
 
 def start_api_server(host: str, port: int, config: Config) -> None:
@@ -273,26 +271,15 @@ def main() -> int:
         stock_codes = [c.strip() for c in args.stocks.split(',') if c.strip()]
         logger.info(f"指定分析股票: {stock_codes}")
     
-    # WebUI 逻辑
-    start_webui = (args.webui or args.webui_only or config.webui_enabled) and os.getenv("GITHUB_ACTIONS") != "true"
+    # FastAPI 服务
     start_serve = (args.serve or args.serve_only) and os.getenv("GITHUB_ACTIONS") != "true"
-    if start_webui:
-        try:
-            from webui import run_server_in_thread
-            run_server_in_thread(host=config.webui_host, port=config.webui_port)
-            start_bot_stream_clients(config)
-        except Exception as e:
-            logger.error(f"WebUI 启动失败: {e}")
     if start_serve:
         try:
             start_api_server(host=args.host, port=args.port, config=config)
+            start_bot_stream_clients(config)
         except Exception as e:
             logger.error(f"FastAPI 服务启动失败: {e}")
     
-    if args.webui_only:
-        try:
-            while True: time.sleep(1)
-        except KeyboardInterrupt: return 0
     if args.serve_only:
         logger.info("模式: 仅 FastAPI 服务")
         logger.info(f"API 运行中: http://{args.host}:{args.port} 文档: http://{args.host}:{args.port}/docs")
@@ -300,26 +287,19 @@ def main() -> int:
             while True: time.sleep(1)
         except KeyboardInterrupt: return 0
 
-    # ========== 守护进程模式: WebUI + FastAPI + 定时调度，不立即分析 ==========
+    # ========== 守护进程模式: FastAPI + 定时调度，不立即分析 ==========
     if args.daemon:
         logger.info("=" * 60)
-        logger.info("模式: 守护进程 (WebUI + API + 定时调度)")
+        logger.info("模式: 守护进程 (FastAPI + 定时调度)")
         logger.info("=" * 60)
-        # 1. 启动 WebUI（如果还没启动）
-        if not start_webui:
-            try:
-                from webui import run_server_in_thread
-                run_server_in_thread(host=config.webui_host, port=config.webui_port)
-                start_bot_stream_clients(config)
-                logger.info(f"WebUI 已启动: http://{config.webui_host}:{config.webui_port}")
-            except Exception as e:
-                logger.warning(f"WebUI 启动失败（可忽略）: {e}")
-        # 2. 启动 FastAPI（如果还没启动）
+        # 1. 启动 FastAPI（如果还没启动）
         if not start_serve:
             try:
                 start_api_server(host=args.host, port=args.port, config=config)
             except Exception as e:
                 logger.warning(f"FastAPI 启动失败（可忽略）: {e}")
+        # 2. 启动 Bot Stream 客户端
+        start_bot_stream_clients(config)
         # 3. 启动定时调度（不立即执行分析）
         from src.scheduler import Scheduler
         scheduler = Scheduler(schedule_time=config.schedule_time)
@@ -427,7 +407,7 @@ def main() -> int:
         # 模式3: 正常运行
         run_full_analysis(config, args, stock_codes)
         
-        if (start_webui or start_serve) and not (args.schedule or config.schedule_enabled):
+        if start_serve and not (args.schedule or config.schedule_enabled):
             try:
                 while True: time.sleep(1)
             except KeyboardInterrupt: pass

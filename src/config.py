@@ -179,7 +179,7 @@ class Config:
     retry_base_delay: float = 1.0
     retry_max_delay: float = 30.0
     
-    # === WebUI 配置 ===
+    # === WebUI 配置（已废弃，保留兼容旧 .env）===
     webui_enabled: bool = False
     webui_host: str = "127.0.0.1"
     webui_port: int = 8000

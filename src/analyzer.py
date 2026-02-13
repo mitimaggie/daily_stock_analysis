@@ -504,6 +504,30 @@ dashboard: {{
 开始分析：
 """
 
+    def _convert_schema(self, schema: dict) -> dict:
+        """将 JSON Schema dict 中的 type 字符串转换为 protos.Type 枚举（SDK 0.8+ 要求）
+        同时过滤掉 SDK 不支持的字段（minimum/maximum/default 等）"""
+        _TYPE_MAP = {
+            "string": self._genai_module.protos.Type.STRING,
+            "integer": self._genai_module.protos.Type.INTEGER,
+            "number": self._genai_module.protos.Type.NUMBER,
+            "boolean": self._genai_module.protos.Type.BOOLEAN,
+            "array": self._genai_module.protos.Type.ARRAY,
+            "object": self._genai_module.protos.Type.OBJECT,
+        }
+        _SUPPORTED_KEYS = {"type", "properties", "items", "required", "description", "enum", "nullable"}
+        out = {}
+        for k, v in schema.items():
+            if k == "type":
+                out["type_"] = _TYPE_MAP.get(v, v)
+            elif k == "properties" and isinstance(v, dict):
+                out["properties"] = {pk: self._convert_schema(pv) for pk, pv in v.items()}
+            elif k == "items" and isinstance(v, dict):
+                out["items"] = self._convert_schema(v)
+            elif k in _SUPPORTED_KEYS:
+                out[k] = v
+        return out
+
     def _call_with_function_calling(self, system_prompt: str, user_prompt: str, use_light_model: bool, cfg: Any) -> Optional[Dict[str, Any]]:
         """使用Function Calling调用Gemini（强制JSON输出，避免格式错误）
         
@@ -515,7 +539,7 @@ dashboard: {{
         
         try:
             # 定义输出Schema（Function Declaration）
-            analysis_schema = {
+            analysis_schema = self._convert_schema({
                 "type": "object",
                 "properties": {
                     "stock_name": {"type": "string"},
@@ -571,7 +595,7 @@ dashboard: {{
                     }
                 },
                 "required": ["stock_name", "sentiment_score", "operation_advice", "trend_prediction", "analysis_summary"]
-            }
+            })
             
             # 创建Function Declaration
             analyze_stock_function = self._genai_module.protos.FunctionDeclaration(
@@ -604,9 +628,18 @@ dashboard: {{
                         if hasattr(part, 'function_call'):
                             fc = part.function_call
                             if fc.name == "analyze_stock":
-                                # 转换protobuf Struct为dict
-                                import json
-                                result_dict = json.loads(self._genai_module.protos.MessageToJson(fc.args))
+                                # fc.args 是 MapComposite（SDK 0.8+），需递归转为纯 Python 类型
+                                def _deep_convert(obj):
+                                    if isinstance(obj, dict):
+                                        return {k: _deep_convert(v) for k, v in obj.items()}
+                                    elif isinstance(obj, (list, tuple)):
+                                        return [_deep_convert(v) for v in obj]
+                                    elif hasattr(obj, 'items'):  # MapComposite
+                                        return {k: _deep_convert(v) for k, v in obj.items()}
+                                    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):  # RepeatedComposite
+                                        return [_deep_convert(v) for v in obj]
+                                    return obj
+                                result_dict = _deep_convert(fc.args)
                                 return result_dict
             
             return None
