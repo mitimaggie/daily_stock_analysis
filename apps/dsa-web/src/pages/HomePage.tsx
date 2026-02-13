@@ -146,6 +146,33 @@ const HomePage: React.FC = () => {
     enabled: true,
   });
 
+  // 轮询兜底：当有活跃任务时，定期检查任务状态（防止 SSE 丢失事件）
+  useEffect(() => {
+    const pendingOrProcessing = activeTasks.filter(
+      (t) => t.status === 'pending' || t.status === 'processing'
+    );
+    if (pendingOrProcessing.length === 0) return;
+
+    const interval = setInterval(async () => {
+      for (const task of pendingOrProcessing) {
+        try {
+          const status = await analysisApi.getStatus(task.taskId);
+          if (status.status === 'completed') {
+            fetchHistory();
+            setTimeout(() => removeTask(task.taskId), 1000);
+          } else if (status.status === 'failed') {
+            setStoreError(status.error || '分析失败');
+            setTimeout(() => removeTask(task.taskId), 3000);
+          }
+        } catch {
+          // 静默失败，等待下次轮询
+        }
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeTasks, removeTask]);
+
   // 加载历史列表
   const fetchHistory = useCallback(async (autoSelectFirst = false, reset = true) => {
     if (reset) {
