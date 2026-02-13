@@ -827,6 +827,13 @@ class StockAnalysisPipeline:
                     else:
                         result.concrete_position = f"建议仓位{pct}%，但单价较高，最少需{100 * result.current_price:.0f}元买1手"
 
+            # 注入当日行情快照到 dashboard（供 Web API 传给前端）
+            today_kline = context.get('today', {})
+            if today_kline:
+                dashboard = getattr(result, 'dashboard', None) or {}
+                dashboard['today_kline'] = today_kline
+                result.dashboard = dashboard
+
             # 注入用户持仓信息到 dashboard，供前端计算盈亏
             if position_info:
                 dashboard = getattr(result, 'dashboard', None) or {}

@@ -7,8 +7,11 @@ import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
 import { ReportDetails } from './ReportDetails';
 import { QuantAnalysis } from './QuantAnalysis';
-import { AIAnalysis } from './AIAnalysis';
 import { PositionDiagnosis } from './PositionDiagnosis';
+import { QuantVsAi } from './QuantVsAi';
+import { TodaySnapshot } from './TodaySnapshot';
+import { KeyPriceLevels } from './KeyPriceLevels';
+import { KeyInsights } from './KeyInsights';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -27,7 +30,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const report: AnalysisReport = 'report' in data ? data.report : data;
   const queryId = 'queryId' in data ? data.queryId : report.meta.queryId;
 
-  const { meta, summary, strategy, details } = report;
+  const { meta, summary, strategy, todaySnapshot, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
   const { quantExtras, intelligence, counterArguments, positionInfo, newsContent } = useMemo(() => {
@@ -57,8 +60,27 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         hasPositionInfo={!!positionInfo}
       />
 
-      {/* 策略点位（紧跟概览，可操作信息优先） */}
-      <ReportStrategy strategy={strategy} />
+      {/* 量化 vs AI 对比（紧跟概览） */}
+      {summary.quantVsAi && (
+        <QuantVsAi data={summary.quantVsAi} />
+      )}
+
+      {/* 当日行情快照 */}
+      {todaySnapshot && Object.keys(todaySnapshot).length > 2 && (
+        <TodaySnapshot data={todaySnapshot} />
+      )}
+
+      {/* 盘中关键价位表（替代原有策略点位） */}
+      {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 ? (
+        <KeyPriceLevels
+          levels={strategy.keyPriceLevels}
+          currentPrice={meta.currentPrice}
+          riskRewardRatio={strategy.riskRewardRatio}
+          takeProfitPlan={strategy.takeProfitPlan}
+        />
+      ) : (
+        <ReportStrategy strategy={strategy} />
+      )}
 
       {/* 持仓诊断（有持仓信息时显示） */}
       {positionInfo && (
@@ -72,16 +94,15 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
+      {/* 重要信息汇总（合并 AI 分析 + 量化风险因子） */}
+      <KeyInsights
+        intelligence={intelligence}
+        counterArguments={counterArguments}
+        quantExtras={quantExtras}
+      />
+
       {/* 量化分析 */}
       {quantExtras && <QuantAnalysis data={quantExtras} />}
-
-      {/* AI 分析视角 */}
-      {intelligence && (
-        <AIAnalysis
-          intelligence={intelligence}
-          counterArguments={counterArguments}
-        />
-      )}
 
       {/* 资讯区 */}
       <ReportNews queryId={queryId} newsContentFallback={effectiveNewsContent} />

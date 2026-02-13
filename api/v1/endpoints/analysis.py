@@ -43,6 +43,9 @@ from api.v1.schemas.history import (
     ReportStrategy,
     ReportDetails,
     HoldingStrategy,
+    QuantVsAi,
+    KeyPriceLevel,
+    TodaySnapshot,
 )
 from src.config import Config
 from src.services.task_queue import (
@@ -509,12 +512,17 @@ def _build_analysis_report(
         change_pct=meta_data.get("change_pct"),
     )
 
+    # 量化 vs AI 对比
+    qva_data = summary_data.get("quant_vs_ai")
+    quant_vs_ai = QuantVsAi(**qva_data) if qva_data and isinstance(qva_data, dict) else None
+
     summary = ReportSummary(
         analysis_summary=summary_data.get("analysis_summary"),
         operation_advice=summary_data.get("operation_advice"),
         trend_prediction=summary_data.get("trend_prediction"),
         sentiment_score=summary_data.get("sentiment_score"),
-        sentiment_label=summary_data.get("sentiment_label")
+        sentiment_label=summary_data.get("sentiment_label"),
+        quant_vs_ai=quant_vs_ai,
     )
 
     strategy = None
@@ -523,11 +531,22 @@ def _build_analysis_report(
         holding_strategy = None
         if hs_data and isinstance(hs_data, dict):
             holding_strategy = HoldingStrategy(**hs_data)
+        # 盘中关键价位
+        kpl_raw = strategy_data.get("key_price_levels", [])
+        key_price_levels = None
+        if kpl_raw and isinstance(kpl_raw, list):
+            key_price_levels = [KeyPriceLevel(**item) for item in kpl_raw if isinstance(item, dict)]
         strategy = ReportStrategy(
             ideal_buy=strategy_data.get("ideal_buy"),
             secondary_buy=strategy_data.get("secondary_buy"),
             stop_loss=strategy_data.get("stop_loss"),
+            stop_loss_intraday=strategy_data.get("stop_loss_intraday"),
+            stop_loss_mid=strategy_data.get("stop_loss_mid"),
             take_profit=strategy_data.get("take_profit"),
+            take_profit_mid=strategy_data.get("take_profit_mid"),
+            risk_reward_ratio=strategy_data.get("risk_reward_ratio"),
+            take_profit_plan=strategy_data.get("take_profit_plan"),
+            key_price_levels=key_price_levels,
             holding_strategy=holding_strategy,
         )
 
@@ -539,9 +558,14 @@ def _build_analysis_report(
             context_snapshot=None
         )
 
+    # 当日行情快照
+    ts_data = report_data.get("today_snapshot")
+    today_snapshot = TodaySnapshot(**ts_data) if ts_data and isinstance(ts_data, dict) else None
+
     return AnalysisReport(
         meta=meta,
         summary=summary,
         strategy=strategy,
+        today_snapshot=today_snapshot,
         details=details
     )

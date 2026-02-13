@@ -134,6 +134,38 @@ class AnalysisService:
         # 持仓者策略直接从 pipeline 注入的 dashboard.holding_strategy 获取
         holding_strategy = dashboard.get("holding_strategy")
         
+        # === 量化 vs AI 对比数据 ===
+        quant_extras = dashboard.get("quant_extras") or {}
+        llm_score = getattr(result, "llm_score", None)
+        llm_advice = getattr(result, "llm_advice", "") or ""
+        llm_reasoning = getattr(result, "llm_reasoning", "") or ""
+        quant_vs_ai = {
+            "quant_score": score,
+            "quant_advice": getattr(result, "operation_advice", ""),
+            "ai_score": llm_score,
+            "ai_advice": llm_advice,
+            "divergence_reason": llm_reasoning,
+        }
+        
+        # === 盘中关键价位（从 quant_extras.intraday_watchlist） ===
+        key_price_levels = quant_extras.get("intraday_watchlist", [])
+        
+        # === 当日行情快照 ===
+        today_snapshot = {}
+        # today_kline 从 result 的 context 不直接可用，从 dashboard 注入
+        today_kline = dashboard.get("today_kline") or {}
+        if today_kline:
+            today_snapshot = today_kline
+        # 补充实时数据
+        today_snapshot["current_price"] = getattr(result, "current_price", 0) or 0
+        today_snapshot["change_pct"] = getattr(result, "change_pct", None)
+        today_snapshot["volume_ratio"] = quant_extras.get("volume_ratio", None)
+        today_snapshot["turnover_rate"] = quant_extras.get("turnover_rate", None)
+        
+        # === 分批止盈计划 ===
+        take_profit_plan = quant_extras.get("take_profit_plan", "")
+        risk_reward_ratio = quant_extras.get("risk_reward_ratio", None)
+        
         # 构建报告结构（全部 getattr 兼容本仓库 AnalysisResult 字段）
         report = {
             "meta": {
@@ -151,14 +183,22 @@ class AnalysisService:
                 "sentiment_score": score,
                 "sentiment_label": sentiment_label,
                 "position_advice": position_advice,
+                "quant_vs_ai": quant_vs_ai,
             },
             "strategy": {
                 "ideal_buy": sniper_points.get("ideal_buy"),
                 "secondary_buy": sniper_points.get("secondary_buy"),
                 "stop_loss": sniper_points.get("stop_loss"),
+                "stop_loss_intraday": sniper_points.get("stop_loss_intraday"),
+                "stop_loss_mid": sniper_points.get("stop_loss_mid"),
                 "take_profit": sniper_points.get("take_profit"),
+                "take_profit_mid": sniper_points.get("take_profit_mid"),
+                "risk_reward_ratio": risk_reward_ratio,
+                "take_profit_plan": take_profit_plan,
+                "key_price_levels": key_price_levels,
                 "holding_strategy": holding_strategy,
             },
+            "today_snapshot": today_snapshot,
             "details": {
                 "news_summary": getattr(result, "news_summary", "") or "",
                 "technical_analysis": getattr(result, "technical_analysis", "") or "",

@@ -42,6 +42,39 @@ export interface PositionAdvice {
   hasPosition?: string;
 }
 
+/** 量化 vs AI 对比 */
+export interface QuantVsAi {
+  quantScore: number;
+  quantAdvice: string;
+  aiScore: number | null;
+  aiAdvice: string;
+  divergenceReason: string;
+}
+
+/** 盘中关键价位 */
+export interface KeyPriceLevel {
+  price: number;
+  type: string;   // stop_loss | buy | breakout | take_profit | support | resistance
+  action: string;  // 类型中文名
+  desc: string;    // 触发动作描述
+  priority?: number;
+}
+
+/** 当日行情快照 */
+export interface TodaySnapshot {
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+  amount?: number;
+  pctChg?: number;
+  currentPrice?: number;
+  changePct?: number;
+  volumeRatio?: number;
+  turnoverRate?: number;
+}
+
 /** 报告概览区 */
 export interface ReportSummary {
   analysisSummary: string;
@@ -51,6 +84,8 @@ export interface ReportSummary {
   sentimentLabel?: SentimentLabel;
   /** 空仓建议 / 持仓建议（有则分开展示） */
   positionAdvice?: PositionAdvice;
+  /** 量化 vs AI 对比 */
+  quantVsAi?: QuantVsAi;
 }
 
 /** 统一持仓者策略（供 PushPlus / Web / API 共用） */
@@ -81,7 +116,13 @@ export interface ReportStrategy {
   idealBuy?: string;
   secondaryBuy?: string;
   stopLoss?: string;
+  stopLossIntraday?: string;
+  stopLossMid?: string;
   takeProfit?: string;
+  takeProfitMid?: string;
+  riskRewardRatio?: number;
+  takeProfitPlan?: string;
+  keyPriceLevels?: KeyPriceLevel[];
   holdingStrategy?: HoldingStrategy;
 }
 
@@ -97,6 +138,7 @@ export interface AnalysisReport {
   meta: ReportMeta;
   summary: ReportSummary;
   strategy?: ReportStrategy;
+  todaySnapshot?: TodaySnapshot;
   details?: ReportDetails;
 }
 

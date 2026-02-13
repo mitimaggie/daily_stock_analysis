@@ -148,6 +148,34 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
       </button>
 
+      {/* 一行式量化诊断摘要（始终可见） */}
+      <div className="text-[11px] text-white/60 leading-relaxed mb-2 font-mono flex flex-wrap gap-x-2 gap-y-0.5">
+        {(qe.trend_status ?? qe.trendStatus) && (
+          <span>趋势:<span className={maV.color}>{qe.trend_status ?? qe.trendStatus}</span></span>
+        )}
+        {macdStatus && (
+          <span className="text-white/20">|</span>
+        )}
+        {macdStatus && (
+          <span>MACD:<span className={macdV.color}>{macdStatus}</span></span>
+        )}
+        {rsiVal != null && (
+          <><span className="text-white/20">|</span><span>RSI:<span className={rsiV.color}>{rsiVal.toFixed(0)}</span></span></>
+        )}
+        {kdjStatus && (
+          <><span className="text-white/20">|</span><span>KDJ:<span className={kdjV.color}>{kdjStatus}</span></span></>
+        )}
+        {(qe.volume_status ?? qe.volumeStatus) && (
+          <><span className="text-white/20">|</span><span>量能:<span className="text-white/70">{qe.volume_status ?? qe.volumeStatus}{(qe.volume_ratio ?? qe.volumeRatio) != null ? `(${(qe.volume_ratio ?? qe.volumeRatio).toFixed(2)})` : ''}</span></span></>
+        )}
+        {(qe.chip_signal ?? qe.chipSignal) && (
+          <><span className="text-white/20">|</span><span>筹码:<span className="text-white/70">{qe.chip_signal ?? qe.chipSignal}</span></span></>
+        )}
+        {(qe.valuation_verdict ?? qe.valuationVerdict) && (
+          <><span className="text-white/20">|</span><span>估值:<span className="text-white/70">{qe.valuation_verdict ?? qe.valuationVerdict}</span></span></>
+        )}
+      </div>
+
       {expanded && (
         <div className="space-y-4">
           {/* 信号共振（置顶，一目了然） */}

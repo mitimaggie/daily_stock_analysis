@@ -113,6 +113,39 @@ class PositionAdvice(BaseModel):
     has_position: Optional[str] = Field(None, description="持仓建议")
 
 
+class QuantVsAi(BaseModel):
+    """量化 vs AI 对比数据"""
+    quant_score: Optional[int] = Field(None, description="量化评分")
+    quant_advice: Optional[str] = Field(None, description="量化建议")
+    ai_score: Optional[int] = Field(None, description="AI评分")
+    ai_advice: Optional[str] = Field(None, description="AI建议")
+    divergence_reason: Optional[str] = Field(None, description="分歧原因")
+
+
+class KeyPriceLevel(BaseModel):
+    """盘中关键价位"""
+    price: float = Field(..., description="价位")
+    type: str = Field(..., description="类型: stop_loss/buy/breakout/take_profit/support/resistance")
+    action: str = Field(..., description="类型中文名")
+    desc: str = Field(..., description="触发动作描述")
+    priority: Optional[int] = Field(None, description="优先级")
+
+
+class TodaySnapshot(BaseModel):
+    """当日行情快照"""
+    open: Optional[float] = Field(None, description="开盘价")
+    high: Optional[float] = Field(None, description="最高价")
+    low: Optional[float] = Field(None, description="最低价")
+    close: Optional[float] = Field(None, description="收盘价")
+    volume: Optional[float] = Field(None, description="成交量")
+    amount: Optional[float] = Field(None, description="成交额")
+    pct_chg: Optional[float] = Field(None, description="涨跌幅(%)")
+    current_price: Optional[float] = Field(None, description="当前价")
+    change_pct: Optional[float] = Field(None, description="涨跌幅(%)")
+    volume_ratio: Optional[float] = Field(None, description="量比")
+    turnover_rate: Optional[float] = Field(None, description="换手率(%)")
+
+
 class ReportSummary(BaseModel):
     """报告概览区"""
     
@@ -127,6 +160,7 @@ class ReportSummary(BaseModel):
     )
     sentiment_label: Optional[str] = Field(None, description="情绪标签")
     position_advice: Optional[PositionAdvice] = Field(None, description="空仓/持仓分开展示")
+    quant_vs_ai: Optional[QuantVsAi] = Field(None, description="量化 vs AI 对比")
 
 
 class HoldingStrategy(BaseModel):
@@ -158,8 +192,14 @@ class ReportStrategy(BaseModel):
     
     ideal_buy: Optional[str] = Field(None, description="理想买入价")
     secondary_buy: Optional[str] = Field(None, description="第二买入价")
-    stop_loss: Optional[str] = Field(None, description="止损价（空仓入场用）")
-    take_profit: Optional[str] = Field(None, description="止盈价（空仓入场用）")
+    stop_loss: Optional[str] = Field(None, description="止损价")
+    stop_loss_intraday: Optional[str] = Field(None, description="日内止损")
+    stop_loss_mid: Optional[str] = Field(None, description="中线止损")
+    take_profit: Optional[str] = Field(None, description="短线止盈")
+    take_profit_mid: Optional[str] = Field(None, description="中线止盈")
+    risk_reward_ratio: Optional[float] = Field(None, description="风险收益比")
+    take_profit_plan: Optional[str] = Field(None, description="分批止盈计划")
+    key_price_levels: Optional[List[KeyPriceLevel]] = Field(None, description="盘中关键价位")
     holding_strategy: Optional[HoldingStrategy] = Field(None, description="持仓者专用策略")
 
 
@@ -177,6 +217,7 @@ class AnalysisReport(BaseModel):
     meta: ReportMeta = Field(..., description="元信息")
     summary: ReportSummary = Field(..., description="概览区")
     strategy: Optional[ReportStrategy] = Field(None, description="策略点位区")
+    today_snapshot: Optional[TodaySnapshot] = Field(None, description="当日行情快照")
     details: Optional[ReportDetails] = Field(None, description="详情区")
     
     class Config:
