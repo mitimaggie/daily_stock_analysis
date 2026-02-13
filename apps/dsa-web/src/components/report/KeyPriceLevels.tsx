@@ -6,6 +6,8 @@ interface KeyPriceLevelsProps {
   currentPrice?: number;
   riskRewardRatio?: number;
   takeProfitPlan?: string;
+  hasPositionInfo?: boolean;
+  costPrice?: number;
 }
 
 const TYPE_CONFIG: Record<string, { emoji: string; color: string; bg: string }> = {
@@ -25,6 +27,8 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
   currentPrice,
   riskRewardRatio,
   takeProfitPlan,
+  hasPositionInfo = false,
+  costPrice,
 }) => {
   if (!levels || levels.length === 0) return null;
 
@@ -36,6 +40,13 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
   if (currentPrice && currentPrice > 0) {
     insertIdx = sorted.findIndex((l) => l.price < currentPrice);
     if (insertIdx === -1) insertIdx = sorted.length;
+  }
+
+  // 找到成本价应该插入的位置
+  let costIdx = -1;
+  if (hasPositionInfo && costPrice && costPrice > 0) {
+    costIdx = sorted.findIndex((l) => l.price < costPrice);
+    if (costIdx === -1) costIdx = sorted.length;
   }
 
   return (
@@ -73,6 +84,20 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
 
               return (
                 <React.Fragment key={`${level.price}-${level.type}`}>
+                  {/* 成本价标记行 */}
+                  {costIdx >= 0 && idx === costIdx && costPrice && costPrice > 0 && (
+                    <tr>
+                      <td colSpan={3} className="py-1">
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <div className="flex-1 h-px bg-purple-400/40" />
+                          <span className="text-purple-400 font-mono font-bold whitespace-nowrap">
+                            💰 成本 {costPrice.toFixed(2)}
+                          </span>
+                          <div className="flex-1 h-px bg-purple-400/40" />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {/* 当前价标记行 */}
                   {idx === insertIdx && currentPrice && currentPrice > 0 && (
                     <tr>
@@ -101,7 +126,7 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium"
                         style={{ background: cfg.bg, color: cfg.color }}
                       >
-                        {cfg.emoji} {level.action}
+                        {cfg.emoji} {hasPositionInfo && level.action === '理想买点' ? '加仓机会' : level.action}
                       </span>
                     </td>
                     <td className="py-1.5 pl-2 text-white/60">

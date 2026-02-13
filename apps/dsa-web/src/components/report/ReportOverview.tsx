@@ -11,6 +11,8 @@ interface ReportOverviewProps {
   isHistory?: boolean;
   hasPositionInfo?: boolean;
   oneSentence?: string;
+  costPrice?: number;
+  positionAmount?: number;
   onRefresh?: () => void;
   isRefreshing?: boolean;
 }
@@ -23,6 +25,8 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   summary,
   hasPositionInfo = false,
   oneSentence,
+  costPrice,
+  positionAmount,
   onRefresh,
   isRefreshing = false,
 }) => {
@@ -133,6 +137,28 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 持仓成本 & 浮盈亏（有持仓时显示） */}
+      {hasPositionInfo && costPrice != null && costPrice > 0 && (() => {
+        const price = displayPrice ?? meta.currentPrice;
+        const pnlPct = price && price > 0 ? ((price - costPrice) / costPrice * 100) : null;
+        const pnlAmt = price && positionAmount ? ((price - costPrice) * positionAmount) : null;
+        return (
+          <div className="flex items-center gap-4 text-[12px] text-white/50">
+            <span>成本 <span className="font-mono text-white/70">{costPrice.toFixed(2)}</span></span>
+            {pnlPct != null && (
+              <span className={`font-mono font-semibold ${pnlPct >= 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
+                {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+              </span>
+            )}
+            {pnlAmt != null && (
+              <span className={`font-mono text-[11px] ${pnlAmt >= 0 ? 'text-[#ff4d4d]/70' : 'text-[#00d46a]/70'}`}>
+                {pnlAmt >= 0 ? '+' : ''}{(pnlAmt / 10000).toFixed(2)}万
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 操作建议 + 趋势预测（紧凑两行） */}
       <div className="grid grid-cols-2 gap-x-4 text-[13px]">

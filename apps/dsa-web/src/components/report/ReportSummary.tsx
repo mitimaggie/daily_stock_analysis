@@ -36,9 +36,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent, dashboardHoldingStrategy } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null, dashboardHoldingStrategy: null };
 
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -49,6 +49,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       positionInfo: dashboard?.position_info ?? dashboard?.positionInfo ?? null,
       oneSentence: cc?.one_sentence ?? cc?.oneSentence ?? null,
       newsContent: null,
+      dashboardHoldingStrategy: dashboard?.holding_strategy ?? dashboard?.holdingStrategy ?? null,
     };
   }, [details?.rawResult]);
 
@@ -65,13 +66,21 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         summary={summary}
         hasPositionInfo={hasPosition}
         oneSentence={oneSentence ?? undefined}
+        costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
+        positionAmount={positionInfo?.position_amount ?? positionInfo?.positionAmount}
         isHistory={isHistory}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
       />
 
       {/* 2. 作战计划 */}
-      <ReportStrategy strategy={strategy} />
+      <ReportStrategy
+        strategy={strategy}
+        hasPositionInfo={hasPosition}
+        costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
+        currentPrice={meta.currentPrice}
+        holdingStrategy={dashboardHoldingStrategy}
+      />
 
       {/* 3. 盘中关键价位 */}
       {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (
@@ -80,6 +89,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           currentPrice={meta.currentPrice}
           riskRewardRatio={strategy.riskRewardRatio}
           takeProfitPlan={strategy.takeProfitPlan}
+          hasPositionInfo={hasPosition}
+          costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
         />
       )}
 
