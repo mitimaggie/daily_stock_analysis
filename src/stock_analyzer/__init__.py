@@ -23,6 +23,7 @@ from .resonance import ResonanceDetector
 from .risk_management import RiskManager
 from .formatter import AnalysisFormatter
 from .report_template import ReportTemplate
+from .pattern_recognition import PatternRecognition
 from .analyzer import StockTrendAnalyzer
 
 # 导出所有公开接口

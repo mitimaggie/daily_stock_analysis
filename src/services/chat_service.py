@@ -12,7 +12,7 @@ AI 对话服务
 
 import json
 import logging
-from typing import Optional, Dict, Any, List, AsyncIterator
+from typing import Optional, Dict, Any, List, Iterator
 
 from src.config import get_config
 
@@ -143,7 +143,47 @@ class ChatService:
             if anchors:
                 parts.append(f"全部锚点: {', '.join(anchors)}")
 
-        # 量化指标摘要（从 raw_result 提取关键信息）
+        # ---- 量化 vs AI 对比 ----
+        qva = summary.get("quant_vs_ai") or {}
+        if qva:
+            parts.append(f"\n## 量化 vs AI 对比")
+            if qva.get("quant_score") is not None:
+                parts.append(f"量化评分: {qva['quant_score']}/100")
+            if qva.get("quant_advice"):
+                parts.append(f"量化建议: {qva['quant_advice']}")
+            if qva.get("llm_score") is not None:
+                parts.append(f"AI评分: {qva['llm_score']}/100")
+            if qva.get("llm_advice"):
+                parts.append(f"AI建议: {qva['llm_advice']}")
+            if qva.get("divergence"):
+                parts.append(f"分歧: {qva['divergence']}")
+            if qva.get("llm_reasoning"):
+                parts.append(f"AI推理: {qva['llm_reasoning']}")
+
+        # ---- 当日行情快照 ----
+        today_snap = report_data.get("today_snapshot") or {}
+        if today_snap:
+            parts.append(f"\n## 当日行情快照")
+            for k, label in [("open", "开盘"), ("high", "最高"), ("low", "最低"),
+                              ("close", "收盘"), ("volume", "成交量"), ("amount", "成交额"),
+                              ("change_pct", "涨跌幅%"), ("amplitude", "振幅%"),
+                              ("turnover_rate", "换手率%"), ("volume_ratio", "量比")]:
+                val = today_snap.get(k)
+                if val is not None:
+                    parts.append(f"{label}: {val}")
+
+        # ---- 盘中关键价位 ----
+        kpl = strategy.get("key_price_levels") or []
+        if kpl:
+            parts.append(f"\n## 盘中关键价位")
+            for lv in kpl:
+                if isinstance(lv, dict):
+                    price = lv.get("price", "?")
+                    ltype = lv.get("type", "")
+                    action = lv.get("action", "")
+                    parts.append(f"- {price} ({ltype}) → {action}")
+
+        # ---- 量化指标摘要 ----
         raw = details.get("raw_result") or {}
         dashboard = raw.get("dashboard") or {} if isinstance(raw, dict) else {}
         qe = dashboard.get("quant_extras") or {}
@@ -155,14 +195,34 @@ class ChatService:
                 ("volume_status", "量能"), ("trend_strength", "趋势强度"),
                 ("risk_reward_ratio", "风险收益比"), ("risk_reward_verdict", "R:R判断"),
                 ("take_profit_plan", "分批止盈方案"),
+                ("valuation_verdict", "估值"), ("capital_flow_signal", "资金面"),
+                ("chip_signal", "筹码"), ("ma_alignment", "均线排列"),
             ]
             for key, label in key_fields:
                 val = qe.get(key)
                 if val:
                     parts.append(f"{label}: {val}")
 
-        # 情报面
+            # 风险因子
+            risk_factors = qe.get("risk_factors") or []
+            if risk_factors:
+                parts.append(f"\n## 量化风险因子")
+                for rf in risk_factors[:8]:
+                    parts.append(f"- {rf}")
+
+            # 信号共振
+            resonance = qe.get("resonance_signals") or []
+            if resonance:
+                parts.append(f"信号共振({len(resonance)}项): {', '.join(resonance)}")
+
+        # ---- 情报面 ----
         intel = dashboard.get("intelligence") or {}
+        if intel.get("sentiment_summary"):
+            parts.append(f"\n## 市场情绪")
+            parts.append(intel["sentiment_summary"])
+        if intel.get("earnings_outlook"):
+            parts.append(f"\n## 盈利展望")
+            parts.append(intel["earnings_outlook"])
         if intel.get("risk_alerts"):
             parts.append(f"\n## 风险提示")
             for alert in intel["risk_alerts"][:5]:
@@ -171,6 +231,57 @@ class ChatService:
             parts.append(f"\n## 利好因素")
             for cat in intel["positive_catalysts"][:5]:
                 parts.append(f"- {cat}")
+
+        # 反面论据
+        counter = dashboard.get("counter_arguments") or []
+        if counter:
+            parts.append(f"\n## 反面论据")
+            for ca in counter[:5]:
+                parts.append(f"- {ca}")
+
+        # ---- K线形态 ----
+        candle_patterns = qe.get("candle_patterns") or [] if qe else []
+        candle_summary = qe.get("candle_pattern_summary", "") if qe else ""
+        if candle_patterns or candle_summary:
+            parts.append(f"\n## K线形态")
+            if candle_summary:
+                parts.append(f"形态摘要: {candle_summary}")
+            for cp in candle_patterns[:5]:
+                if isinstance(cp, dict):
+                    parts.append(f"- {cp.get('name', '')}: {cp.get('description', '')} (强度{cp.get('strength', 0)}, {cp.get('direction', '')})")
+
+        # ---- 评分趋势 ----
+        score_trend = raw.get("score_trend") or {} if isinstance(raw, dict) else {}
+        if not score_trend:
+            # 也可能在 dashboard 层
+            score_trend = dashboard.get("score_trend") or {}
+        if score_trend and score_trend.get("scores"):
+            parts.append(f"\n## 评分趋势")
+            if score_trend.get("summary"):
+                parts.append(score_trend["summary"])
+            if score_trend.get("inflection"):
+                parts.append(f"⚡拐点: {score_trend['inflection']}")
+            if score_trend.get("trend_direction"):
+                dir_map = {"improving": "改善中", "declining": "恶化中", "stable": "平稳"}
+                parts.append(f"趋势方向: {dir_map.get(score_trend['trend_direction'], score_trend['trend_direction'])}")
+            # 显示近几次评分
+            score_list = score_trend.get("scores", [])[-5:]
+            if score_list:
+                scores_str = " → ".join(f"{s.get('date','')[-5:]}:{s.get('score','')}分" for s in score_list)
+                parts.append(f"历史评分: {scores_str}")
+
+        # ---- 分时数据 ----
+        intraday = raw.get("intraday_analysis") or {} if isinstance(raw, dict) else {}
+        if not intraday:
+            intraday = dashboard.get("intraday_analysis") or {}
+        if intraday and intraday.get("available"):
+            parts.append(f"\n## 分时分析 ({intraday.get('period', '5min')})")
+            if intraday.get("summary"):
+                parts.append(intraday["summary"])
+            if intraday.get("intraday_vwap"):
+                parts.append(f"分时VWAP: {intraday['intraday_vwap']}")
+            if intraday.get("momentum"):
+                parts.append(f"动能: {intraday['momentum']}")
 
         return "\n".join(parts)
 
@@ -203,6 +314,19 @@ class ChatService:
 
         return self._chat_gemini(full_system, messages, temperature, timeout)
 
+    def _build_gemini_contents(
+        self, system: str, messages: List[Dict[str, str]],
+    ) -> List[Dict]:
+        """构建 Gemini 格式的对话内容"""
+        contents = []
+        for i, msg in enumerate(messages):
+            role = "model" if msg["role"] == "assistant" else "user"
+            text = msg["content"]
+            if i == 0 and role == "user":
+                text = f"[系统指令]\n{system}\n\n[用户问题]\n{text}"
+            contents.append({"role": role, "parts": [{"text": text}]})
+        return contents
+
     def _chat_gemini(
         self, system: str, messages: List[Dict[str, str]],
         temperature: float, timeout: int,
@@ -210,17 +334,7 @@ class ChatService:
         """Gemini 对话"""
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
-        # 构建 Gemini 格式的对话
-        # Gemini contents 格式: [{"role": "user"/"model", "parts": [{"text": "..."}]}]
-        contents = []
-        # 把 system prompt + report 作为第一条 user 消息的前缀
-        for i, msg in enumerate(messages):
-            role = "model" if msg["role"] == "assistant" else "user"
-            text = msg["content"]
-            if i == 0 and role == "user":
-                text = f"[系统指令]\n{system}\n\n[用户问题]\n{text}"
-            contents.append({"role": role, "parts": [{"text": text}]})
-
+        contents = self._build_gemini_contents(system, messages)
         gen_cfg = {"temperature": temperature}
         models = [self._model]
         if self._model_fallback:
@@ -265,6 +379,81 @@ class ChatService:
         except Exception as e:
             logger.error(f"Chat OpenAI 失败: {e}")
             return f"AI 回复失败: {e}"
+
+    # ============ 流式对话 ============
+
+    def chat_stream(
+        self,
+        messages: List[Dict[str, str]],
+        report_context: str,
+    ) -> Iterator[str]:
+        """流式对话，逐 chunk 产出文本"""
+        self._ensure_init()
+        if not self.is_available():
+            yield "AI 服务未配置，请检查 GEMINI_API_KEY 或 OPENAI_API_KEY 环境变量。"
+            return
+
+        config = get_config()
+        temperature = getattr(config, "gemini_temperature", 0.3)
+        full_system = f"{self.SYSTEM_PROMPT}\n\n## 当前报告数据\n{report_context}"
+
+        if self._use_openai and self._openai_client:
+            yield from self._stream_openai(full_system, messages, config)
+        else:
+            yield from self._stream_gemini(full_system, messages, temperature)
+
+    def _stream_gemini(
+        self, system: str, messages: List[Dict[str, str]],
+        temperature: float,
+    ) -> Iterator[str]:
+        """Gemini 流式对话"""
+        contents = self._build_gemini_contents(system, messages)
+        gen_cfg = {"temperature": temperature}
+        models = [self._model]
+        if self._model_fallback:
+            models.append(self._model_fallback)
+
+        last_err = None
+        for model in models:
+            try:
+                resp = model.generate_content(
+                    contents,
+                    generation_config=gen_cfg,
+                    stream=True,
+                )
+                for chunk in resp:
+                    if chunk.text:
+                        yield chunk.text
+                return
+            except Exception as e:
+                last_err = e
+                logger.warning(f"Chat stream Gemini 失败: {e}")
+
+        yield f"AI 回复失败: {last_err}"
+
+    def _stream_openai(
+        self, system: str, messages: List[Dict[str, str]],
+        config: Any,
+    ) -> Iterator[str]:
+        """OpenAI 流式对话"""
+        oai_messages = [{"role": "system", "content": system}]
+        for msg in messages:
+            oai_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        try:
+            stream = self._openai_client.chat.completions.create(
+                model=config.openai_model,
+                messages=oai_messages,
+                temperature=getattr(config, "openai_temperature", 0.3),
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:
+            logger.error(f"Chat stream OpenAI 失败: {e}")
+            yield f"AI 回复失败: {e}"
 
 
 # 单例

@@ -6,9 +6,12 @@
 
 import logging
 import pandas as pd
-from typing import Dict
+from typing import Dict, Union, Optional
 from .types import TrendAnalysisResult, BuySignal, MarketRegime, TrendStatus
 from .types import VolumeStatus, MACDStatus, RSIStatus, KDJStatus
+from data_provider.fundamental_types import FundamentalData, ValuationSnapshot, FinancialSummary, ForecastData
+from data_provider.analysis_types import CapitalFlowData, SectorContext, QuoteExtra
+from data_provider.realtime_types import ChipDistribution
 
 logger = logging.getLogger(__name__)
 
@@ -161,9 +164,14 @@ class ScoringSystem:
             # 缩量跌停 → 无人接盘，最差
             return 0
 
-        # 常规量能评分
+        # 常规量能评分（结合趋势状态：缩量下跌在上升趋势=洗盘高分，在下跌趋势=阴跌低分）
+        from .types import TrendStatus
+        is_uptrend = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]
+        
+        if result.volume_status == VolumeStatus.SHRINK_VOLUME_DOWN:
+            return 14 if is_uptrend else 7  # 上升趋势洗盘=高分，下跌趋势阴跌=低分
+        
         scores = {
-            VolumeStatus.SHRINK_VOLUME_DOWN: 15,
             VolumeStatus.HEAVY_VOLUME_UP: 12,
             VolumeStatus.NORMAL: 10,
             VolumeStatus.SHRINK_VOLUME_UP: 6,
@@ -191,8 +199,8 @@ class ScoringSystem:
     
     @staticmethod
     def _calc_macd_score(result: TrendAnalysisResult) -> int:
-        """计算MACD评分 (0-15)"""
-        scores = {
+        """计算MACD评分 (0-15)，含柱状图动量修正"""
+        base_scores = {
             MACDStatus.GOLDEN_CROSS_ZERO: 15,
             MACDStatus.GOLDEN_CROSS: 12,
             MACDStatus.CROSSING_UP: 10,
@@ -202,7 +210,23 @@ class ScoringSystem:
             MACDStatus.CROSSING_DOWN: 0,
             MACDStatus.DEATH_CROSS: 0,
         }
-        return scores.get(result.macd_status, 5)
+        score = base_scores.get(result.macd_status, 5)
+        
+        # MACD柱状图动量修正：加速=加分，减速=减分
+        momentum = getattr(result, 'macd_momentum', '')
+        if momentum == "动能加速":
+            score = min(15, score + 2)
+        elif momentum == "动能减速":
+            score = max(0, score - 2)
+        elif momentum == "动能转向":
+            # 转向是重要信号：从负转正=加分，从正转负=减分
+            bar_slope = getattr(result, 'macd_bar_slope', 0)
+            if bar_slope > 0:
+                score = min(15, score + 1)
+            elif bar_slope < 0:
+                score = max(0, score - 1)
+        
+        return score
     
     @staticmethod
     def _calc_rsi_score(result: TrendAnalysisResult) -> int:
@@ -256,14 +280,23 @@ class ScoringSystem:
         return score
     
     @staticmethod
-    def check_valuation(result: TrendAnalysisResult, valuation: dict = None):
+    def check_valuation(result: TrendAnalysisResult, valuation: Union[ValuationSnapshot, dict, None] = None):
         """估值安全检查：PE/PB/PEG 评分 + 估值降档"""
-        if not valuation or not isinstance(valuation, dict):
+        if valuation is None:
             return
+        # 兼容 dict（临时）和 ValuationSnapshot
+        if isinstance(valuation, dict):
+            valuation = ValuationSnapshot(
+                pe=valuation.get('pe'), pb=valuation.get('pb'), peg=valuation.get('peg'),
+                industry_pe_median=valuation.get('industry_pe_median'),
+                pe_history=valuation.get('pe_history'),
+                revenue_growth=valuation.get('revenue_growth'),
+                net_profit_growth=valuation.get('net_profit_growth'),
+            )
         
-        pe = valuation.get('pe')
-        pb = valuation.get('pb')
-        peg = valuation.get('peg')
+        pe = valuation.pe
+        pb = valuation.pb
+        peg = valuation.peg
         if isinstance(pe, (int, float)) and pe > 0:
             result.pe_ratio = float(pe)
         if isinstance(pb, (int, float)) and pb > 0:
@@ -273,7 +306,7 @@ class ScoringSystem:
         
         v_score = 5
         downgrade = 0
-        industry_pe = valuation.get('industry_pe_median')
+        industry_pe = valuation.industry_pe_median
         
         if result.pe_ratio > 0:
             if isinstance(industry_pe, (int, float)) and industry_pe > 0:
@@ -337,7 +370,7 @@ class ScoringSystem:
                     result.valuation_verdict += "(PEG过高,增速不匹配)"
         
         # P3: 历史估值分位数（基于PE历史数据）
-        pe_hist = valuation.get('pe_history')  # list of historical PE values
+        pe_hist = valuation.pe_history
         if pe_hist and isinstance(pe_hist, (list, tuple)) and result.pe_ratio > 0:
             valid_pe = [p for p in pe_hist if isinstance(p, (int, float)) and p > 0]
             if len(valid_pe) >= 20:
@@ -357,7 +390,8 @@ class ScoringSystem:
                     result.valuation_zone = "历史合理区"
         
         # P3: 简易DCF估值参考（基于PEG和增长率）
-        growth_rate = valuation.get('revenue_growth') or valuation.get('profit_growth')
+        # 优先使用净利增速（与PE直接对应），次选营收增速
+        growth_rate = valuation.net_profit_growth or valuation.revenue_growth
         if isinstance(growth_rate, (int, float)) and growth_rate > 0 and result.pe_ratio > 0:
             # 简易合理PE = 增长率 * PEG合理倍数(1.0)
             fair_pe = growth_rate * 1.0
@@ -396,31 +430,20 @@ class ScoringSystem:
             result.advice_for_holding = f"⚠️ 风险警告：{result.trading_halt_reason}，持仓者评估是否离场"
     
     @staticmethod
-    def score_capital_flow(result: TrendAnalysisResult, capital_flow: dict = None):
-        """资金面评分：北向资金、主力资金、融资余额"""
-        if not capital_flow or not isinstance(capital_flow, dict):
+    def score_capital_flow(result: TrendAnalysisResult, capital_flow: Union[CapitalFlowData, dict, None] = None):
+        """资金面评分：主力资金（超大单+大单）+ 主力净占比 + 融资余额"""
+        if capital_flow is None:
             return
+        # 兼容 dict 和 CapitalFlowData
+        if isinstance(capital_flow, dict):
+            capital_flow = CapitalFlowData.from_dict(capital_flow)
         
         cf_score = 5
         cf_signals = []
         
-        north_net = capital_flow.get('north_net_flow')
-        if isinstance(north_net, (int, float)):
-            if north_net > 50:
-                cf_score += 3
-                cf_signals.append(f"北向大幅流入{north_net:.1f}亿")
-            elif north_net > 10:
-                cf_score += 1
-                cf_signals.append(f"北向净流入{north_net:.1f}亿")
-            elif north_net < -50:
-                cf_score -= 3
-                cf_signals.append(f"⚠️北向大幅流出{north_net:.1f}亿")
-            elif north_net < -10:
-                cf_score -= 1
-                cf_signals.append(f"北向净流出{north_net:.1f}亿")
-        
-        main_net = capital_flow.get('main_net_flow')
-        daily_avg = capital_flow.get('daily_avg_amount')
+        # === 主力资金（含超大单+大单拆分）===
+        main_net = capital_flow.main_net_flow  # 万元
+        daily_avg = capital_flow.daily_avg_amount  # 万元
         if isinstance(main_net, (int, float)):
             if isinstance(daily_avg, (int, float)) and daily_avg > 0:
                 main_threshold = daily_avg * 0.05
@@ -442,7 +465,29 @@ class ScoringSystem:
                 cf_score -= 2
                 cf_signals.append(f"⚠️主力净流出{abs(main_net)/10000:.1f}亿")
         
-        margin_change = capital_flow.get('margin_balance_change')
+        # === 超大单独立评估（机构行为信号）===
+        super_large = capital_flow.super_large_net  # 万元
+        if isinstance(super_large, (int, float)):
+            sl_threshold = (daily_avg * 0.08) if isinstance(daily_avg, (int, float)) and daily_avg > 0 else 8000
+            if super_large > sl_threshold:
+                cf_score += 1
+                cf_signals.append(f"超大单净流入{super_large/10000:.1f}亿（机构买入信号）")
+            elif super_large < -sl_threshold:
+                cf_score -= 1
+                cf_signals.append(f"⚠️超大单净流出{abs(super_large)/10000:.1f}亿（机构离场）")
+        
+        # === 主力净占比（比绝对值更有意义）===
+        main_pct = capital_flow.main_net_flow_pct
+        if isinstance(main_pct, (int, float)):
+            if main_pct > 15:
+                cf_score += 1
+                cf_signals.append(f"主力净占比{main_pct:.1f}%（资金高度集中买入）")
+            elif main_pct < -15:
+                cf_score -= 1
+                cf_signals.append(f"⚠️主力净占比{main_pct:.1f}%（资金集中流出）")
+        
+        # === 融资余额趋势 ===
+        margin_change = capital_flow.margin_balance_change
         if isinstance(margin_change, (int, float)):
             if margin_change > 0:
                 cf_score += 1
@@ -470,12 +515,19 @@ class ScoringSystem:
         if len(recent) < 3:
             return
         
-        closes = recent['close'].values
-        opens = recent['open'].values
         volumes = recent['volume'].values
         
-        up_days = sum(1 for c, o in zip(closes, opens) if c > o)
-        down_days = sum(1 for c, o in zip(closes, opens) if c < o)
+        # 使用 pct_chg（涨跌幅）判断多空方向，比 close>open 更准确
+        # close>open 忽略缺口，如低开高走 close>open 但实际偏空
+        if 'pct_chg' in recent.columns:
+            pct_chgs = recent['pct_chg'].values
+            up_days = sum(1 for p in pct_chgs if isinstance(p, (int, float)) and p > 0)
+            down_days = sum(1 for p in pct_chgs if isinstance(p, (int, float)) and p < 0)
+        else:
+            closes = recent['close'].values
+            opens = recent['open'].values
+            up_days = sum(1 for c, o in zip(closes, opens) if c > o)
+            down_days = sum(1 for c, o in zip(closes, opens) if c < o)
         
         vol_increasing = volumes[-1] > volumes[-2] > volumes[-3] if all(v > 0 for v in volumes) else False
         vol_decreasing = volumes[-1] < volumes[-2] < volumes[-3] if all(v > 0 for v in volumes) else False
@@ -496,14 +548,17 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
     
     @staticmethod
-    def score_sector_strength(result: TrendAnalysisResult, sector_context: dict = None):
+    def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None):
         """板块强弱评分"""
-        if not sector_context or not isinstance(sector_context, dict):
+        if sector_context is None:
             return
+        # 兼容 dict 和 SectorContext
+        if isinstance(sector_context, dict):
+            sector_context = SectorContext.from_dict(sector_context)
         
-        sec_name = sector_context.get('sector_name', '')
-        sec_pct = sector_context.get('sector_pct')
-        rel = sector_context.get('relative')
+        sec_name = sector_context.sector_name
+        sec_pct = sector_context.sector_pct
+        rel = sector_context.relative
         
         if sec_name:
             result.sector_name = sec_name
@@ -554,17 +609,22 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
     
     @staticmethod
-    def score_chip_distribution(result: TrendAnalysisResult, chip_data: dict = None):
+    def score_chip_distribution(result: TrendAnalysisResult, chip_data: Union[ChipDistribution, dict, None] = None):
         """筹码分布评分"""
-        if not chip_data or not isinstance(chip_data, dict):
+        if chip_data is None:
             return
+        # 兼容 dict
+        if isinstance(chip_data, dict):
+            profit_ratio = chip_data.get('profit_ratio')
+            avg_cost = chip_data.get('avg_cost')
+            concentration_90 = chip_data.get('concentration_90')
+        else:
+            profit_ratio = chip_data.profit_ratio
+            avg_cost = chip_data.avg_cost
+            concentration_90 = chip_data.concentration_90
         
         c_score = 5
         signals = []
-        
-        profit_ratio = chip_data.get('profit_ratio')
-        avg_cost = chip_data.get('avg_cost')
-        concentration_90 = chip_data.get('concentration_90')
         price = result.current_price
         
         if isinstance(profit_ratio, (int, float)):
@@ -610,52 +670,87 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
     
     @staticmethod
-    def score_fundamental_quality(result: TrendAnalysisResult, fundamental_data: dict = None):
-        """基本面质量评分：ROE + 负债率"""
-        if not fundamental_data or not isinstance(fundamental_data, dict):
+    def score_fundamental_quality(result: TrendAnalysisResult, fundamental_data: Union[FundamentalData, dict, None] = None):
+        """基本面质量评分：ROE + 负债率 + 毛利率 + 净利增速 + 营收增速"""
+        if fundamental_data is None:
+            return
+        # 兼容 dict（临时）和 FundamentalData
+        if isinstance(fundamental_data, dict):
+            fundamental_data = FundamentalData.from_dict(fundamental_data)
+        
+        fin = fundamental_data.financial
+        if not fin.has_data:
             return
         
         f_score = 5
         signals = []
         
-        financial = fundamental_data.get('financial', {})
-        if not isinstance(financial, dict):
-            return
+        # === ROE ===
+        roe = fin.roe
+        if roe is not None:
+            if roe > 20:
+                f_score += 2
+                signals.append(f"ROE优秀({roe:.1f}%)")
+            elif roe > 10:
+                f_score += 1
+                signals.append(f"ROE良好({roe:.1f}%)")
+            elif roe < 0:
+                f_score -= 2
+                signals.append(f"⚠️ROE为负({roe:.1f}%),亏损")
+            elif roe < 3:
+                f_score -= 1
+                signals.append(f"ROE偏低({roe:.1f}%)")
         
-        roe_str = financial.get('roe', 'N/A')
-        if roe_str not in ('N/A', '', None):
-            try:
-                roe = float(str(roe_str).replace('%', ''))
-                if roe > 20:
-                    f_score += 2
-                    signals.append(f"ROE优秀({roe:.1f}%)")
-                elif roe > 10:
-                    f_score += 1
-                    signals.append(f"ROE良好({roe:.1f}%)")
-                elif roe < 0:
-                    f_score -= 2
-                    signals.append(f"⚠️ROE为负({roe:.1f}%),亏损")
-                elif roe < 3:
-                    f_score -= 1
-                    signals.append(f"ROE偏低({roe:.1f}%)")
-            except (ValueError, TypeError):
-                pass
+        # === 负债率 ===
+        debt = fin.debt_ratio
+        if debt is not None:
+            if debt > 80:
+                f_score -= 2
+                signals.append(f"⚠️负债率过高({debt:.1f}%)")
+            elif debt > 60:
+                f_score -= 1
+                signals.append(f"负债率偏高({debt:.1f}%)")
+            elif debt < 30:
+                f_score += 1
+                signals.append(f"负债率健康({debt:.1f}%)")
         
-        debt_str = financial.get('debt_ratio', 'N/A')
-        if debt_str not in ('N/A', '', None):
-            try:
-                debt = float(str(debt_str).replace('%', ''))
-                if debt > 80:
-                    f_score -= 2
-                    signals.append(f"⚠️负债率过高({debt:.1f}%)")
-                elif debt > 60:
-                    f_score -= 1
-                    signals.append(f"负债率偏高({debt:.1f}%)")
-                elif debt < 30:
-                    f_score += 1
-                    signals.append(f"负债率健康({debt:.1f}%)")
-            except (ValueError, TypeError):
-                pass
+        # === 毛利率（定价权指标）===
+        gross = fin.gross_margin
+        if gross is not None:
+            if gross > 50:
+                f_score += 1
+                signals.append(f"毛利率优秀({gross:.1f}%)，定价权强")
+            elif gross > 30:
+                pass  # 正常，不加不减
+            elif gross < 10:
+                f_score -= 1
+                signals.append(f"⚠️毛利率极低({gross:.1f}%)，竞争激烈")
+        
+        # === 净利润增速（成长性）===
+        np_growth = fin.net_profit_growth
+        if np_growth is not None:
+            if np_growth > 50:
+                f_score += 2
+                signals.append(f"净利增速强劲({np_growth:.1f}%)")
+            elif np_growth > 20:
+                f_score += 1
+                signals.append(f"净利增速良好({np_growth:.1f}%)")
+            elif np_growth < -30:
+                f_score -= 2
+                signals.append(f"⚠️净利大幅下滑({np_growth:.1f}%)")
+            elif np_growth < 0:
+                f_score -= 1
+                signals.append(f"⚠️净利负增长({np_growth:.1f}%)")
+        
+        # === 营收增速（业务扩张）===
+        rev_growth = fin.revenue_growth
+        if rev_growth is not None:
+            if rev_growth > 30:
+                f_score += 1
+                signals.append(f"营收高增长({rev_growth:.1f}%)")
+            elif rev_growth < -20:
+                f_score -= 1
+                signals.append(f"⚠️营收大幅萎缩({rev_growth:.1f}%)")
         
         f_score = max(0, min(10, f_score))
         result.fundamental_score = f_score
@@ -668,8 +763,72 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
     
     @staticmethod
-    def detect_sentiment_extreme(result: TrendAnalysisResult, chip_data: dict = None,
-                                  capital_flow: dict = None, df: pd.DataFrame = None):
+    def score_forecast(result: TrendAnalysisResult, fundamental_data: Union[FundamentalData, dict, None] = None):
+        """业绩预测评分：分析师评级 + 目标价 + 盈利预测"""
+        if fundamental_data is None:
+            return
+        # 兼容 dict（临时）和 FundamentalData
+        if isinstance(fundamental_data, dict):
+            fundamental_data = FundamentalData.from_dict(fundamental_data)
+        
+        fc = fundamental_data.forecast
+        if not fc.has_data:
+            return
+        
+        adj = 0
+        signals = []
+        
+        # === 分析师评级 ===
+        rating = fc.rating
+        if rating and rating not in ('无', '', 'N/A'):
+            rating_lower = rating.strip()
+            if any(k in rating_lower for k in ['买入', '增持', '强烈推荐', '推荐']):
+                adj += 2
+                signals.append(f"分析师评级「{rating_lower}」")
+            elif any(k in rating_lower for k in ['中性', '持有', '审慎']):
+                pass  # 中性不加不减
+            elif any(k in rating_lower for k in ['减持', '卖出', '回避']):
+                adj -= 2
+                signals.append(f"⚠️分析师评级「{rating_lower}」")
+        
+        # === 目标价 vs 现价 ===
+        if fc.target_price is not None and fc.target_price > 0 and result.current_price > 0:
+            target = fc.target_price
+            upside = (target - result.current_price) / result.current_price * 100
+            if upside > 30:
+                adj += 2
+                signals.append(f"目标价{target:.2f}(上行空间{upside:.0f}%)")
+            elif upside > 10:
+                adj += 1
+                signals.append(f"目标价{target:.2f}(上行空间{upside:.0f}%)")
+            elif upside < -10:
+                adj -= 1
+                signals.append(f"⚠️目标价{target:.2f}(下行{upside:.0f}%)")
+        
+        # === 盈利预测变动 ===
+        chg = fc.avg_profit_change
+        if chg is not None:
+            if chg > 20:
+                adj += 1
+                signals.append(f"盈利预测上调{chg:.1f}%")
+            elif chg < -20:
+                adj -= 1
+                signals.append(f"⚠️盈利预测下调{chg:.1f}%")
+        
+        if adj != 0:
+            result.signal_score = max(0, min(100, result.signal_score + adj))
+            result.score_breakdown['forecast_adj'] = adj
+            if signals:
+                for s in signals:
+                    if '⚠️' in s:
+                        result.risk_factors.append(s)
+                    else:
+                        result.signal_reasons.append(s)
+            ScoringSystem.update_buy_signal(result)
+
+    @staticmethod
+    def detect_sentiment_extreme(result: TrendAnalysisResult, chip_data: Union[ChipDistribution, dict, None] = None,
+                                  capital_flow: Union[CapitalFlowData, dict, None] = None, df: pd.DataFrame = None):
         """
         P3 情绪极端检测：综合获利盘/套牢盘比例 + 融资余额趋势
         
@@ -681,8 +840,11 @@ class ScoringSystem:
         adj = 0
         
         # --- 1. 获利盘/套牢盘比例 ---
-        if chip_data and isinstance(chip_data, dict):
-            profit_ratio = chip_data.get('profit_ratio')
+        if chip_data is not None:
+            if isinstance(chip_data, dict):
+                profit_ratio = chip_data.get('profit_ratio')
+            else:
+                profit_ratio = chip_data.profit_ratio
             if isinstance(profit_ratio, (int, float)):
                 pr = profit_ratio * 100 if profit_ratio <= 1.0 else profit_ratio
                 result.profit_ratio = pr
@@ -705,8 +867,10 @@ class ScoringSystem:
                     adj += 1
         
         # --- 2. 融资余额趋势（杠杆情绪指标）---
-        if capital_flow and isinstance(capital_flow, dict):
-            margin_history = capital_flow.get('margin_history')  # list of recent margin balances
+        if capital_flow is not None:
+            if isinstance(capital_flow, dict):
+                capital_flow = CapitalFlowData.from_dict(capital_flow)
+            margin_history = capital_flow.margin_history  # list of recent margin balances
             
             if margin_history and isinstance(margin_history, (list, tuple)) and len(margin_history) >= 5:
                 # 分别检测连续增加和连续减少
@@ -764,15 +928,18 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
 
     @staticmethod
-    def score_quote_extra(result: TrendAnalysisResult, quote_extra: dict = None):
-        """行情附加数据评分：换手率异常检测 + 52周高低位"""
-        if not quote_extra or not isinstance(quote_extra, dict):
+    def score_quote_extra(result: TrendAnalysisResult, quote_extra: Union[QuoteExtra, dict, None] = None):
+        """行情附加数据评分：换手率异常检测 + 52周高低位 + 市值风控"""
+        if quote_extra is None:
             return
+        # 兼容 dict 和 QuoteExtra
+        if isinstance(quote_extra, dict):
+            quote_extra = QuoteExtra.from_dict(quote_extra)
         
         adj = 0
         price = result.current_price
         
-        turnover = quote_extra.get('turnover_rate')
+        turnover = quote_extra.turnover_rate
         if isinstance(turnover, (int, float)) and turnover > 0:
             if turnover > 15:
                 if not result.trading_halt:
@@ -782,8 +949,8 @@ class ScoringSystem:
                 adj -= 1
                 result.score_breakdown['liquidity_risk'] = -1
         
-        high_52w = quote_extra.get('high_52w')
-        low_52w = quote_extra.get('low_52w')
+        high_52w = quote_extra.high_52w
+        low_52w = quote_extra.low_52w
         if isinstance(high_52w, (int, float)) and isinstance(low_52w, (int, float)) and high_52w > low_52w > 0 and price > 0:
             week52_range = high_52w - low_52w
             if week52_range > 0:
@@ -801,6 +968,23 @@ class ScoringSystem:
                 elif position < 20:
                     adj += 1
                     result.score_breakdown['week52_opp'] = 1
+        
+        # === 市值风控：小盘股流动性差/波动大，压缩仓位上限 ===
+        circ_mv = quote_extra.circ_mv  # 流通市值（元）
+        total_mv = quote_extra.total_mv  # 总市值（元）
+        mv = circ_mv or total_mv  # 优先使用流通市值
+        if isinstance(mv, (int, float)) and mv > 0:
+            mv_yi = mv / 1e8  # 转为亿元
+            if mv_yi < 20:
+                # 微盘股（<20亿）：仓位上限压缩，风险提示
+                result.market_risk_cap = min(result.market_risk_cap, 15)
+                result.risk_factors.append(f"微盘股(流通市值{mv_yi:.0f}亿)，流动性风险高，仓位上限15%")
+                result.score_breakdown['mcap_risk'] = -1
+                adj -= 1
+            elif mv_yi < 50:
+                # 小盘股（20-50亿）：轻微压缩
+                result.market_risk_cap = min(result.market_risk_cap, 25)
+                result.risk_factors.append(f"小盘股(流通市值{mv_yi:.0f}亿)，注意流动性")
         
         if adj != 0:
             result.signal_score = max(0, min(100, result.signal_score + adj))
@@ -954,13 +1138,89 @@ class ScoringSystem:
             ScoringSystem.update_buy_signal(result)
 
     @staticmethod
+    def score_obv_adx(result: TrendAnalysisResult):
+        """OBV量能趋势 + ADX趋势强度 + 均线发散速率 综合评分修正"""
+        adj = 0
+        
+        # === OBV 背离（比量价背离更可靠）===
+        obv_div = getattr(result, 'obv_divergence', '')
+        if obv_div == "OBV顶背离":
+            adj -= 3
+            result.risk_factors.append("OBV顶背离：价格新高但累积量能未跟上，上涨可能虚假")
+            result.score_breakdown['obv_divergence'] = -3
+        elif obv_div == "OBV底背离":
+            adj += 3
+            result.signal_reasons.append("OBV底背离：价格新低但累积量能企稳，底部信号")
+            result.score_breakdown['obv_divergence'] = 3
+        
+        # === OBV 趋势确认/否定 ===
+        obv_trend = getattr(result, 'obv_trend', '')
+        from .types import TrendStatus
+        is_bullish = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]
+        is_bearish = result.trend_status in [TrendStatus.STRONG_BEAR, TrendStatus.BEAR]
+        
+        if is_bullish and obv_trend == "OBV空头":
+            adj -= 2
+            result.risk_factors.append("OBV空头与多头趋势矛盾，量能不支持上涨")
+            result.score_breakdown['obv_trend'] = -2
+        elif is_bearish and obv_trend == "OBV多头":
+            adj += 2
+            result.signal_reasons.append("OBV多头暗示资金暗中吸筹，关注反转")
+            result.score_breakdown['obv_trend'] = 2
+        
+        # === ADX 趋势强度修正 ===
+        adx_val = getattr(result, 'adx', 0)
+        if adx_val >= 30:
+            # 强趋势确认：如果方向与评分一致则加分，不一致则减分
+            plus_di = getattr(result, 'plus_di', 0)
+            minus_di = getattr(result, 'minus_di', 0)
+            if plus_di > minus_di and result.signal_score >= 55:
+                adj += 2
+                result.signal_reasons.append(f"ADX={adx_val:.0f}(强趋势)+DI领先，多头趋势确认")
+                result.score_breakdown['adx_adj'] = 2
+            elif minus_di > plus_di and result.signal_score <= 45:
+                adj -= 2
+                result.risk_factors.append(f"ADX={adx_val:.0f}(强趋势)-DI领先，空头趋势确认")
+                result.score_breakdown['adx_adj'] = -2
+        elif adx_val < 15 and adx_val > 0:
+            # 极弱趋势 → 震荡市场，趋势指标信号不可靠
+            result.risk_factors.append(f"ADX={adx_val:.0f}(极弱)，市场无方向，趋势信号可靠性低")
+            result.score_breakdown['adx_adj'] = 0
+        
+        # === 均线发散速率 ===
+        spread_signal = getattr(result, 'ma_spread_signal', '')
+        spread = getattr(result, 'ma_spread', 0)
+        if spread_signal == "加速发散" and spread > 0:
+            adj += 1
+            result.signal_reasons.append(f"均线加速发散(+{spread:.1f}%)，趋势加强")
+            result.score_breakdown['ma_spread'] = 1
+        elif spread_signal == "收敛" and spread > 0:
+            adj -= 1
+            result.risk_factors.append(f"均线收敛中(+{spread:.1f}%)，趋势可能转弱")
+            result.score_breakdown['ma_spread'] = -1
+        elif spread_signal == "加速发散" and spread < 0:
+            adj -= 1
+            result.risk_factors.append(f"均线空头加速发散({spread:.1f}%)，下跌加速")
+            result.score_breakdown['ma_spread'] = -1
+        elif spread_signal == "收敛" and spread < 0:
+            adj += 1
+            result.signal_reasons.append(f"均线空头收敛({spread:.1f}%)，下跌动能减弱")
+            result.score_breakdown['ma_spread'] = 1
+        
+        if adj != 0:
+            result.signal_score = max(0, min(100, result.signal_score + adj))
+            ScoringSystem.update_buy_signal(result)
+
+    @staticmethod
     def cap_adjustments(result: TrendAnalysisResult):
         """修正因子总量上限：防止多维修正导致分数膨胀"""
         adj_keys = ['valuation_adj', 'capital_flow_adj', 'cf_trend', 'cf_continuity',
                    'cross_resonance', 'sector_adj', 'chip_adj', 'fundamental_adj',
                    'week52_risk', 'week52_opp', 'liquidity_risk', 'resonance_adj',
                    'limit_adj', 'limit_risk', 'vp_divergence', 'vwap_adj', 'turnover_adj', 'gap_adj',
-                   'timeframe_resonance', 'vol_extreme', 'vol_trend_3d', 'sentiment_extreme']
+                   'timeframe_resonance', 'vol_extreme', 'vol_trend_3d', 'sentiment_extreme',
+                   'candle_pattern', 'obv_divergence', 'obv_trend', 'adx_adj', 'ma_spread',
+                   'forecast_adj', 'mcap_risk']
         
         pos_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) > 0)
         neg_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) < 0)

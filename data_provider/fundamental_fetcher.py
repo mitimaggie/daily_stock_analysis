@@ -15,6 +15,7 @@ import time
 import random
 import threading
 from typing import Dict, Optional, Any
+from data_provider.fundamental_types import FundamentalData, FinancialSummary, ForecastData, _parse_pct
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class FundamentalFetcher:
     def __init__(self):
         pass
 
-    def get_f10_data(self, code: str) -> Dict[str, Any]:
+    def get_f10_data(self, code: str) -> FundamentalData:
         """获取整合后的 F10 数据（L1内存 -> L2 DB -> 网络）"""
         # L1: 进程内存
         if code in _fundamental_cache:
@@ -76,24 +77,26 @@ class FundamentalFetcher:
         if db:
             cached = db.get_cache('f10', code, ttl_hours=_F10_CACHE_TTL_HOURS)
             if cached:
-                _fundamental_cache[code] = cached  # 回填 L1
+                fd = FundamentalData.from_dict(cached)  # 旧格式 dict → 结构化对象
+                _fundamental_cache[code] = fd  # 回填 L1
                 logger.info(f"💾 [{code}] F10 命中 DB 缓存（跳过网络请求）")
-                return cached
+                return fd
 
         # L3: 网络请求
         data = self._fetch_from_network(code)
 
         # 回写缓存
-        if data.get('financial'):
+        if data.has_financial:
             _fundamental_cache[code] = data
             if db:
-                db.set_cache('f10', code, data)
+                db.set_cache('f10', code, data.to_dict())  # 序列化为旧格式 dict
 
         return data
 
-    def _fetch_from_network(self, code: str) -> Dict[str, Any]:
+    def _fetch_from_network(self, code: str) -> FundamentalData:
         """从网络获取 F10 数据（THS -> EM fallback）"""
-        data = {"valuation": {}, "financial": {}, "forecast": {}}
+        financial = FinancialSummary()
+        forecast = ForecastData()
 
         try:
             import akshare as ak
@@ -107,15 +110,15 @@ class FundamentalFetcher:
                 df_fin = ak.stock_financial_abstract_ths(symbol=code)
                 if df_fin is not None and not df_fin.empty:
                     latest = df_fin.iloc[-1]
-                    data["financial"] = {
-                        "date": str(latest.get("报告期", "")),
-                        "roe": str(latest.get("净资产收益率", "N/A")),
-                        "net_profit_growth": str(latest.get("净利润同比增长率", "N/A")),
-                        "revenue_growth": str(latest.get("营业总收入同比增长率", "N/A")),
-                        "gross_margin": str(latest.get("销售毛利率", "N/A")),
-                        "debt_ratio": str(latest.get("资产负债率", "N/A")),
-                        "source": "ths"
-                    }
+                    financial = FinancialSummary(
+                        date=str(latest.get("报告期", "")),
+                        roe=_parse_pct(latest.get("净资产收益率")),
+                        net_profit_growth=_parse_pct(latest.get("净利润同比增长率")),
+                        revenue_growth=_parse_pct(latest.get("营业总收入同比增长率")),
+                        gross_margin=_parse_pct(latest.get("销售毛利率")),
+                        debt_ratio=_parse_pct(latest.get("资产负债率")),
+                        source="ths",
+                    )
                     financial_ok = True
             except Exception as e:
                 logger.warning(f"[{code}] THS 财务数据失败: {e}")
@@ -127,15 +130,15 @@ class FundamentalFetcher:
                     df_em = ak.stock_financial_analysis_indicator_em(symbol=code, indicator="按报告期")
                     if df_em is not None and not df_em.empty:
                         latest = df_em.iloc[0]
-                        data["financial"] = {
-                            "date": str(latest.get("报告期", "")),
-                            "roe": str(latest.get("净资产收益率", latest.get("加权净资产收益率", "N/A"))),
-                            "net_profit_growth": str(latest.get("净利润同比增长率", "N/A")),
-                            "revenue_growth": str(latest.get("营业总收入同比增长率", latest.get("营业收入同比增长率", "N/A"))),
-                            "gross_margin": str(latest.get("销售毛利率", "N/A")),
-                            "debt_ratio": str(latest.get("资产负债率", "N/A")),
-                            "source": "em"
-                        }
+                        financial = FinancialSummary(
+                            date=str(latest.get("报告期", "")),
+                            roe=_parse_pct(latest.get("净资产收益率", latest.get("加权净资产收益率"))),
+                            net_profit_growth=_parse_pct(latest.get("净利润同比增长率")),
+                            revenue_growth=_parse_pct(latest.get("营业总收入同比增长率", latest.get("营业收入同比增长率"))),
+                            gross_margin=_parse_pct(latest.get("销售毛利率")),
+                            debt_ratio=_parse_pct(latest.get("资产负债率")),
+                            source="em",
+                        )
                         financial_ok = True
                         logger.info(f"[{code}] 东财财务指标 fallback 成功")
                 except Exception as e:
@@ -150,26 +153,33 @@ class FundamentalFetcher:
                 df_fore = ak.stock_profit_forecast_ths(symbol=code)
                 if df_fore is not None and not df_fore.empty:
                     summary = df_fore.head(1).to_dict('records')[0]
-                    data["forecast"] = {
-                        "rating": summary.get("评级", "无"),
-                        "target_price": summary.get("目标价格", "无"),
-                        "avg_profit_change": summary.get("平均净利润变动幅", "N/A")
-                    }
+                    tp_raw = summary.get("目标价格", "无")
+                    tp = None
+                    if tp_raw not in ('无', '', 'N/A', None):
+                        try:
+                            tp = float(str(tp_raw).replace('元', '').strip())
+                        except (ValueError, TypeError):
+                            pass
+                    forecast = ForecastData(
+                        rating=str(summary.get("评级", "无") or "无"),
+                        target_price=tp,
+                        avg_profit_change=_parse_pct(summary.get("平均净利润变动幅")),
+                    )
             except Exception:
                 pass
 
-            logger.info(f"✅ [{code}] F10 基本面数据获取成功 (来源: {data['financial'].get('source', 'none')})")
+            logger.info(f"✅ [{code}] F10 基本面数据获取成功 (来源: {financial.source or 'none'})")
 
         except Exception as e:
             logger.error(f"❌ [{code}] F10 数据获取失败: {e}")
 
-        return data
+        return FundamentalData(financial=financial, forecast=forecast)
 
 
 # 全局单例
 _fetcher = FundamentalFetcher()
 
-def get_fundamental_data(code: str) -> Dict[str, Any]:
+def get_fundamental_data(code: str) -> FundamentalData:
     return _fetcher.get_f10_data(code)
 
 

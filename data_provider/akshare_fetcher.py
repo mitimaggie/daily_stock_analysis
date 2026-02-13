@@ -4,6 +4,7 @@ import time
 import random
 import re
 from typing import Optional, Dict, Any
+from data_provider.analysis_types import CapitalFlowData
 
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -292,7 +293,7 @@ class AkshareFetcher(BaseFetcher):
     _capital_flow_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
     _CAPITAL_FLOW_TTL = 600  # 10分钟
 
-    def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:
+    def get_capital_flow(self, stock_code: str) -> Optional[CapitalFlowData]:
         """获取个股资金流向（东方财富）
 
         数据来源: ak.stock_individual_fund_flow
@@ -300,8 +301,7 @@ class AkshareFetcher(BaseFetcher):
         带10分钟内存缓存，避免批量分析时重复请求。
 
         Returns:
-            dict with keys: main_net_flow (万元), main_net_flow_pct (%),
-            super_large_net (万元), large_net (万元), or None on failure.
+            CapitalFlowData or None on failure.
         """
         if _is_us_code(stock_code) or _is_etf_code(stock_code):
             return None
@@ -330,15 +330,15 @@ class AkshareFetcher(BaseFetcher):
             super_large = safe_float(latest.get('超大单净流入-净额', 0))
             large = safe_float(latest.get('大单净流入-净额', 0))
 
-            result = {
-                'main_net_flow': round(main_net_raw / 10000, 2) if main_net_raw else 0,  # 万元
-                'main_net_flow_pct': main_pct or 0,
-                'super_large_net': round(super_large / 10000, 2) if super_large else 0,
-                'large_net': round(large / 10000, 2) if large else 0,
-            }
+            result = CapitalFlowData(
+                main_net_flow=round(main_net_raw / 10000, 2) if main_net_raw else 0,
+                main_net_flow_pct=main_pct or 0,
+                super_large_net=round(super_large / 10000, 2) if super_large else 0,
+                large_net=round(large / 10000, 2) if large else 0,
+            )
             # 写入缓存
             self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time()}
-            logger.info(f"💰 [{stock_code}] 资金流向: 主力净流入={result['main_net_flow']:.0f}万 ({result['main_net_flow_pct']:.1f}%)")
+            logger.info(f"💰 [{stock_code}] 资金流向: 主力净流入={result.main_net_flow:.0f}万 ({result.main_net_flow_pct:.1f}%)")
             return result
 
         except Exception as e:

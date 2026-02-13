@@ -37,6 +37,10 @@ class TechnicalIndicators:
         df = TechnicalIndicators._calc_atr(df)
         df = TechnicalIndicators._calc_rsi(df)
         df = TechnicalIndicators._calc_bollinger_bands(df)
+        df = TechnicalIndicators._calc_obv(df)
+        df = TechnicalIndicators._calc_adx(df)
+        df = TechnicalIndicators._calc_macd_momentum(df)
+        df = TechnicalIndicators._calc_ma_spread_rate(df)
         
         return df.fillna(0)
     
@@ -111,6 +115,165 @@ class TechnicalIndicators:
         band_range = (df['BB_UPPER'] - df['BB_LOWER']).replace(0, np.nan)
         df['BB_PCT_B'] = ((df['close'] - df['BB_LOWER']) / band_range).fillna(0.5)
         return df
+
+    @staticmethod
+    def _calc_obv(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        计算 OBV (On-Balance Volume) 累积量能指标
+        
+        逻辑：收盘涨 → +volume，收盘跌 → -volume，平盘 → 0
+        新增列：
+        - OBV: 累积量能
+        - OBV_MA20: OBV 的 20 日均线（用于判断 OBV 趋势）
+        - OBV_divergence: OBV 与价格的背离方向
+        """
+        if 'volume' not in df.columns or len(df) < 5:
+            df['OBV'] = 0
+            df['OBV_MA20'] = 0
+            return df
+        
+        direction = np.where(df['close'] > df['close'].shift(1), 1,
+                    np.where(df['close'] < df['close'].shift(1), -1, 0))
+        df['OBV'] = (df['volume'] * direction).cumsum()
+        df['OBV_MA20'] = df['OBV'].rolling(window=20).mean()
+        return df
+
+    @staticmethod
+    def _calc_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """
+        计算 ADX / DMI (Average Directional Index)
+        
+        ADX > 25 = 趋势市场，ADX < 20 = 震荡市场
+        +DI > -DI = 多头趋势，-DI > +DI = 空头趋势
+        
+        新增列：
+        - ADX: 趋势强度 (0-100)
+        - PLUS_DI: +DI 多头方向指标
+        - MINUS_DI: -DI 空头方向指标
+        """
+        if len(df) < period * 2:
+            df['ADX'] = 0
+            df['PLUS_DI'] = 0
+            df['MINUS_DI'] = 0
+            return df
+        
+        high = df['high']
+        low = df['low']
+        close = df['close']
+        
+        # True Range
+        tr = np.maximum(high - low,
+                np.maximum(abs(high - close.shift(1)),
+                           abs(low - close.shift(1))))
+        
+        # Directional Movement
+        up_move = high - high.shift(1)
+        down_move = low.shift(1) - low
+        
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+        
+        plus_dm = pd.Series(plus_dm, index=df.index)
+        minus_dm = pd.Series(minus_dm, index=df.index)
+        
+        # Smoothed averages (Wilder's smoothing)
+        atr_smooth = tr.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+        plus_di_smooth = plus_dm.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+        minus_di_smooth = minus_dm.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+        
+        # +DI and -DI
+        df['PLUS_DI'] = (plus_di_smooth / atr_smooth.replace(0, np.nan) * 100).fillna(0)
+        df['MINUS_DI'] = (minus_di_smooth / atr_smooth.replace(0, np.nan) * 100).fillna(0)
+        
+        # DX and ADX
+        di_sum = df['PLUS_DI'] + df['MINUS_DI']
+        di_diff = abs(df['PLUS_DI'] - df['MINUS_DI'])
+        dx = (di_diff / di_sum.replace(0, np.nan) * 100).fillna(0)
+        df['ADX'] = dx.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+        
+        return df
+
+    @staticmethod
+    def _calc_macd_momentum(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        计算 MACD 柱状图动量（加速度）
+        
+        - MACD_BAR_SLOPE: 柱状图斜率（今天 - 昨天），正=加速上涨，负=加速下跌
+        - MACD_BAR_ACCEL: 连续 N 天柱状图同向变化的天数（正=连续放大，负=连续缩小）
+        """
+        if 'MACD_BAR' not in df.columns or len(df) < 3:
+            df['MACD_BAR_SLOPE'] = 0
+            df['MACD_BAR_ACCEL'] = 0
+            return df
+        
+        df['MACD_BAR_SLOPE'] = df['MACD_BAR'] - df['MACD_BAR'].shift(1)
+        
+        # 计算连续同向变化天数
+        slope = df['MACD_BAR_SLOPE'].values
+        accel = np.zeros(len(slope))
+        for i in range(1, len(slope)):
+            if slope[i] > 0 and slope[i-1] > 0:
+                accel[i] = accel[i-1] + 1
+            elif slope[i] < 0 and slope[i-1] < 0:
+                accel[i] = accel[i-1] - 1
+            else:
+                accel[i] = 1 if slope[i] > 0 else (-1 if slope[i] < 0 else 0)
+        df['MACD_BAR_ACCEL'] = accel
+        
+        return df
+
+    @staticmethod
+    def _calc_ma_spread_rate(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        计算均线发散速率：MA5-MA20 差值的变化率
+        
+        - MA_SPREAD: (MA5 - MA20) / MA20 * 100，当前均线距离百分比
+        - MA_SPREAD_RATE: MA_SPREAD 的 5 日变化量，正=加速发散，负=收敛
+        """
+        if 'MA5' not in df.columns or 'MA20' not in df.columns or len(df) < 25:
+            df['MA_SPREAD'] = 0
+            df['MA_SPREAD_RATE'] = 0
+            return df
+        
+        ma20_safe = df['MA20'].replace(0, np.nan)
+        df['MA_SPREAD'] = ((df['MA5'] - df['MA20']) / ma20_safe * 100).fillna(0)
+        df['MA_SPREAD_RATE'] = df['MA_SPREAD'] - df['MA_SPREAD'].shift(5)
+        
+        return df
+
+    @staticmethod
+    def detect_obv_divergence(df: pd.DataFrame, lookback: int = 20) -> str:
+        """
+        OBV 背离检测：价格新高但 OBV 未新高 / 价格新低但 OBV 未新低
+        
+        Returns:
+            "OBV顶背离" / "OBV底背离" / ""
+        """
+        if df is None or len(df) < lookback or 'OBV' not in df.columns:
+            return ""
+        try:
+            recent = df.tail(lookback)
+            half = lookback // 2
+            first_half = recent.head(half)
+            second_half = recent.tail(half)
+            
+            price_high_1 = first_half['high'].max()
+            price_high_2 = second_half['high'].max()
+            obv_high_1 = first_half['OBV'].max()
+            obv_high_2 = second_half['OBV'].max()
+            
+            price_low_1 = first_half['low'].min()
+            price_low_2 = second_half['low'].min()
+            obv_low_1 = first_half['OBV'].min()
+            obv_low_2 = second_half['OBV'].min()
+            
+            if price_high_2 > price_high_1 * 1.01 and obv_high_2 < obv_high_1 * 0.95:
+                return "OBV顶背离"
+            if price_low_2 < price_low_1 * 0.99 and obv_low_2 > obv_low_1 * 1.05:
+                return "OBV底背离"
+            return ""
+        except Exception:
+            return ""
 
     @staticmethod
     def detect_limit(df: pd.DataFrame, code: str = "") -> pd.DataFrame:

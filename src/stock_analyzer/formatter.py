@@ -23,6 +23,9 @@ class AnalysisFormatter:
         'vwap_adj': 'VWAP', 'turnover_adj': '换手率', 'gap_adj': '缺口',
         'vol_extreme': '量能异动', 'vol_trend_3d': '量能趋势',
         'sentiment_extreme': '情绪极端',
+        'obv_divergence': 'OBV背离', 'obv_trend': 'OBV趋势',
+        'adx_adj': 'ADX', 'ma_spread': '均线发散',
+        'forecast_adj': '业绩预测', 'mcap_risk': '市值风控',
     }
     
     @staticmethod
@@ -79,6 +82,20 @@ class AnalysisFormatter:
             lines.append("KDJ钝化中，超买/超卖信号不可靠")
         if result.kdj_consecutive_extreme:
             lines.append(f"⚠️{result.kdj_consecutive_extreme}")
+        # 新增指标：OBV/ADX/MACD动量/均线发散
+        new_ind_parts = []
+        if result.obv_trend:
+            new_ind_parts.append(f"{result.obv_trend}")
+        if result.obv_divergence:
+            new_ind_parts.append(f"⚠️{result.obv_divergence}")
+        if result.adx > 0:
+            new_ind_parts.append(f"ADX={result.adx:.0f}({result.adx_regime}) +DI={result.plus_di:.0f} -DI={result.minus_di:.0f}")
+        if result.macd_momentum:
+            new_ind_parts.append(f"MACD{result.macd_momentum}(柱斜率{result.macd_bar_slope:+.3f},连续{result.macd_bar_accel}天)")
+        if result.ma_spread_signal:
+            new_ind_parts.append(f"均线{result.ma_spread_signal}(距{result.ma_spread:+.1f}%,速率{result.ma_spread_rate:+.1f})")
+        if new_ind_parts:
+            lines.append(" | ".join(new_ind_parts))
         if result.resonance_signals:
             lines.append(f"共振={abs(result.resonance_count)}个: {','.join(result.resonance_signals)}")
         if result.indicator_resonance:

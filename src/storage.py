@@ -755,6 +755,150 @@ class DatabaseManager:
                 return summary
             return None
 
+    def get_score_trend(self, code: str, days: int = 10) -> Dict[str, Any]:
+        """
+        获取近N日评分趋势，用于拐点检测和趋势分析。
+
+        Returns:
+            {
+                'scores': [{'date': str, 'score': int, 'advice': str, 'trend': str, 'macd_status': str, 'buy_signal': str}, ...],
+                'trend_direction': str,   # "improving" / "declining" / "stable"
+                'inflection': str,        # "看多拐点" / "看空拐点" / ""
+                'avg_score': float,
+                'score_change': int,      # 最新 vs 前次 的变化
+                'consecutive_up': int,    # 连续上升天数
+                'consecutive_down': int,  # 连续下降天数
+                'summary': str,           # 一句话摘要
+            }
+        """
+        cutoff = datetime.now() - timedelta(days=days)
+        with self.get_session() as session:
+            results = session.execute(
+                select(AnalysisHistory)
+                .where(and_(
+                    AnalysisHistory.code == code,
+                    AnalysisHistory.created_at >= cutoff
+                ))
+                .order_by(AnalysisHistory.created_at)
+                .limit(days * 2)
+            ).scalars().all()
+
+            seen_dates = set()
+            scores = []
+            for r in results:
+                day_key = r.created_at.strftime('%Y-%m-%d') if r.created_at else None
+                if not day_key or day_key in seen_dates:
+                    continue
+                seen_dates.add(day_key)
+
+                entry = {
+                    'date': day_key,
+                    'score': r.sentiment_score or 50,
+                    'advice': r.operation_advice or '',
+                    'trend': r.trend_prediction or '',
+                }
+                # 从 context_snapshot 提取更多信号
+                if r.context_snapshot:
+                    try:
+                        ctx = json.loads(r.context_snapshot)
+                        td = ctx.get('trend_analysis', {})
+                        if isinstance(td, dict):
+                            entry['macd_status'] = td.get('macd_status', '')
+                            entry['buy_signal'] = td.get('buy_signal', '')
+                            entry['trend_status'] = td.get('trend_status', '')
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                scores.append(entry)
+
+        if not scores:
+            return {
+                'scores': [], 'trend_direction': 'stable', 'inflection': '',
+                'avg_score': 50, 'score_change': 0,
+                'consecutive_up': 0, 'consecutive_down': 0,
+                'summary': '无历史评分数据',
+            }
+
+        score_vals = [s['score'] for s in scores]
+        avg_score = round(sum(score_vals) / len(score_vals), 1)
+
+        # 评分变化
+        score_change = score_vals[-1] - score_vals[-2] if len(score_vals) >= 2 else 0
+
+        # 连续上升/下降天数
+        cons_up = 0
+        cons_down = 0
+        for i in range(len(score_vals) - 1, 0, -1):
+            if score_vals[i] > score_vals[i - 1]:
+                cons_up += 1
+            else:
+                break
+        for i in range(len(score_vals) - 1, 0, -1):
+            if score_vals[i] < score_vals[i - 1]:
+                cons_down += 1
+            else:
+                break
+
+        # 趋势方向（用近3次评分的斜率）
+        if len(score_vals) >= 3:
+            recent_3 = score_vals[-3:]
+            slope = recent_3[-1] - recent_3[0]
+            if slope >= 5:
+                direction = 'improving'
+            elif slope <= -5:
+                direction = 'declining'
+            else:
+                direction = 'stable'
+        else:
+            direction = 'stable'
+
+        # 拐点检测：评分从连续下降转为上升 = 看多拐点，反之 = 看空拐点
+        inflection = ''
+        if len(score_vals) >= 3:
+            # 看多拐点：前N-1次下降，最新一次上升且幅度>=5
+            prev_declining = all(score_vals[i] <= score_vals[i - 1] for i in range(max(1, len(score_vals) - 3), len(score_vals) - 1))
+            latest_up = score_vals[-1] > score_vals[-2] + 3
+            if prev_declining and latest_up:
+                inflection = '看多拐点'
+
+            # 看空拐点：前N-1次上升，最新一次下降且幅度>=5
+            prev_improving = all(score_vals[i] >= score_vals[i - 1] for i in range(max(1, len(score_vals) - 3), len(score_vals) - 1))
+            latest_down = score_vals[-1] < score_vals[-2] - 3
+            if prev_improving and latest_down:
+                inflection = '看空拐点'
+
+        # 技术面信号变化检测（如从空头→金叉）
+        if len(scores) >= 2 and not inflection:
+            prev_entry = scores[-2]
+            curr_entry = scores[-1]
+            prev_macd = prev_entry.get('macd_status', '')
+            curr_macd = curr_entry.get('macd_status', '')
+            if '空头' in prev_macd and ('金叉' in curr_macd or '多头' in curr_macd):
+                inflection = '看多拐点'
+            elif '多头' in prev_macd and ('死叉' in curr_macd or '空头' in curr_macd):
+                inflection = '看空拐点'
+
+        # 摘要
+        parts = []
+        parts.append(f"近{len(score_vals)}次评分: {score_vals[-1]}分(均值{avg_score})")
+        if cons_up >= 2:
+            parts.append(f"连续{cons_up}次上升")
+        if cons_down >= 2:
+            parts.append(f"连续{cons_down}次下降")
+        if inflection:
+            parts.append(f"⚡{inflection}")
+        summary = '，'.join(parts)
+
+        return {
+            'scores': scores,
+            'trend_direction': direction,
+            'inflection': inflection,
+            'avg_score': avg_score,
+            'score_change': score_change,
+            'consecutive_up': cons_up,
+            'consecutive_down': cons_down,
+            'summary': summary,
+        }
+
     # === 通用数据缓存 (F10/行业PE/板块归属) ===
 
     def get_cache(self, cache_type: str, cache_key: str, ttl_hours: float = 24.0) -> Optional[Dict[str, Any]]:

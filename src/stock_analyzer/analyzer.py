@@ -7,15 +7,19 @@
 import logging
 import pandas as pd
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, Union, Optional
 
 from .types import TrendAnalysisResult, TrendStatus, MarketRegime
+from data_provider.fundamental_types import FundamentalData, ValuationSnapshot
+from data_provider.analysis_types import CapitalFlowData, SectorContext, QuoteExtra
+from data_provider.realtime_types import ChipDistribution
 from .types import VolumeStatus, MACDStatus, RSIStatus, KDJStatus
 from .indicators import TechnicalIndicators
 from .scoring import ScoringSystem
 from .resonance import ResonanceDetector
 from .risk_management import RiskManager
 from .formatter import AnalysisFormatter
+from .pattern_recognition import PatternRecognition
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +158,12 @@ class StockTrendAnalyzer:
         code: str,
         market_regime: MarketRegime = MarketRegime.SIDEWAYS,
         index_returns: pd.Series = None,
-        valuation: dict = None,
-        capital_flow: dict = None,
-        sector_context: dict = None,
-        chip_data: dict = None,
-        fundamental_data: dict = None,
-        quote_extra: dict = None,
+        valuation: Union[ValuationSnapshot, dict, None] = None,
+        capital_flow: Union[CapitalFlowData, dict, None] = None,
+        sector_context: Union[SectorContext, dict, None] = None,
+        chip_data: Union[ChipDistribution, dict, None] = None,
+        fundamental_data: Union[FundamentalData, dict, None] = None,
+        quote_extra: Union[QuoteExtra, dict, None] = None,
         time_horizon: str = "",
         market_snapshot: dict = None,
     ) -> TrendAnalysisResult:
@@ -272,6 +276,56 @@ class StockTrendAnalyzer:
             # 缺口检测
             result.gap_type = TechnicalIndicators.detect_gap(df)
 
+            # K线形态识别
+            pattern_summary = PatternRecognition.detect_and_summarize(df)
+            result.candle_patterns = pattern_summary['patterns']
+            result.candle_pattern_summary = pattern_summary['summary']
+            result.candle_net_signal = pattern_summary['net_signal']
+            result.candle_score_adj = pattern_summary['pattern_score_adj']
+
+            # OBV 量能趋势
+            obv_val = float(latest.get('OBV', 0) or 0)
+            obv_ma = float(latest.get('OBV_MA20', 0) or 0)
+            if obv_ma != 0:
+                if obv_val > obv_ma * 1.05:
+                    result.obv_trend = "OBV多头"
+                elif obv_val < obv_ma * 0.95:
+                    result.obv_trend = "OBV空头"
+                else:
+                    result.obv_trend = "OBV中性"
+            result.obv_divergence = TechnicalIndicators.detect_obv_divergence(df)
+
+            # ADX 趋势强度
+            result.adx = round(float(latest.get('ADX', 0) or 0), 1)
+            result.plus_di = round(float(latest.get('PLUS_DI', 0) or 0), 1)
+            result.minus_di = round(float(latest.get('MINUS_DI', 0) or 0), 1)
+            if result.adx >= 30:
+                result.adx_regime = "强趋势"
+            elif result.adx >= 20:
+                result.adx_regime = "弱趋势"
+            else:
+                result.adx_regime = "震荡"
+
+            # MACD 柱状图动量
+            result.macd_bar_slope = round(float(latest.get('MACD_BAR_SLOPE', 0) or 0), 4)
+            result.macd_bar_accel = int(float(latest.get('MACD_BAR_ACCEL', 0) or 0))
+            if result.macd_bar_accel >= 3:
+                result.macd_momentum = "动能加速"
+            elif result.macd_bar_accel <= -3:
+                result.macd_momentum = "动能减速"
+            elif abs(result.macd_bar_accel) <= 1 and abs(result.macd_bar_slope) > 0:
+                prev_slope = float(df.iloc[-2].get('MACD_BAR_SLOPE', 0) or 0)
+                if result.macd_bar_slope * prev_slope < 0:
+                    result.macd_momentum = "动能转向"
+
+            # 均线发散速率
+            result.ma_spread = round(float(latest.get('MA_SPREAD', 0) or 0), 2)
+            result.ma_spread_rate = round(float(latest.get('MA_SPREAD_RATE', 0) or 0), 2)
+            if result.ma_spread_rate > 1.0:
+                result.ma_spread_signal = "加速发散"
+            elif result.ma_spread_rate < -1.0:
+                result.ma_spread_signal = "收敛"
+
             # 换手率分位数（需要 quote_extra 中的 turnover_rate）
             turnover = (quote_extra or {}).get('turnover_rate', 0) or 0
             if turnover > 0:
@@ -301,9 +355,17 @@ class StockTrendAnalyzer:
             ScoringSystem.score_sector_strength(result, sector_context)
             ScoringSystem.score_chip_distribution(result, chip_data)
             ScoringSystem.score_fundamental_quality(result, fundamental_data)
+            ScoringSystem.score_forecast(result, fundamental_data)
             ScoringSystem.detect_sentiment_extreme(result, chip_data=chip_data, capital_flow=capital_flow, df=df)
             ScoringSystem.score_quote_extra(result, quote_extra)
             ScoringSystem.score_limit_and_enhanced(result)
+            # K线形态评分调整
+            if result.candle_score_adj != 0:
+                result.signal_score = max(0, min(100, result.signal_score + result.candle_score_adj))
+                result.score_breakdown['candle_pattern'] = result.candle_score_adj
+                ScoringSystem.update_buy_signal(result)
+            # OBV/ADX/均线发散 评分修正
+            ScoringSystem.score_obv_adx(result)
             ScoringSystem.cap_adjustments(result)
             ScoringSystem.detect_signal_conflict(result)
             

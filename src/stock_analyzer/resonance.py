@@ -83,9 +83,9 @@ class ResonanceDetector:
                     # 线性衰减：第0天=1.0，第N天=0.0
                     decay = max(0.0, 1.0 - offset / adjusted_days)
                     return round(decay, 2)
-            return 1.0  # 无法确定时不衰减
+            return 0.2  # 搜索窗口内未找到交叉，信号已过时，给予最低权重
         except Exception:
-            return 1.0
+            return 0.5
 
     @staticmethod
     def detect_indicator_resonance(result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
@@ -352,7 +352,12 @@ class ResonanceDetector:
     
     @staticmethod
     def check_resonance(result: TrendAnalysisResult):
-        """多指标共振检测：MACD/KDJ/RSI/量价/趋势同向信号"""
+        """多指标共振检测：MACD/KDJ/RSI/量价/趋势同向信号
+        
+        注意：此方法只做信号统计和标记，不重复加分。
+        加分已在 detect_indicator_resonance() 中完成，此处仅补充
+        detect_indicator_resonance 未覆盖的「弱共振」场景（>=3个同向但非经典组合）。
+        """
         bullish_resonance = []
         bearish_resonance = []
         
@@ -384,18 +389,27 @@ class ResonanceDetector:
         
         result.resonance_count = len(bullish_resonance) if len(bullish_resonance) >= 3 else -len(bearish_resonance) if len(bearish_resonance) >= 3 else 0
         
+        # 只在 detect_indicator_resonance 未产生加分时，才由此方法补充加分
+        already_scored = result.score_breakdown.get('resonance_adj', 0) != 0
+        
         if len(bullish_resonance) >= 3:
             result.resonance_signals = bullish_resonance
-            bonus = min(10, len(bullish_resonance) * 2)
-            result.resonance_bonus = bonus
-            result.signal_score = min(100, result.signal_score + bonus)
-            result.score_breakdown['cross_resonance'] = result.score_breakdown.get('cross_resonance', 0) + bonus
+            if not already_scored:
+                bonus = min(8, len(bullish_resonance) * 2)
+                result.resonance_bonus = bonus
+                result.signal_score = min(100, result.signal_score + bonus)
+                result.score_breakdown['cross_resonance'] = bonus
+            else:
+                result.resonance_bonus = 0
         elif len(bearish_resonance) >= 3:
             result.resonance_signals = bearish_resonance
-            penalty = -min(10, len(bearish_resonance) * 2)
-            result.resonance_bonus = penalty
-            result.signal_score = max(0, result.signal_score + penalty)
-            result.score_breakdown['cross_resonance'] = result.score_breakdown.get('cross_resonance', 0) + penalty
+            if not already_scored:
+                penalty = -min(8, len(bearish_resonance) * 2)
+                result.resonance_bonus = penalty
+                result.signal_score = max(0, result.signal_score + penalty)
+                result.score_breakdown['cross_resonance'] = penalty
+            else:
+                result.resonance_bonus = 0
         else:
             result.resonance_signals = []
             result.resonance_bonus = 0

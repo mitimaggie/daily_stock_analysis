@@ -247,6 +247,32 @@ class TrendAnalysisResult:
     # === 缺口检测 ===
     gap_type: str = ""                     # "向上跳空" / "向下跳空" / ""
     
+    # === OBV 量能趋势 ===
+    obv_trend: str = ""                    # "OBV多头" / "OBV空头" / "OBV中性"
+    obv_divergence: str = ""               # "OBV顶背离" / "OBV底背离" / ""
+    
+    # === ADX 趋势强度 ===
+    adx: float = 0.0                       # ADX值 (0-100)
+    plus_di: float = 0.0                   # +DI
+    minus_di: float = 0.0                  # -DI
+    adx_regime: str = ""                   # "强趋势" / "弱趋势" / "震荡"
+    
+    # === MACD 动量 ===
+    macd_bar_slope: float = 0.0            # 柱状图斜率
+    macd_bar_accel: int = 0                # 连续同向变化天数
+    macd_momentum: str = ""                # "动能加速" / "动能减速" / "动能转向" / ""
+    
+    # === 均线发散速率 ===
+    ma_spread: float = 0.0                 # MA5-MA20 距离百分比
+    ma_spread_rate: float = 0.0            # 发散速率（5日变化量）
+    ma_spread_signal: str = ""             # "加速发散" / "收敛" / ""
+    
+    # === K线形态识别 ===
+    candle_patterns: List[Dict[str, Any]] = field(default_factory=list)  # 检测到的K线形态列表
+    candle_pattern_summary: str = ""       # 一句话形态摘要
+    candle_net_signal: str = ""            # "看多" / "看空" / "中性"
+    candle_score_adj: int = 0              # 形态对评分的调整 (-5 ~ +5)
+    
     # === 不交易过滤器（P0级风控）===
     no_trade: bool = False                     # True=当前不适合交易（比trading_halt更广）
     no_trade_reasons: List[str] = field(default_factory=list)  # 不交易原因列表

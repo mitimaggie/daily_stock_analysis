@@ -233,14 +233,12 @@ class RiskManager:
                 if l < prev_l and l < next_l:
                     support_set.add(l)
         
-        if result.ma5 > 0:
-            support_set.add(result.ma5)
-        if result.ma10 > 0:
-            support_set.add(result.ma10)
-        if result.ma20 > 0:
-            support_set.add(result.ma20)
-        if result.ma60 > 0:
-            support_set.add(result.ma60)
+        for ma_val in [result.ma5, result.ma10, result.ma20, result.ma60]:
+            if ma_val > 0:
+                if ma_val < price:
+                    support_set.add(ma_val)
+                elif ma_val > price:
+                    resistance_set.add(ma_val)
         
         price = result.current_price
 
@@ -362,11 +360,12 @@ class RiskManager:
             result.no_trade = True
             result.no_trade_reasons = reasons
             result.no_trade_severity = severity
-            # 仓位上限约束
-            if result.market_risk_cap < 100:
-                capped = min(result.suggested_position_pct, result.market_risk_cap)
-                if capped != result.suggested_position_pct:
-                    result.suggested_position_pct = capped
+        
+        # 仓位上限约束（独立于 no_trade_reasons，确保小盘股/大盘风险 cap 始终生效）
+        if result.market_risk_cap < 100:
+            capped = min(result.suggested_position_pct, result.market_risk_cap)
+            if capped != result.suggested_position_pct:
+                result.suggested_position_pct = capped
 
     @staticmethod
     def check_stop_loss_breach(result: TrendAnalysisResult, df: pd.DataFrame):
