@@ -756,8 +756,9 @@ class StockAnalysisPipeline:
                 from types import SimpleNamespace
                 from src.stock_analyzer.risk_management import RiskManager as _RM
                 _trend_obj = SimpleNamespace(**trend)
+                _user_cost = float(position_info.get('cost_price', 0) or 0) if position_info else 0.0
                 dashboard['holding_strategy'] = _RM.generate_holding_strategy(
-                    _trend_obj, cost_price=0.0,
+                    _trend_obj, cost_price=_user_cost,
                 )
 
                 # 决策类型

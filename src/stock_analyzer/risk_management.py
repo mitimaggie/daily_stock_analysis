@@ -233,14 +233,14 @@ class RiskManager:
                 if l < prev_l and l < next_l:
                     support_set.add(l)
         
+        price = result.current_price
+
         for ma_val in [result.ma5, result.ma10, result.ma20, result.ma60]:
             if ma_val > 0:
                 if ma_val < price:
                     support_set.add(ma_val)
                 elif ma_val > price:
                     resistance_set.add(ma_val)
-        
-        price = result.current_price
 
         # Q2: 整数关口效应（A股特有：10/20/50/100等整数位有天然支撑/阻力）
         if price > 0:

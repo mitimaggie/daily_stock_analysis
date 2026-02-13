@@ -364,6 +364,7 @@ class AnalysisTaskQueue:
                 report_type=report_type,
                 force_refresh=force_refresh,
                 query_id=task_id,
+                send_notification=False,
                 position_info=position_info,
             )
             

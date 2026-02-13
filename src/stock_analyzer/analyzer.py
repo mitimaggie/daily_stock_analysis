@@ -327,7 +327,7 @@ class StockTrendAnalyzer:
                 result.ma_spread_signal = "收敛"
 
             # 换手率分位数（需要 quote_extra 中的 turnover_rate）
-            turnover = (quote_extra or {}).get('turnover_rate', 0) or 0
+            turnover = getattr(quote_extra, 'turnover_rate', 0) or 0 if quote_extra else 0
             if turnover > 0:
                 result.turnover_percentile = TechnicalIndicators.calc_turnover_percentile(df, turnover)
 
