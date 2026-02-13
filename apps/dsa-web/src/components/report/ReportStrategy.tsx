@@ -132,23 +132,33 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
               {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
             </span>
           )}
-          {positionDiagnosis?.action && positionDiagnosis.action !== '维持' && (
-            <span className={`font-medium ${
-              positionDiagnosis.action === '加仓' ? 'text-green-400/80' : 'text-red-400/80'
-            }`}>
-              {positionDiagnosis.action === '清仓' ? '🚨' : positionDiagnosis.action === '减仓' ? '⚠' : '💡'}
-              {' '}{positionDiagnosis.actual_pct != null ? `当前${positionDiagnosis.actual_pct}%` : ''}
-              {' → '}建议{positionDiagnosis.suggested_pct}%
-              {positionDiagnosis.delta_pct != null && positionDiagnosis.delta_pct !== 0 && (
-                <span className="text-white/40 ml-1">({positionDiagnosis.delta_pct > 0 ? '+' : ''}{positionDiagnosis.delta_pct}%)</span>
-              )}
-            </span>
-          )}
-          {positionDiagnosis?.action === '维持' && positionDiagnosis.actual_pct != null && (
-            <span className="text-white/30">
-              仓位{positionDiagnosis.actual_pct}% ≈ 建议{positionDiagnosis.suggested_pct}%，合理
-            </span>
-          )}
+          {(() => {
+            const actPct = positionDiagnosis?.actual_pct ?? positionDiagnosis?.actualPct;
+            const sugPct = positionDiagnosis?.suggested_pct ?? positionDiagnosis?.suggestedPct;
+            const delPct = positionDiagnosis?.delta_pct ?? positionDiagnosis?.deltaPct;
+            if (positionDiagnosis?.action && positionDiagnosis.action !== '维持') {
+              return (
+                <span className={`font-medium ${
+                  positionDiagnosis.action === '加仓' ? 'text-green-400/80' : 'text-red-400/80'
+                }`}>
+                  {positionDiagnosis.action === '清仓' ? '🚨' : positionDiagnosis.action === '减仓' ? '⚠' : '💡'}
+                  {' '}{actPct != null ? `当前${actPct}%` : ''}
+                  {' → '}建议{sugPct ?? 0}%
+                  {delPct != null && delPct !== 0 && (
+                    <span className="text-white/40 ml-1">({delPct > 0 ? '+' : ''}{delPct}%)</span>
+                  )}
+                </span>
+              );
+            }
+            if (positionDiagnosis?.action === '维持' && actPct != null) {
+              return (
+                <span className="text-white/30">
+                  仓位{actPct}% ≈ 建议{sugPct ?? 0}%，合理
+                </span>
+              );
+            }
+            return null;
+          })()}
           {holdingStrategy?.recommended_stop_reason && (
             <span className="text-white/30">止损: {holdingStrategy.recommended_stop_reason}</span>
           )}
