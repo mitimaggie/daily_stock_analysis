@@ -242,16 +242,39 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setStoreError(null);
 
+    // 先尝试从 localStorage 恢复该股票的持仓信息（用户可能之前填过）
+    // 只有当前表单为空时才自动加载，避免覆盖用户正在编辑的值
+    if (!positionAmount && !costPrice) {
+      loadPositionForStock(normalized);
+    }
     // 保存持仓信息到 localStorage（按股票代码）
     savePositionForStock(normalized, positionAmount, costPrice);
 
     const currentRequestId = ++analysisRequestIdRef.current;
 
+    // 重新读取最新的持仓（loadPositionForStock 是异步 setState，这里直接从 localStorage 读）
+    let effectivePositionInfo: PositionInfo | undefined = buildPositionInfo();
+    if (!effectivePositionInfo) {
+      try {
+        const key = `dsa_pos_${normalized.replace(/\./g, '_')}`;
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const { pa, cp } = JSON.parse(raw);
+          const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
+          const paVal = pa ? parseFloat(pa) * 10000 : undefined;
+          const cpVal = cp ? parseFloat(cp) : undefined;
+          if (tc || paVal || cpVal) {
+            effectivePositionInfo = { totalCapital: tc, positionAmount: paVal, costPrice: cpVal };
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
     try {
       const response = await analysisApi.analyzeAsync({
         stockCode: normalized,
         reportType: 'detailed',
-        positionInfo: buildPositionInfo(),
+        positionInfo: effectivePositionInfo,
       });
 
       if (currentRequestId === analysisRequestIdRef.current) {
