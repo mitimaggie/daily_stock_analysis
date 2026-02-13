@@ -188,7 +188,9 @@ def get_history_detail(
             report_type=result.get("report_type"),
             created_at=result.get("created_at"),
             current_price=current_price,
-            change_pct=change_pct
+            change_pct=change_pct,
+            prev_score=result.get("prev_score"),
+            score_change=result.get("score_change"),
         )
         
         pos_adv = result.get("position_advice")

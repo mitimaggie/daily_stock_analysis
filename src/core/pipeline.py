@@ -606,9 +606,10 @@ class StockAnalysisPipeline:
                         query = f"{stock_name} ({code}) 综合分析 风险 业绩 行业"
                         if getattr(resp, 'results', None):
                             try:
+                                per_stock_qid = f"{self.query_id}_{code}" if self.query_id else None
                                 self.storage.save_news_intel(
                                     code, stock_name, dimension="舆情", query=query, response=resp,
-                                    query_context={"query_id": self.query_id, "query_source": self.query_source}
+                                    query_context={"query_id": per_stock_qid, "query_source": self.query_source}
                                 )
                             except Exception as e:
                                 logger.debug(f"[{stock_name}] 舆情落库跳过: {e}")

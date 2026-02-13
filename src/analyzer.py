@@ -117,6 +117,10 @@ class AnalysisResult:
             'llm_score': self.llm_score,
             'llm_advice': self.llm_advice,
             'llm_reasoning': self.llm_reasoning,
+            'prev_score': self.prev_score,
+            'score_change': self.score_change,
+            'is_first_analysis': self.is_first_analysis,
+            'signal_changes': self.signal_changes,
         }
 
     def get_core_conclusion(self) -> str:

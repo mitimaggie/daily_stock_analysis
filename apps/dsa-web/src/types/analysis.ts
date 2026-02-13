@@ -31,6 +31,8 @@ export interface ReportMeta {
   createdAt: string;
   currentPrice?: number;
   changePct?: number;
+  prevScore?: number;
+  scoreChange?: number;
 }
 
 /** 情绪标签 */

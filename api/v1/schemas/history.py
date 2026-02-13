@@ -105,6 +105,8 @@ class ReportMeta(BaseModel):
     created_at: Optional[str] = Field(None, description="创建时间")
     current_price: Optional[float] = Field(None, description="分析时股价")
     change_pct: Optional[float] = Field(None, description="分析时涨跌幅(%)")
+    prev_score: Optional[int] = Field(None, description="上次分析评分")
+    score_change: Optional[int] = Field(None, description="评分变化")
 
 
 class PositionAdvice(BaseModel):

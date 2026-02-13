@@ -84,12 +84,26 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
         </tbody>
       </table>
 
-      {/* 分歧原因 */}
-      {divergenceReason && (
-        <div className="mt-2 pt-2 border-t border-white/[0.06] text-[11px] text-white/50 leading-relaxed">
-          <span className="text-white/30">逻辑：</span>{divergenceReason}
-        </div>
-      )}
+      {/* 综合研判叙述 */}
+      <div className="mt-2.5 pt-2.5 border-t border-white/[0.06] text-[12px] text-white/60 leading-relaxed">
+        <span className="text-white/40 text-[11px]">综合研判：</span>
+        {(() => {
+          const qDir = scoreDirection(quantScore);
+          const aDir = aiScore != null ? scoreDirection(aiScore) : null;
+          const qLabel = `量化${quantScore}分(${qDir})`;
+          const aLabel = aiScore != null ? `AI ${aiScore}分(${aDir})` : 'AI 未出分';
+          const aligned = aiScore != null && Math.abs(quantScore - aiScore) < 15;
+          const prefix = aligned
+            ? `${qLabel} vs ${aLabel}，两者方向一致。`
+            : aiScore != null
+              ? `${qLabel} vs ${aLabel}，存在${divergence}分分歧。`
+              : `${qLabel}，${aLabel}。`;
+          const reason = divergenceReason && divergenceReason !== '与量化结论一致'
+            ? ` ${divergenceReason}`
+            : '';
+          return prefix + reason;
+        })()}
+      </div>
     </div>
   );
 };

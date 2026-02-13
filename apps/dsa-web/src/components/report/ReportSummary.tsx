@@ -9,9 +9,8 @@ import { ReportDetails } from './ReportDetails';
 import { QuantAnalysis } from './QuantAnalysis';
 import { PositionDiagnosis } from './PositionDiagnosis';
 import { QuantVsAi } from './QuantVsAi';
-import { TodaySnapshot } from './TodaySnapshot';
 import { KeyPriceLevels } from './KeyPriceLevels';
-import { KeyInsights } from './KeyInsights';
+import { AiDiagnosis } from './AiDiagnosis';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -34,19 +33,21 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const report: AnalysisReport = 'report' in data ? data.report : data;
   const queryId = 'queryId' in data ? data.queryId : report.meta.queryId;
 
-  const { meta, summary, strategy, todaySnapshot, details } = report;
+  const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, newsContent } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, newsContent: null };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null };
 
     const dashboard = raw.dashboard ?? raw;
+    const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
     return {
       quantExtras: dashboard?.quant_extras ?? dashboard?.quantExtras ?? null,
       intelligence: dashboard?.intelligence ?? null,
       counterArguments: dashboard?.counter_arguments ?? dashboard?.counterArguments ?? null,
       positionInfo: dashboard?.position_info ?? dashboard?.positionInfo ?? null,
+      oneSentence: cc?.one_sentence ?? cc?.oneSentence ?? null,
       newsContent: null,
     };
   }, [details?.rawResult]);
@@ -54,31 +55,25 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   // news_content 优先从 details.newsContent（DB字段）获取
   const effectiveNewsContent = details?.newsContent ?? newsContent;
 
+  const hasPosition = !!positionInfo;
+
   return (
     <div className="space-y-3 animate-fade-in">
-      {/* 概览区（首屏） */}
+      {/* 1. 概览区（Hero） */}
       <ReportOverview
         meta={meta}
         summary={summary}
+        hasPositionInfo={hasPosition}
+        oneSentence={oneSentence ?? undefined}
         isHistory={isHistory}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
       />
 
-      {/* 量化 vs AI 对比（紧跟概览） */}
-      {summary.quantVsAi && (
-        <QuantVsAi data={summary.quantVsAi} />
-      )}
-
-      {/* 当日行情快照 */}
-      {todaySnapshot && Object.keys(todaySnapshot).length > 2 && (
-        <TodaySnapshot data={todaySnapshot} />
-      )}
-
-      {/* 作战计划（始终展示） */}
+      {/* 2. 作战计划 */}
       <ReportStrategy strategy={strategy} />
 
-      {/* 盘中关键价位（有数据时展示） */}
+      {/* 3. 盘中关键价位 */}
       {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (
         <KeyPriceLevels
           levels={strategy.keyPriceLevels}
@@ -88,7 +83,22 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
-      {/* 持仓诊断（有持仓信息时显示） */}
+      {/* 4. 量化 vs AI 对比（含综合研判叙述） */}
+      {summary.quantVsAi && (
+        <QuantVsAi data={summary.quantVsAi} />
+      )}
+
+      {/* 5. 量化诊断（细化指标） */}
+      {quantExtras && <QuantAnalysis data={quantExtras} />}
+
+      {/* 6. AI 诊断（细化分析 + 信息依据） */}
+      <AiDiagnosis
+        analysisSummary={summary.analysisSummary}
+        intelligence={intelligence}
+        counterArguments={counterArguments}
+      />
+
+      {/* 7. 持仓诊断（有持仓信息时显示） */}
       {positionInfo && (
         <PositionDiagnosis
           positionInfo={positionInfo}
@@ -100,23 +110,13 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
-      {/* 重要信息汇总（合并 AI 分析 + 量化风险因子） */}
-      <KeyInsights
-        intelligence={intelligence}
-        counterArguments={counterArguments}
-        quantExtras={quantExtras}
-      />
-
-      {/* 量化分析 */}
-      {quantExtras && <QuantAnalysis data={quantExtras} />}
-
-      {/* 资讯区 */}
+      {/* 8. 资讯区 */}
       <ReportNews queryId={queryId} newsContentFallback={effectiveNewsContent} />
 
-      {/* 历史评分趋势 */}
+      {/* 9. 历史评分趋势 */}
       <ScoreTrend stockCode={meta.stockCode} currentQueryId={queryId} />
 
-      {/* 交易日志 */}
+      {/* 10. 交易日志 */}
       <TradeLog
         stockCode={meta.stockCode}
         stockName={meta.stockName}
@@ -126,7 +126,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         currentPrice={meta.currentPrice}
       />
 
-      {/* 透明度与追溯区 */}
+      {/* 11. 透明度与追溯区 */}
       <ReportDetails details={details} queryId={queryId} />
     </div>
   );

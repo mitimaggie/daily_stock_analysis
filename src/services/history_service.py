@@ -217,6 +217,10 @@ class HistoryService:
                     "divergence_reason": llm_reasoning,
                 }
                 
+                # 评分变化
+                prev_score = raw_result.get("prev_score")
+                score_change = raw_result.get("score_change")
+                
                 # 额外策略字段
                 bp = dashboard.get("battle_plan") or {}
                 sniper = bp.get("sniper_points") or {}
@@ -249,6 +253,8 @@ class HistoryService:
                 "holding_strategy": holding_strategy,
                 "today_snapshot": today_snapshot,
                 "quant_vs_ai": quant_vs_ai,
+                "prev_score": prev_score,
+                "score_change": score_change,
                 "news_content": record.news_content,
                 "raw_result": raw_result,
                 "context_snapshot": context_snapshot,
@@ -281,8 +287,8 @@ class HistoryService:
                     num_count = len(re.findall(r'\b\d+\.\d+\b', snippet))
                     if code_count >= 2 and num_count >= 4:
                         snippet = ""
-                if len(snippet) > 50:
-                    snippet = f"{snippet[:47]}..."
+                if len(snippet) > 200:
+                    snippet = f"{snippet[:197]}..."
                 items.append({
                     "title": record.title,
                     "snippet": snippet,

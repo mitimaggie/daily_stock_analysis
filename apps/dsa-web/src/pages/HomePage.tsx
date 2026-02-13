@@ -277,6 +277,21 @@ const HomePage: React.FC = () => {
         positionInfo: effectivePositionInfo,
       });
 
+      // 直接添加任务到侧边栏（不依赖 SSE）
+      setActiveTasks((prev) => {
+        if (prev.some((t) => t.taskId === response.taskId)) return prev;
+        return [...prev, {
+          taskId: response.taskId,
+          stockCode: normalized,
+          stockName: undefined,
+          status: 'pending' as const,
+          progress: 0,
+          message: response.message || '任务已加入队列',
+          reportType: 'detailed',
+          createdAt: new Date().toISOString(),
+        }];
+      });
+
       if (currentRequestId === analysisRequestIdRef.current) {
         setStockCode('');
       }
@@ -332,11 +347,26 @@ const HomePage: React.FC = () => {
     }
 
     try {
-      await analysisApi.analyzeAsync({
+      const response = await analysisApi.analyzeAsync({
         stockCode: code,
         reportType: 'detailed',
         forceRefresh: true,
         positionInfo: posInfo,
+      });
+
+      // 直接添加任务到侧边栏（不依赖 SSE）
+      setActiveTasks((prev) => {
+        if (prev.some((t) => t.taskId === response.taskId)) return prev;
+        return [...prev, {
+          taskId: response.taskId,
+          stockCode: code,
+          stockName: selectedReport?.meta?.stockName,
+          status: 'pending' as const,
+          progress: 0,
+          message: '正在重新分析...',
+          reportType: 'detailed',
+          createdAt: new Date().toISOString(),
+        }];
       });
     } catch (err) {
       if (err instanceof DuplicateTaskError) {
