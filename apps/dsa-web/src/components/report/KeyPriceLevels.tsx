@@ -8,6 +8,7 @@ interface KeyPriceLevelsProps {
   takeProfitPlan?: string;
   hasPositionInfo?: boolean;
   costPrice?: number;
+  defenseMode?: boolean;
 }
 
 const TYPE_CONFIG: Record<string, { emoji: string; color: string; bg: string }> = {
@@ -29,6 +30,7 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
   takeProfitPlan,
   hasPositionInfo = false,
   costPrice,
+  defenseMode = false,
 }) => {
   if (!levels || levels.length === 0) return null;
 
@@ -126,7 +128,7 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium"
                         style={{ background: cfg.bg, color: cfg.color }}
                       >
-                        {cfg.emoji} {hasPositionInfo && level.action === '理想买点' ? '加仓机会' : level.action}
+                        {cfg.emoji} {defenseMode && level.action === '理想买点' ? '反弹减仓' : hasPositionInfo && level.action === '理想买点' ? '加仓机会' : level.action}
                       </span>
                     </td>
                     <td className="py-1.5 pl-2 text-white/60">

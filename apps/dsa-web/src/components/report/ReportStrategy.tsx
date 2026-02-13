@@ -7,6 +7,9 @@ interface ReportStrategyProps {
   costPrice?: number;
   currentPrice?: number;
   holdingStrategy?: Record<string, any> | null;
+  defenseMode?: boolean;
+  suggestedPositionPct?: number;
+  maxDrawdown60d?: number;
 }
 
 const fmtPrice = (v?: string | number | null): string => {
@@ -24,6 +27,9 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
   costPrice,
   currentPrice,
   holdingStrategy,
+  defenseMode = false,
+  suggestedPositionPct,
+  maxDrawdown60d,
 }) => {
   if (!strategy) return null;
 
@@ -58,20 +64,25 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
 
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-      <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5 mb-3">
-        <span>🎯</span> 作战计划
-      </h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5">
+          <span>{defenseMode ? '🛡️' : '🎯'}</span> {defenseMode ? '防守作战' : '作战计划'}
+        </h3>
+        {defenseMode && (
+          <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-400 font-medium">防守模式</span>
+        )}
+      </div>
 
       {/* 5 列表格 */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-white/40 border-b border-white/[0.06]">
-              <th className="text-center py-1.5 font-medium">{hasPositionInfo ? '加仓点' : '买点'}</th>
+              <th className="text-center py-1.5 font-medium">{defenseMode ? (hasPositionInfo ? '反弹出货' : '反弹位') : (hasPositionInfo ? '加仓点' : '买点')}</th>
               <th className="text-center py-1.5 font-medium">止损</th>
-              <th className="text-center py-1.5 font-medium">短线目标</th>
-              <th className="text-center py-1.5 font-medium">中线目标</th>
-              <th className="text-center py-1.5 font-medium">{rrLabel}</th>
+              <th className="text-center py-1.5 font-medium">{defenseMode ? '减仓目标' : '短线目标'}</th>
+              <th className="text-center py-1.5 font-medium">{defenseMode ? '清仓价' : '中线目标'}</th>
+              <th className="text-center py-1.5 font-medium">{defenseMode ? '回撤风险' : rrLabel}</th>
             </tr>
           </thead>
           <tbody>
@@ -97,26 +108,37 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
                 </span>
               </td>
               <td className="text-center py-2">
-                <span className={`font-mono font-bold text-sm ${rrColor}`}>
-                  {rrText}
-                </span>
+                {defenseMode && maxDrawdown60d != null ? (
+                  <span className="font-mono font-bold text-sm text-red-400">
+                    {maxDrawdown60d.toFixed(1)}%
+                  </span>
+                ) : (
+                  <span className={`font-mono font-bold text-sm ${rrColor}`}>
+                    {rrText}
+                  </span>
+                )}
               </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      {/* 持仓成本标注 */}
+      {/* 持仓成本标注 + 仓位动态建议 */}
       {hasPositionInfo && costPrice && costPrice > 0 && (
-        <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center gap-3 text-[11px] text-white/40">
+        <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center flex-wrap gap-3 text-[11px] text-white/40">
           <span>💰 成本 <span className="font-mono text-white/60">{costPrice.toFixed(2)}</span></span>
           {pnlPct != null && (
             <span className={pnlPct >= 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}>
               {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
             </span>
           )}
+          {defenseMode && suggestedPositionPct != null && (
+            <span className="text-red-400/80 font-medium">
+              ⚠ 建议仓位≤{suggestedPositionPct}%{suggestedPositionPct === 0 ? '（清仓）' : ''}
+            </span>
+          )}
           {holdingStrategy?.recommended_stop_reason && (
-            <span className="text-white/30">止损依据: {holdingStrategy.recommended_stop_reason}</span>
+            <span className="text-white/30">止损: {holdingStrategy.recommended_stop_reason}</span>
           )}
         </div>
       )}

@@ -762,6 +762,19 @@ class StockAnalysisPipeline:
                     _trend_obj, cost_price=_user_cost,
                 )
 
+                # === 防守模式判定（复合条件） ===
+                _qs = int(quant_score) if quant_score is not None else 50
+                _as = result.llm_score if result.llm_score is not None else 50
+                _ts = trend.get('trend_status', '')
+                _sc = getattr(result, 'score_change', None) or 0
+                _defense = (
+                    (_qs < 50 and _as < 50)                           # 双引擎共识偏空
+                    or _qs < 35                                        # 极弱信号
+                    or (_ts in ('BEAR', 'STRONG_BEAR', 'bear', 'strong_bear') and _sc <= -10)  # 趋势恶化+评分骤降
+                )
+                dashboard['defense_mode'] = _defense
+                result.dashboard = dashboard
+
                 # 决策类型
                 advice = result.operation_advice
                 if '买' in advice or '加仓' in advice:

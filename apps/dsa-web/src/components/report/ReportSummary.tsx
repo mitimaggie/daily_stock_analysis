@@ -36,9 +36,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent, dashboardHoldingStrategy } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent, dashboardHoldingStrategy, defenseMode } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null, dashboardHoldingStrategy: null };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null, dashboardHoldingStrategy: null, defenseMode: false };
 
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -50,6 +50,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       oneSentence: cc?.one_sentence ?? cc?.oneSentence ?? null,
       newsContent: null,
       dashboardHoldingStrategy: dashboard?.holding_strategy ?? dashboard?.holdingStrategy ?? null,
+      defenseMode: !!(dashboard?.defense_mode ?? dashboard?.defenseMode),
     };
   }, [details?.rawResult]);
 
@@ -80,6 +81,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
         currentPrice={meta.currentPrice}
         holdingStrategy={dashboardHoldingStrategy}
+        defenseMode={defenseMode}
+        suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
+        maxDrawdown60d={quantExtras?.max_drawdown_60d ?? quantExtras?.maxDrawdown60d}
       />
 
       {/* 3. 盘中关键价位 */}
@@ -91,6 +95,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           takeProfitPlan={strategy.takeProfitPlan}
           hasPositionInfo={hasPosition}
           costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
+          defenseMode={defenseMode}
         />
       )}
 
