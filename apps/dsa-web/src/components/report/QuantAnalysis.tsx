@@ -144,11 +144,30 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         className="w-full flex items-center justify-between text-left mb-3"
         onClick={() => setExpanded(!expanded)}
       >
-        <h3 className="text-sm font-semibold text-white/70">量化分析</h3>
+        <h3 className="text-sm font-semibold text-white/70">量化诊断</h3>
         <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
       </button>
 
-      {/* 一行式量化诊断摘要（始终可见） */}
+      {/* 量化诊断结论（始终可见） */}
+      <div className="p-2.5 rounded-lg bg-white/[0.03] border border-white/[0.05] mb-3">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className={`text-lg font-bold font-mono ${getScoreColor(signalScore)}`}>{signalScore ?? '--'}</span>
+          <span className="text-[11px] text-white/40">分</span>
+          {(qe.buy_signal ?? qe.buySignal) && (
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${signalScore >= 60 ? 'bg-green-500/15 text-green-400' : signalScore <= 40 ? 'bg-red-500/15 text-red-400' : 'bg-yellow-500/15 text-yellow-400'}`}>
+              {qe.buy_signal ?? qe.buySignal}
+            </span>
+          )}
+        </div>
+        {/* 信号理由 */}
+        {(qe.signal_reasons ?? qe.signalReasons)?.length > 0 && (
+          <div className="text-[11px] text-white/50 leading-relaxed">
+            {(qe.signal_reasons ?? qe.signalReasons).slice(0, 4).join(' · ')}
+          </div>
+        )}
+      </div>
+
+      {/* 指标一行摘要 */}
       <div className="text-[11px] text-white/60 leading-relaxed mb-2 font-mono flex flex-wrap gap-x-2 gap-y-0.5">
         {(qe.trend_status ?? qe.trendStatus) && (
           <span>趋势:<span className={maV.color}>{qe.trend_status ?? qe.trendStatus}</span></span>
@@ -173,6 +192,12 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         )}
         {(qe.valuation_verdict ?? qe.valuationVerdict) && (
           <><span className="text-white/20">|</span><span>估值:<span className="text-white/70">{qe.valuation_verdict ?? qe.valuationVerdict}</span></span></>
+        )}
+        {(qe.capital_flow_signal ?? qe.capitalFlowSignal) && (qe.capital_flow_signal ?? qe.capitalFlowSignal) !== '资金面数据正常' && (
+          <><span className="text-white/20">|</span><span>资金:<span className="text-white/70">{qe.capital_flow_signal ?? qe.capitalFlowSignal}</span></span></>
+        )}
+        {(qe.sector_name ?? qe.sectorName) && (
+          <><span className="text-white/20">|</span><span>板块:<span className="text-white/70">{qe.sector_name ?? qe.sectorName} {qe.sector_signal ?? qe.sectorSignal ?? ''}</span></span></>
         )}
       </div>
 

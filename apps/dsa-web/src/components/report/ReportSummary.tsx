@@ -61,7 +61,6 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         meta={meta}
         summary={summary}
         isHistory={isHistory}
-        hasPositionInfo={!!positionInfo}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
       />
@@ -76,16 +75,17 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         <TodaySnapshot data={todaySnapshot} />
       )}
 
-      {/* 盘中关键价位表（替代原有策略点位） */}
-      {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 ? (
+      {/* 作战计划（始终展示） */}
+      <ReportStrategy strategy={strategy} />
+
+      {/* 盘中关键价位（有数据时展示） */}
+      {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (
         <KeyPriceLevels
           levels={strategy.keyPriceLevels}
           currentPrice={meta.currentPrice}
           riskRewardRatio={strategy.riskRewardRatio}
           takeProfitPlan={strategy.takeProfitPlan}
         />
-      ) : (
-        <ReportStrategy strategy={strategy} />
       )}
 
       {/* 持仓诊断（有持仓信息时显示） */}

@@ -146,23 +146,83 @@ class HistoryService:
             # 计算情绪标签
             sentiment_label = self._get_sentiment_label(record.sentiment_score or 50)
             
-            # 从 raw_result 中提取空仓/持仓建议（供前端分开展示）
+            # 从 raw_result 中提取完整报告数据
             position_advice = None
             holding_strategy = None
+            today_snapshot = None
+            key_price_levels = None
+            risk_reward_ratio = None
+            take_profit_plan = None
+            quant_vs_ai = None
+            stop_loss_intraday = None
+            stop_loss_mid = None
+            take_profit_mid = None
             if isinstance(raw_result, dict):
                 dashboard = raw_result.get("dashboard") or {}
                 core = dashboard.get("core_conclusion") or {}
                 pos = core.get("position_advice") or {}
-                if pos.get("no_position") or pos.get("has_position"):
+                hs = dashboard.get("holding_strategy") or {}
+                qe = dashboard.get("quant_extras") or {}
+                
+                # 持仓建议（优先用量化 holding_strategy）
+                no_position = (
+                    hs.get("entry_advice", "")
+                    or qe.get("advice_for_empty", "")
+                    or pos.get("no_position", "")
+                )
+                entry_pct = hs.get("entry_position_pct", 0) or qe.get("suggested_position_pct", 0) or 0
+                if entry_pct and no_position and f"{entry_pct}%" not in no_position:
+                    no_position = f"{no_position}（仓位≤{entry_pct}%）"
+                has_position = (
+                    hs.get("advice", "")
+                    or qe.get("advice_for_holding", "")
+                    or pos.get("has_position", "")
+                )
+                if no_position or has_position:
                     position_advice = {
-                        "no_position": pos.get("no_position", ""),
-                        "has_position": pos.get("has_position", ""),
+                        "no_position": no_position,
+                        "has_position": has_position,
                     }
                 
-                # 持仓者策略：优先取 pipeline 注入的结构化数据，旧记录降级从 quant_extras 重建
+                # 持仓者策略
                 holding_strategy = dashboard.get("holding_strategy")
                 if not holding_strategy:
                     holding_strategy = self._rebuild_holding_strategy_from_qe(dashboard)
+                
+                # 当日行情快照
+                today_kline = dashboard.get("today_kline") or {}
+                if today_kline:
+                    today_snapshot = dict(today_kline)
+                    today_snapshot["current_price"] = raw_result.get("current_price", 0) or 0
+                    today_snapshot["change_pct"] = raw_result.get("change_pct")
+                    today_snapshot["volume_ratio"] = qe.get("volume_ratio")
+                    today_snapshot["turnover_rate"] = qe.get("turnover_rate")
+                
+                # 盘中关键价位
+                key_price_levels = qe.get("intraday_watchlist", []) or []
+                
+                # 风险收益比 & 止盈计划
+                risk_reward_ratio = qe.get("risk_reward_ratio")
+                take_profit_plan = qe.get("take_profit_plan", "")
+                
+                # 量化 vs AI（优先从 raw_result 取 llm 字段，旧记录可能没有）
+                llm_score = raw_result.get("llm_score")
+                llm_advice = raw_result.get("llm_advice", "") or ""
+                llm_reasoning = raw_result.get("llm_reasoning", "") or ""
+                quant_vs_ai = {
+                    "quant_score": record.sentiment_score,
+                    "quant_advice": record.operation_advice,
+                    "ai_score": llm_score,
+                    "ai_advice": llm_advice,
+                    "divergence_reason": llm_reasoning,
+                }
+                
+                # 额外策略字段
+                bp = dashboard.get("battle_plan") or {}
+                sniper = bp.get("sniper_points") or {}
+                stop_loss_intraday = str(sniper["stop_loss_intraday"]) if sniper.get("stop_loss_intraday") is not None else None
+                stop_loss_mid = str(sniper["stop_loss_mid"]) if sniper.get("stop_loss_mid") is not None else None
+                take_profit_mid = str(sniper["take_profit_mid"]) if sniper.get("take_profit_mid") is not None else None
             
             return {
                 "query_id": record.query_id,
@@ -179,8 +239,16 @@ class HistoryService:
                 "ideal_buy": str(record.ideal_buy) if record.ideal_buy else None,
                 "secondary_buy": str(record.secondary_buy) if record.secondary_buy else None,
                 "stop_loss": str(record.stop_loss) if record.stop_loss else None,
+                "stop_loss_intraday": stop_loss_intraday,
+                "stop_loss_mid": stop_loss_mid,
                 "take_profit": str(record.take_profit) if record.take_profit else None,
+                "take_profit_mid": take_profit_mid,
+                "risk_reward_ratio": risk_reward_ratio,
+                "take_profit_plan": take_profit_plan,
+                "key_price_levels": key_price_levels,
                 "holding_strategy": holding_strategy,
+                "today_snapshot": today_snapshot,
+                "quant_vs_ai": quant_vs_ai,
                 "news_content": record.news_content,
                 "raw_result": raw_result,
                 "context_snapshot": context_snapshot,

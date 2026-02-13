@@ -20,7 +20,6 @@ interface ReportOverviewProps {
 export const ReportOverview: React.FC<ReportOverviewProps> = ({
   meta,
   summary,
-  hasPositionInfo = false,
   onRefresh,
   isRefreshing = false,
 }) => {
@@ -145,8 +144,8 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         {summary.analysisSummary || '暂无分析结论'}
       </p>
 
-      {/* 持仓建议 */}
-      {(summary.positionAdvice?.noPosition || (hasPositionInfo && summary.positionAdvice?.hasPosition)) && (
+      {/* 持仓建议（空仓+持仓双向，始终展示） */}
+      {(summary.positionAdvice?.noPosition || summary.positionAdvice?.hasPosition) && (
         <div className="border-t border-white/5 pt-3 space-y-2">
           {summary.positionAdvice?.noPosition && (
             <div className="flex gap-2 items-start text-[13px]">
@@ -154,7 +153,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               <p className="text-white/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
             </div>
           )}
-          {hasPositionInfo && summary.positionAdvice?.hasPosition && (
+          {summary.positionAdvice?.hasPosition && (
             <div className="flex gap-2 items-start text-[13px]">
               <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">持仓</span>
               <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>

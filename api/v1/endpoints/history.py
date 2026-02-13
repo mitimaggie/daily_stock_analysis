@@ -27,6 +27,9 @@ from api.v1.schemas.history import (
     ReportDetails,
     PositionAdvice,
     HoldingStrategy,
+    QuantVsAi,
+    KeyPriceLevel,
+    TodaySnapshot,
 )
 from api.v1.schemas.common import ErrorResponse
 from src.storage import DatabaseManager
@@ -192,24 +195,42 @@ def get_history_detail(
         position_advice = None
         if isinstance(pos_adv, dict) and (pos_adv.get("no_position") or pos_adv.get("has_position")):
             position_advice = PositionAdvice(no_position=pos_adv.get("no_position"), has_position=pos_adv.get("has_position"))
+        
+        # 量化 vs AI
+        qva_data = result.get("quant_vs_ai")
+        quant_vs_ai = None
+        if qva_data and isinstance(qva_data, dict):
+            quant_vs_ai = QuantVsAi(**qva_data)
+        
         summary = ReportSummary(
             analysis_summary=result.get("analysis_summary"),
             operation_advice=result.get("operation_advice"),
             trend_prediction=result.get("trend_prediction"),
             sentiment_score=result.get("sentiment_score"),
             sentiment_label=result.get("sentiment_label"),
-            position_advice=position_advice
+            position_advice=position_advice,
+            quant_vs_ai=quant_vs_ai,
         )
         
         hs_data = result.get("holding_strategy")
         holding_strategy = None
         if hs_data and isinstance(hs_data, dict):
             holding_strategy = HoldingStrategy(**hs_data)
+        # 盘中关键价位
+        kpl_data = result.get("key_price_levels") or []
+        key_price_levels = [KeyPriceLevel(**lv) for lv in kpl_data if isinstance(lv, dict) and "price" in lv] if kpl_data else None
+        
         strategy = ReportStrategy(
             ideal_buy=result.get("ideal_buy"),
             secondary_buy=result.get("secondary_buy"),
             stop_loss=result.get("stop_loss"),
+            stop_loss_intraday=result.get("stop_loss_intraday"),
+            stop_loss_mid=result.get("stop_loss_mid"),
             take_profit=result.get("take_profit"),
+            take_profit_mid=result.get("take_profit_mid"),
+            risk_reward_ratio=result.get("risk_reward_ratio"),
+            take_profit_plan=result.get("take_profit_plan"),
+            key_price_levels=key_price_levels,
             holding_strategy=holding_strategy,
         )
         
@@ -219,10 +240,15 @@ def get_history_detail(
             context_snapshot=result.get("context_snapshot")
         )
         
+        # 当日行情快照
+        ts_data = result.get("today_snapshot")
+        today_snapshot = TodaySnapshot(**ts_data) if ts_data and isinstance(ts_data, dict) else None
+        
         return AnalysisReport(
             meta=meta,
             summary=summary,
             strategy=strategy,
+            today_snapshot=today_snapshot,
             details=details
         )
         

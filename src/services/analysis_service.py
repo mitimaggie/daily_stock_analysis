@@ -118,13 +118,30 @@ class AnalysisService:
         if hasattr(result, 'get_sniper_points'):
             sniper_points = result.get_sniper_points() or {}
         
-        # 持仓建议（空仓/持仓分开展示）
+        # 持仓建议（空仓/持仓分开展示，优先用量化 holding_strategy）
         dashboard = getattr(result, "dashboard", None) or {}
         core = dashboard.get("core_conclusion") or {}
         pos_advice = core.get("position_advice") or {}
+        hs = dashboard.get("holding_strategy") or {}
+        qe_tmp = dashboard.get("quant_extras") or {}
+        # 空仓者：优先 holding_strategy.entry_advice → quant_extras.advice_for_empty → AI
+        no_position = (
+            hs.get("entry_advice", "")
+            or qe_tmp.get("advice_for_empty", "")
+            or pos_advice.get("no_position", "")
+        )
+        entry_pct = hs.get("entry_position_pct", 0) or qe_tmp.get("suggested_position_pct", 0) or 0
+        if entry_pct and no_position and f"{entry_pct}%" not in no_position:
+            no_position = f"{no_position}（仓位≤{entry_pct}%）"
+        # 持仓者：优先 holding_strategy.advice → quant_extras.advice_for_holding → AI
+        has_position = (
+            hs.get("advice", "")
+            or qe_tmp.get("advice_for_holding", "")
+            or pos_advice.get("has_position", "")
+        )
         position_advice = {
-            "no_position": pos_advice.get("no_position", ""),
-            "has_position": pos_advice.get("has_position", ""),
+            "no_position": no_position,
+            "has_position": has_position,
         }
         
         # 计算情绪标签（兼容无 sentiment_score）

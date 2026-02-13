@@ -111,7 +111,12 @@ class AnalysisResult:
             'analysis_summary': self.analysis_summary,
             'risk_warning': self.risk_warning,
             'success': self.success,
-            'price': self.current_price
+            'price': self.current_price,
+            'current_price': self.current_price,
+            'change_pct': self.change_pct,
+            'llm_score': self.llm_score,
+            'llm_advice': self.llm_advice,
+            'llm_reasoning': self.llm_reasoning,
         }
 
     def get_core_conclusion(self) -> str:
