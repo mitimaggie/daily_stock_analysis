@@ -62,7 +62,17 @@ class RiskManager:
             result.stop_loss_mid = round(max(raw_mid, limit_floor), 2)
         
         result.stop_loss_anchor = result.stop_loss_short
-        result.ideal_buy_anchor = round(result.ma5 if result.ma5 > 0 else result.ma10, 2)
+        # 理想买点：优先用 MA5/MA10 回踩，但不能高于现价
+        ma_anchor = result.ma5 if result.ma5 > 0 else result.ma10
+        if ma_anchor > 0 and ma_anchor <= price:
+            result.ideal_buy_anchor = round(ma_anchor, 2)
+        else:
+            # MA 在现价之上（下跌趋势）→ 取最近支撑位或 ATR 回踩价
+            support_below = [s for s in (result.support_levels or []) if s < price]
+            if support_below:
+                result.ideal_buy_anchor = round(max(support_below), 2)
+            else:
+                result.ideal_buy_anchor = round(price - 0.3 * atr, 2)
         
         if result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
             tp_multiplier_short = 2.0
