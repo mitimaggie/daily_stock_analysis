@@ -36,9 +36,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent, dashboardHoldingStrategy, defenseMode } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null, dashboardHoldingStrategy: null, defenseMode: false };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null };
 
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -51,6 +51,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       newsContent: null,
       dashboardHoldingStrategy: dashboard?.holding_strategy ?? dashboard?.holdingStrategy ?? null,
       defenseMode: !!(dashboard?.defense_mode ?? dashboard?.defenseMode),
+      scoreMomentumAdj: dashboard?.score_momentum_adj ?? dashboard?.scoreMomentumAdj ?? 0,
+      positionDiagnosis: dashboard?.position_diagnosis ?? dashboard?.positionDiagnosis ?? null,
     };
   }, [details?.rawResult]);
 
@@ -69,6 +71,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         oneSentence={oneSentence ?? undefined}
         costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
         positionAmount={positionInfo?.position_amount ?? positionInfo?.positionAmount}
+        scoreMomentumAdj={scoreMomentumAdj}
         isHistory={isHistory}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
@@ -82,8 +85,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         currentPrice={meta.currentPrice}
         holdingStrategy={dashboardHoldingStrategy}
         defenseMode={defenseMode}
-        suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
         maxDrawdown60d={quantExtras?.max_drawdown_60d ?? quantExtras?.maxDrawdown60d}
+        positionDiagnosis={positionDiagnosis}
       />
 
       {/* 3. 盘中关键价位 */}

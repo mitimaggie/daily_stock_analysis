@@ -359,19 +359,18 @@ class StockTrendAnalyzer:
             ScoringSystem.detect_sentiment_extreme(result, chip_data=chip_data, capital_flow=capital_flow, df=df)
             ScoringSystem.score_quote_extra(result, quote_extra)
             ScoringSystem.score_limit_and_enhanced(result)
-            # K线形态评分调整
+            # K线形态评分调整（仅记录，由 cap_adjustments 统一应用）
             if result.candle_score_adj != 0:
-                result.signal_score = max(0, min(100, result.signal_score + result.candle_score_adj))
                 result.score_breakdown['candle_pattern'] = result.candle_score_adj
-                ScoringSystem.update_buy_signal(result)
             # OBV/ADX/均线发散 评分修正
             ScoringSystem.score_obv_adx(result)
+            ResonanceDetector.check_resonance(result)
+            # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)
             ScoringSystem.detect_signal_conflict(result)
             
             RiskManager.calculate_stop_loss_and_take_profit(result, df)
             RiskManager.calculate_position(result, market_regime)
-            ResonanceDetector.check_resonance(result)
             RiskManager.calculate_risk_reward(result, result.current_price)
             RiskManager.generate_detailed_advice(result)
             

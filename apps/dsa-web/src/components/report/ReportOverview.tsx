@@ -13,6 +13,7 @@ interface ReportOverviewProps {
   oneSentence?: string;
   costPrice?: number;
   positionAmount?: number;
+  scoreMomentumAdj?: number;
   onRefresh?: () => void;
   isRefreshing?: boolean;
 }
@@ -27,6 +28,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   oneSentence,
   costPrice,
   positionAmount,
+  scoreMomentumAdj = 0,
   onRefresh,
   isRefreshing = false,
 }) => {
@@ -132,6 +134,11 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
             {meta.scoreChange != null && meta.scoreChange !== 0 && (
               <span className={`text-[11px] font-mono font-semibold ${meta.scoreChange > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
                 {meta.scoreChange > 0 ? '▲' : '▼'}{Math.abs(meta.scoreChange)}
+              </span>
+            )}
+            {scoreMomentumAdj !== 0 && (
+              <span className={`text-[10px] px-1 py-0.5 rounded ${scoreMomentumAdj > 0 ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                惯性{scoreMomentumAdj > 0 ? '+' : ''}{scoreMomentumAdj}
               </span>
             )}
           </div>

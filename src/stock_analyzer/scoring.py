@@ -406,9 +406,7 @@ class ScoringSystem:
         result.valuation_downgrade = downgrade
         
         if downgrade < 0:
-            result.signal_score = max(0, result.signal_score + downgrade)
             result.score_breakdown['valuation_adj'] = downgrade
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def check_trading_halt(result: TrendAnalysisResult):
@@ -501,9 +499,7 @@ class ScoringSystem:
         
         cf_adj = cf_score - 5
         if cf_adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + cf_adj))
             result.score_breakdown['capital_flow_adj'] = cf_adj
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def score_capital_flow_trend(result: TrendAnalysisResult, df: pd.DataFrame):
@@ -543,9 +539,6 @@ class ScoringSystem:
             adj = -2
             result.score_breakdown['cf_trend'] = -2
         
-        if adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + adj))
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None):
@@ -604,9 +597,7 @@ class ScoringSystem:
         
         sector_adj = sec_score - 5
         if sector_adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + sector_adj))
             result.score_breakdown['sector_adj'] = sector_adj
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def score_chip_distribution(result: TrendAnalysisResult, chip_data: Union[ChipDistribution, dict, None] = None):
@@ -665,9 +656,7 @@ class ScoringSystem:
         
         chip_adj = c_score - 5
         if chip_adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + chip_adj))
             result.score_breakdown['chip_adj'] = chip_adj
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def score_fundamental_quality(result: TrendAnalysisResult, fundamental_data: Union[FundamentalData, dict, None] = None):
@@ -758,9 +747,7 @@ class ScoringSystem:
         
         fund_adj = f_score - 5
         if fund_adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + fund_adj))
             result.score_breakdown['fundamental_adj'] = fund_adj
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def score_forecast(result: TrendAnalysisResult, fundamental_data: Union[FundamentalData, dict, None] = None):
@@ -816,7 +803,6 @@ class ScoringSystem:
                 signals.append(f"⚠️盈利预测下调{chg:.1f}%")
         
         if adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + adj))
             result.score_breakdown['forecast_adj'] = adj
             if signals:
                 for s in signals:
@@ -824,7 +810,6 @@ class ScoringSystem:
                         result.risk_factors.append(s)
                     else:
                         result.signal_reasons.append(s)
-            ScoringSystem.update_buy_signal(result)
 
     @staticmethod
     def detect_sentiment_extreme(result: TrendAnalysisResult, chip_data: Union[ChipDistribution, dict, None] = None,
@@ -923,9 +908,7 @@ class ScoringSystem:
             result.sentiment_extreme_detail = "；".join(details)
         
         if adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + adj))
             result.score_breakdown['sentiment_extreme'] = adj
-            ScoringSystem.update_buy_signal(result)
 
     @staticmethod
     def score_quote_extra(result: TrendAnalysisResult, quote_extra: Union[QuoteExtra, dict, None] = None):
@@ -986,9 +969,6 @@ class ScoringSystem:
                 result.market_risk_cap = min(result.market_risk_cap, 25)
                 result.risk_factors.append(f"小盘股(流通市值{mv_yi:.0f}亿)，注意流动性")
         
-        if adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + adj))
-            ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def score_limit_and_enhanced(result: TrendAnalysisResult):
@@ -1132,11 +1112,6 @@ class ScoringSystem:
                 result.signal_reasons.append("连续3日缩量回调，洗盘特征")
                 result.score_breakdown['vol_trend_3d'] = 1
 
-        # 应用修正
-        if adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + adj))
-            ScoringSystem.update_buy_signal(result)
-
     @staticmethod
     def score_obv_adx(result: TrendAnalysisResult):
         """OBV量能趋势 + ADX趋势强度 + 均线发散速率 综合评分修正"""
@@ -1207,13 +1182,16 @@ class ScoringSystem:
             result.signal_reasons.append(f"均线空头收敛({spread:.1f}%)，下跌动能减弱")
             result.score_breakdown['ma_spread'] = 1
         
-        if adj != 0:
-            result.signal_score = max(0, min(100, result.signal_score + adj))
-            ScoringSystem.update_buy_signal(result)
-
     @staticmethod
     def cap_adjustments(result: TrendAnalysisResult):
-        """修正因子总量上限：防止多维修正导致分数膨胀"""
+        """统一应用所有评分修正因子（取代逐步截断）
+        
+        流程：
+        1. 汇总 score_breakdown 中所有 adj 键
+        2. 应用正向上限 POS_CAP=15、负向下限 NEG_CAP=-20
+        3. 一次性加到 base_score 并 clamp 到 [0, 100]
+        4. 仅调用一次 update_buy_signal
+        """
         adj_keys = ['valuation_adj', 'capital_flow_adj', 'cf_trend', 'cf_continuity',
                    'cross_resonance', 'sector_adj', 'chip_adj', 'fundamental_adj',
                    'week52_risk', 'week52_opp', 'liquidity_risk', 'resonance_adj',
@@ -1229,16 +1207,17 @@ class ScoringSystem:
         POS_CAP = 15
         NEG_CAP = -20
         
-        if pos_adj > POS_CAP:
-            capped = min(total_adj, POS_CAP + neg_adj)
-            result.signal_score = max(0, min(100, result.signal_score - (pos_adj - POS_CAP)))
-            result.score_breakdown['adj_cap'] = capped - total_adj
-            ScoringSystem.update_buy_signal(result)
-        elif neg_adj < NEG_CAP:
-            capped = max(total_adj, NEG_CAP + pos_adj)
-            result.signal_score = max(0, min(100, result.signal_score + (NEG_CAP - neg_adj)))
-            result.score_breakdown['adj_cap'] = capped - total_adj
-            ScoringSystem.update_buy_signal(result)
+        # 应用 cap
+        capped_pos = min(pos_adj, POS_CAP)
+        capped_neg = max(neg_adj, NEG_CAP)
+        capped_total = capped_pos + capped_neg
+        
+        if pos_adj > POS_CAP or neg_adj < NEG_CAP:
+            result.score_breakdown['adj_cap'] = capped_total - total_adj
+        
+        # base_score = signal_score 此时仍是 calculate_base_score 的原始值（因为各 score_xxx 不再修改它）
+        result.signal_score = max(0, min(100, result.signal_score + capped_total))
+        ScoringSystem.update_buy_signal(result)
     
     @staticmethod
     def detect_signal_conflict(result: TrendAnalysisResult):

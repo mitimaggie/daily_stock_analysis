@@ -747,6 +747,35 @@ class StockAnalysisPipeline:
                 if trend.get('take_profit_mid'):
                     sniper['take_profit_mid'] = trend['take_profit_mid']
 
+                # === 评分惯性因子：基于历史评分连续性修正 ===
+                _score_trend = context.get('score_trend') or {}
+                _cons_up = _score_trend.get('consecutive_up', 0)
+                _cons_down = _score_trend.get('consecutive_down', 0)
+                _inflection = _score_trend.get('inflection', '')
+                _momentum_adj = 0
+
+                if _cons_up >= 3:
+                    _momentum_adj = 5      # 连续3+次上升：强势惯性
+                elif _cons_up >= 2:
+                    _momentum_adj = 3      # 连续2次上升：温和惯性
+                elif _cons_down >= 3:
+                    _momentum_adj = -5     # 连续3+次下降：弱势惯性
+                elif _cons_down >= 2:
+                    _momentum_adj = -3     # 连续2次下降：温和弱势
+
+                # 拐点信号削弱惯性（趋势反转初期，不应延续旧惯性）
+                if _inflection:
+                    _momentum_adj = int(_momentum_adj * 0.3)
+
+                if _momentum_adj != 0:
+                    _old_score = result.sentiment_score
+                    result.sentiment_score = max(0, min(100, result.sentiment_score + _momentum_adj))
+                    # 同步更新 quant_score 变量（后续防守模式判定用）
+                    quant_score = result.sentiment_score
+                    logger.info(f"[{code}] 评分惯性因子: {_old_score} → {result.sentiment_score} "
+                                f"(adj={_momentum_adj:+d}, 连升{_cons_up}/连降{_cons_down}, 拐点={_inflection or '无'})")
+                    dashboard['score_momentum_adj'] = _momentum_adj
+
                 # 新量化字段注入 dashboard（供 notification 渲染）
                 # trend 本身就是 TrendAnalysisResult.to_dict() 的输出，直接复用
                 dashboard['quant_extras'] = trend
@@ -861,6 +890,40 @@ class StockAnalysisPipeline:
             if position_info:
                 dashboard = getattr(result, 'dashboard', None) or {}
                 dashboard['position_info'] = position_info
+
+                # === 仓位精确化建议 ===
+                _total_cap = float(position_info.get('total_capital', 0) or 0)
+                _pos_amt = float(position_info.get('position_amount', 0) or 0)
+                _trend = context.get('trend_analysis', {})
+                _suggested_pct = _trend.get('suggested_position_pct', 0) if isinstance(_trend, dict) else 0
+                _actual_pct = (_pos_amt / _total_cap * 100) if _total_cap > 0 and _pos_amt > 0 else None
+
+                pos_diag = {
+                    'actual_pct': round(_actual_pct, 1) if _actual_pct is not None else None,
+                    'suggested_pct': _suggested_pct,
+                    'action': None,       # "加仓" / "减仓" / "清仓" / "维持"
+                    'delta_pct': None,    # 需要调整的百分比
+                    'reason': '',
+                }
+                if _actual_pct is not None and _suggested_pct is not None:
+                    if _suggested_pct == 0:
+                        pos_diag['action'] = '清仓'
+                        pos_diag['delta_pct'] = round(-_actual_pct, 1)
+                        pos_diag['reason'] = '量化建议不宜持有'
+                    elif _actual_pct > _suggested_pct * 1.5:
+                        pos_diag['action'] = '减仓'
+                        pos_diag['delta_pct'] = round(_suggested_pct - _actual_pct, 1)
+                        pos_diag['reason'] = f'当前{_actual_pct:.1f}%超出建议{_suggested_pct}%的1.5倍'
+                    elif _actual_pct < _suggested_pct * 0.5 and _suggested_pct > 0:
+                        pos_diag['action'] = '加仓'
+                        pos_diag['delta_pct'] = round(_suggested_pct - _actual_pct, 1)
+                        pos_diag['reason'] = f'当前{_actual_pct:.1f}%低于建议{_suggested_pct}%的一半'
+                    else:
+                        pos_diag['action'] = '维持'
+                        pos_diag['delta_pct'] = 0
+                        pos_diag['reason'] = '仓位在合理范围内'
+
+                dashboard['position_diagnosis'] = pos_diag
                 result.dashboard = dashboard
 
             # 标注分析时间戳（盘中多次分析时可区分）

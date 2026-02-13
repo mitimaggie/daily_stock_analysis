@@ -9,8 +9,6 @@ import pandas as pd
 from typing import List
 from .types import TrendAnalysisResult, TrendStatus
 from .types import MACDStatus, KDJStatus, RSIStatus, VolumeStatus
-from .scoring import ScoringSystem
-
 logger = logging.getLogger(__name__)
 
 
@@ -171,9 +169,7 @@ class ResonanceDetector:
         
         if resonance_signals:
             result.indicator_resonance = "\n".join(resonance_signals)
-            result.signal_score = max(0, min(100, result.signal_score + resonance_score_adj))
             result.score_breakdown['resonance_adj'] = resonance_score_adj
-            ScoringSystem.update_buy_signal(result)
         else:
             result.indicator_resonance = ""
     
@@ -340,9 +336,7 @@ class ResonanceDetector:
             if resonance_msg:
                 result.timeframe_resonance = "\n".join(resonance_msg)
                 if resonance_adj != 0:
-                    result.signal_score = max(0, min(100, result.signal_score + resonance_adj))
                     result.score_breakdown['timeframe_resonance'] = resonance_adj
-                    ScoringSystem.update_buy_signal(result)
             else:
                 result.timeframe_resonance = ""
         
@@ -397,7 +391,6 @@ class ResonanceDetector:
             if not already_scored:
                 bonus = min(8, len(bullish_resonance) * 2)
                 result.resonance_bonus = bonus
-                result.signal_score = min(100, result.signal_score + bonus)
                 result.score_breakdown['cross_resonance'] = bonus
             else:
                 result.resonance_bonus = 0
@@ -406,12 +399,9 @@ class ResonanceDetector:
             if not already_scored:
                 penalty = -min(8, len(bearish_resonance) * 2)
                 result.resonance_bonus = penalty
-                result.signal_score = max(0, result.signal_score + penalty)
                 result.score_breakdown['cross_resonance'] = penalty
             else:
                 result.resonance_bonus = 0
         else:
             result.resonance_signals = []
             result.resonance_bonus = 0
-        
-        ScoringSystem.update_buy_signal(result)

@@ -8,8 +8,8 @@ interface ReportStrategyProps {
   currentPrice?: number;
   holdingStrategy?: Record<string, any> | null;
   defenseMode?: boolean;
-  suggestedPositionPct?: number;
   maxDrawdown60d?: number;
+  positionDiagnosis?: Record<string, any> | null;
 }
 
 const fmtPrice = (v?: string | number | null): string => {
@@ -28,8 +28,8 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
   currentPrice,
   holdingStrategy,
   defenseMode = false,
-  suggestedPositionPct,
   maxDrawdown60d,
+  positionDiagnosis,
 }) => {
   if (!strategy) return null;
 
@@ -132,9 +132,21 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
               {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
             </span>
           )}
-          {defenseMode && suggestedPositionPct != null && (
-            <span className="text-red-400/80 font-medium">
-              ⚠ 建议仓位≤{suggestedPositionPct}%{suggestedPositionPct === 0 ? '（清仓）' : ''}
+          {positionDiagnosis?.action && positionDiagnosis.action !== '维持' && (
+            <span className={`font-medium ${
+              positionDiagnosis.action === '加仓' ? 'text-green-400/80' : 'text-red-400/80'
+            }`}>
+              {positionDiagnosis.action === '清仓' ? '🚨' : positionDiagnosis.action === '减仓' ? '⚠' : '💡'}
+              {' '}{positionDiagnosis.actual_pct != null ? `当前${positionDiagnosis.actual_pct}%` : ''}
+              {' → '}建议{positionDiagnosis.suggested_pct}%
+              {positionDiagnosis.delta_pct != null && positionDiagnosis.delta_pct !== 0 && (
+                <span className="text-white/40 ml-1">({positionDiagnosis.delta_pct > 0 ? '+' : ''}{positionDiagnosis.delta_pct}%)</span>
+              )}
+            </span>
+          )}
+          {positionDiagnosis?.action === '维持' && positionDiagnosis.actual_pct != null && (
+            <span className="text-white/30">
+              仓位{positionDiagnosis.actual_pct}% ≈ 建议{positionDiagnosis.suggested_pct}%，合理
             </span>
           )}
           {holdingStrategy?.recommended_stop_reason && (
