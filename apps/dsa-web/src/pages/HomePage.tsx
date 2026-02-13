@@ -304,6 +304,51 @@ const HomePage: React.FC = () => {
     }
   };
 
+  // 刷新当前报告（重新分析同一只股票）
+  const handleRefreshReport = useCallback(async () => {
+    if (!selectedReport?.meta?.stockCode) return;
+    const code = selectedReport.meta.stockCode;
+
+    setIsAnalyzing(true);
+    setDuplicateError(null);
+    setStoreError(null);
+
+    // 从 localStorage 读取该股票的持仓信息
+    let posInfo: PositionInfo | undefined = buildPositionInfo();
+    if (!posInfo) {
+      try {
+        const key = `dsa_pos_${code.replace(/\./g, '_')}`;
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const { pa, cp } = JSON.parse(raw);
+          const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
+          const paVal = pa ? parseFloat(pa) * 10000 : undefined;
+          const cpVal = cp ? parseFloat(cp) : undefined;
+          if (tc || paVal || cpVal) {
+            posInfo = { totalCapital: tc, positionAmount: paVal, costPrice: cpVal };
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    try {
+      await analysisApi.analyzeAsync({
+        stockCode: code,
+        reportType: 'detailed',
+        forceRefresh: true,
+        positionInfo: posInfo,
+      });
+    } catch (err) {
+      if (err instanceof DuplicateTaskError) {
+        setDuplicateError(`股票 ${err.stockCode} 正在分析中，请等待完成`);
+      } else {
+        setStoreError(err instanceof Error ? err.message : '刷新失败');
+      }
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [selectedReport, buildPositionInfo, totalCapital]);
+
   // 自选股：单只分析
   const handleWatchlistAnalyze = useCallback((code: string) => {
     setStockCode(code);
@@ -527,7 +572,7 @@ const HomePage: React.FC = () => {
           ) : selectedReport ? (
             <>
               <div className="max-w-4xl mx-auto animate-fade-in">
-                <ReportSummary data={selectedReport} isHistory />
+                <ReportSummary data={selectedReport} isHistory onRefresh={handleRefreshReport} isRefreshing={isAnalyzing} />
               </div>
 
               {/* AI 对话浮动按钮 */}

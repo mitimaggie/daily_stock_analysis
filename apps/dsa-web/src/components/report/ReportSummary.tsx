@@ -16,6 +16,8 @@ import { KeyInsights } from './KeyInsights';
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
   isHistory?: boolean;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
 }
 
 /**
@@ -25,6 +27,8 @@ interface ReportSummaryProps {
 export const ReportSummary: React.FC<ReportSummaryProps> = ({
   data,
   isHistory = false,
+  onRefresh,
+  isRefreshing,
 }) => {
   // 兼容 AnalysisResult 和 AnalysisReport 两种数据格式
   const report: AnalysisReport = 'report' in data ? data.report : data;
@@ -58,6 +62,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         summary={summary}
         isHistory={isHistory}
         hasPositionInfo={!!positionInfo}
+        onRefresh={onRefresh}
+        isRefreshing={isRefreshing}
       />
 
       {/* 量化 vs AI 对比（紧跟概览） */}
