@@ -297,23 +297,8 @@ const HomePage: React.FC = () => {
 
     const currentRequestId = ++analysisRequestIdRef.current;
 
-    // 重新读取最新的持仓（loadPositionForStock 是异步 setState，这里直接从 localStorage 读）
-    let effectivePositionInfo: PositionInfo | undefined = buildPositionInfo();
-    if (!effectivePositionInfo) {
-      try {
-        const key = `dsa_pos_${normalized.replace(/\./g, '_')}`;
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const { pa, cp } = JSON.parse(raw);
-          const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
-          const paVal = pa ? parseFloat(pa) * 10000 : undefined;
-          const cpVal = cp ? parseFloat(cp) : undefined;
-          if (tc || paVal || cpVal) {
-            effectivePositionInfo = { totalCapital: tc, positionAmount: paVal, costPrice: cpVal };
-          }
-        }
-      } catch { /* ignore */ }
-    }
+    // 只使用当前表单中用户明确填写的持仓信息，不自动读取历史数据
+    const effectivePositionInfo: PositionInfo | undefined = buildPositionInfo();
 
     try {
       const response = await analysisApi.analyzeAsync({
@@ -373,23 +358,8 @@ const HomePage: React.FC = () => {
     setDuplicateError(null);
     setStoreError(null);
 
-    // 从 localStorage 读取该股票的持仓信息
-    let posInfo: PositionInfo | undefined = buildPositionInfo();
-    if (!posInfo) {
-      try {
-        const key = `dsa_pos_${code.replace(/\./g, '_')}`;
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const { pa, cp } = JSON.parse(raw);
-          const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
-          const paVal = pa ? parseFloat(pa) * 10000 : undefined;
-          const cpVal = cp ? parseFloat(cp) : undefined;
-          if (tc || paVal || cpVal) {
-            posInfo = { totalCapital: tc, positionAmount: paVal, costPrice: cpVal };
-          }
-        }
-      } catch { /* ignore */ }
-    }
+    // 只使用当前表单中用户明确填写的持仓信息，不自动读取历史数据
+    const posInfo: PositionInfo | undefined = buildPositionInfo();
 
     try {
       const response = await analysisApi.analyzeAsync({
@@ -422,7 +392,7 @@ const HomePage: React.FC = () => {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [selectedReport, buildPositionInfo, totalCapital]);
+  }, [selectedReport, buildPositionInfo]);
 
   // 自选股：单只分析
   const handleWatchlistAnalyze = useCallback((code: string) => {

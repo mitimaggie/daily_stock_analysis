@@ -187,20 +187,19 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         {oneSentence || summary.analysisSummary || '暂无分析结论'}
       </p>
 
-      {/* 持仓建议 */}
-      {(summary.positionAdvice?.noPosition || summary.positionAdvice?.hasPosition) && (
+      {/* 持仓建议：有持仓信息时显示持仓策略，无持仓信息时显示空仓建议 */}
+      {(hasPositionInfo ? summary.positionAdvice?.hasPosition : summary.positionAdvice?.noPosition) && (
         <div className="border-t border-white/5 pt-3 space-y-2">
-          {/* 有持仓数据时只显示持仓建议，无持仓数据时显示空仓建议 */}
+          {hasPositionInfo && summary.positionAdvice?.hasPosition && (
+            <div className="flex gap-2 items-start text-[13px]">
+              <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">策略</span>
+              <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
+            </div>
+          )}
           {!hasPositionInfo && summary.positionAdvice?.noPosition && (
             <div className="flex gap-2 items-start text-[13px]">
               <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
               <p className="text-white/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
-            </div>
-          )}
-          {summary.positionAdvice?.hasPosition && (
-            <div className="flex gap-2 items-start text-[13px]">
-              <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">{hasPositionInfo ? '策略' : '持仓'}</span>
-              <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
             </div>
           )}
         </div>
