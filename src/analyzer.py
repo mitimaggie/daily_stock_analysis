@@ -184,7 +184,7 @@ class GeminiAnalyzer:
 - 输出风格：客观、数据驱动、有一说一，不做过度的行情预测。
 """
 
-    # 角色3: 基金经理 (核心决策者 - 用于个股分析)
+    # 角色3: 基金经理 (核心决策者 - 用于个股分析，空仓者视角)
     PROMPT_TRADER = """你是一位理性、数据驱动的股票分析师。用客观专业的语言输出分析，禁止使用「我作为…」等人称表述。
 
 ## 你的职责（严格限定）
@@ -194,15 +194,37 @@ class GeminiAnalyzer:
 2. **基本面定性**：结合F10财务数据，评估公司质地、行业地位、成长性
 3. **综合结论**：将量化信号 + 舆情 + 基本面三者融合，给出一句话结论
 
-## 决策逻辑
+## 决策逻辑（空仓者视角）
 - 大盘环境 → 仓位上限（顺势重仓，逆势轻仓）
-- 个股逻辑 → 买卖方向（基本面优+技术面多头=出击；基本面差+技术面破位=离场）
+- 个股逻辑 → 是否值得买入（基本面优+技术面多头=出击；基本面差+技术面破位=不介入）
 - 数据矛盾时 → 诚实表达不确定性，不要强行给结论
 - 估值约束 → PE>50需降档操作
 
 ## 输出质量要求
 - one_sentence 必须具体、有信息量，禁止模板化（如"该股基本面良好"这种废话）
 - 如果信息不足以判断，写"信息不足，建议观望"而非编造理由
+"""
+
+    # 角色3b: 基金经理 (核心决策者 - 用于个股分析，持仓者视角)
+    PROMPT_TRADER_HOLDING = """你是一位理性、数据驱动的股票分析师。用客观专业的语言输出分析，禁止使用「我作为…」等人称表述。
+
+## 你的职责（严格限定）
+技术面分析（评分/买卖信号/止损止盈/仓位）已由量化模型完成，你**不得重复分析或覆盖**。
+你只负责以下3件事：
+1. **舆情解读**：从新闻/公告中提取利好利空，判断对持仓的短期影响
+2. **基本面定性**：结合F10财务数据，评估公司质地是否支撑继续持有
+3. **综合结论**：将量化信号 + 舆情 + 基本面三者融合，给出持仓者一句话结论
+
+## 决策逻辑（持仓者视角）
+- 核心问题：**当前是否应该继续持有？还是减仓/清仓？**
+- 大盘环境 → 系统性风险判断（大盘转弱时持仓者需更谨慎）
+- 个股逻辑 → 持仓合理性（基本面恶化或技术面破位=考虑止损；趋势向好=持有或加仓）
+- 浮盈浮亏 → 结合成本价和当前价，给出是否锁定利润或止损的建议
+- 数据矛盾时 → 诚实表达不确定性，偏向保守（持仓者风险更大）
+
+## 输出质量要求
+- one_sentence 必须针对持仓者，说明"继续持有/减仓/加仓"的理由，禁止模板化
+- 如果信息不足以判断，写"信息不足，建议维持现仓观察"而非编造理由
 """
 
     def __init__(self, api_key: Optional[str] = None):
@@ -249,12 +271,14 @@ class GeminiAnalyzer:
         role: str = "trader",
         market_overview: Optional[str] = None,
         use_light_model: bool = False,
+        position_info: Optional[Dict[str, Any]] = None,
     ) -> AnalysisResult:
         """
         执行分析
         :param role: 指定角色 'trader'(个股), 'macro'(大盘), 'researcher'
         :param market_overview: 大盘环境数据
         :param use_light_model: True 时若配置了轻量模型（如 2.5 Flash）则用之，省成本、适合命中舆情缓存的场景
+        :param position_info: 用户持仓信息，有则使用持仓者视角 prompt
         """
         code = context.get('code', 'Unknown')
         name = context.get('stock_name') or STOCK_NAME_MAP.get(code, f'股票{code}')
@@ -263,13 +287,21 @@ class GeminiAnalyzer:
             return AnalysisResult(code, name, 50, "未知", "API未配置", success=False)
 
         try:
-            # 1. 选择 System Prompt
-            system_prompt = self.PROMPT_TRADER
-            if role == "macro": system_prompt = self.PROMPT_MACRO
-            elif role == "researcher": system_prompt = self.PROMPT_RESEARCHER
+            # 1. 选择 System Prompt（根据持仓状态区分视角）
+            has_position = bool(position_info and any(
+                position_info.get(k) for k in ('cost_price', 'position_amount', 'total_capital')
+            ))
+            if role == "macro":
+                system_prompt = self.PROMPT_MACRO
+            elif role == "researcher":
+                system_prompt = self.PROMPT_RESEARCHER
+            elif has_position:
+                system_prompt = self.PROMPT_TRADER_HOLDING
+            else:
+                system_prompt = self.PROMPT_TRADER
 
             # 2. 构建 User Prompt (注入 F10, 记忆, 以及新增的大盘数据)
-            prompt = self._format_prompt(context, name, news_context, market_overview)
+            prompt = self._format_prompt(context, name, news_context, market_overview, position_info)
             
             response_text = ""
             
@@ -370,7 +402,7 @@ class GeminiAnalyzer:
             raise last_err
         raise RuntimeError("无可用 AI 模型")
 
-    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None) -> str:
+    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None) -> str:
         code = context.get('code', 'Unknown')
 
         # A. 技术面数据 (量化模型产出 - 使用精简版供 LLM)
@@ -450,6 +482,38 @@ class GeminiAnalyzer:
 
         time_horizon_hint = "'短线(日内)' 或 '短线(1-3日)'" if is_intraday else "'短线(1-5日)' 或 '中线(1-4周)' 或 '长线(1-3月)'"
 
+        # 持仓信息注入（仅持仓者视角时）
+        has_position = bool(position_info and any(
+            position_info.get(k) for k in ('cost_price', 'position_amount', 'total_capital')
+        ))
+        position_section = ""
+        if has_position:
+            cost_price = float(position_info.get('cost_price') or 0)
+            pos_amount = float(position_info.get('position_amount') or 0)
+            total_capital = float(position_info.get('total_capital') or 0)
+            current_price = context.get('price', 0) or 0
+            pos_parts = []
+            if cost_price > 0:
+                pos_parts.append(f"持仓成本价: {cost_price:.2f}")
+                if current_price > 0:
+                    pnl_pct = (current_price - cost_price) / cost_price * 100
+                    pnl_label = "盈利" if pnl_pct >= 0 else "亏损"
+                    pos_parts.append(f"当前价: {current_price:.2f}，浮动{pnl_label}: {abs(pnl_pct):.2f}%")
+            if pos_amount > 0:
+                pos_parts.append(f"持仓金额: {pos_amount/10000:.1f}万元")
+            if total_capital > 0 and pos_amount > 0:
+                actual_pct = pos_amount / total_capital * 100
+                pos_parts.append(f"仓位占比: {actual_pct:.1f}%（总资金{total_capital/10000:.1f}万）")
+            position_section = "\n\n## 用户持仓信息（针对持仓者给出建议）\n" + "\n".join(f"- {p}" for p in pos_parts)
+
+        # JSON 输出协议：持仓者只需 has_position，空仓者只需 no_position
+        if has_position:
+            position_advice_protocol = 'position_advice: { has_position: "持仓者建议（继续持有/减仓/加仓及理由）" }'
+            one_sentence_hint = "针对持仓者，说明继续持有/减仓/加仓的核心理由"
+        else:
+            position_advice_protocol = 'position_advice: { no_position: "空仓者建议（是否值得买入及入场条件）" }'
+            one_sentence_hint = "针对空仓者，说明是否值得买入及关键理由"
+
         # 组装精简 Prompt
         return f"""{header}
 
@@ -465,7 +529,7 @@ class GeminiAnalyzer:
 {tech_report}
 
 ## 基本面 (F10)
-{f10_str}{sector_line}{chip_line}
+{f10_str}{sector_line}{chip_line}{position_section}
 
 ## 舆情
 {news_section}
@@ -482,8 +546,8 @@ llm_reasoning(与量化分歧原因，无分歧写"与量化结论一致"),
 confidence_reasoning(判断置信度，如"舆情充分置信度高"或"缺少关键数据置信度低"),
 dashboard: {{
   core_conclusion: {{
-    one_sentence: "一句话结论（必须具体有信息量）",
-    position_advice: {{ no_position: "空仓者建议", has_position: "持仓者建议" }}
+    one_sentence: "{one_sentence_hint}",
+    {position_advice_protocol}
   }},
   intelligence: {{ risk_alerts: [], positive_catalysts: [], sentiment_summary: "", earnings_outlook: "" }},
   battle_plan: {{ sniper_points: {{ ideal_buy: 用量化锚点, stop_loss: 用量化锚点 }} }}

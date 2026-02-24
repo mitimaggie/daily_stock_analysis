@@ -678,6 +678,7 @@ class StockAnalysisPipeline:
                     role="trader",
                     market_overview=market_overview,
                     use_light_model=use_light,
+                    position_info=position_info,
                 )
             try:
                 with ThreadPoolExecutor(max_workers=1) as ex:
