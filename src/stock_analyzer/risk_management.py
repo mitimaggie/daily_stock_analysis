@@ -792,7 +792,10 @@ class RiskManager:
         elif score >= 60:
             parts.append(f"持有观察({score}分)")
             parts.append(f"短线目标{tp_short:.2f}")
-            parts.append(f"止损守{rec_stop:.2f}")
+            if rec_stop_type == "trailing":
+                parts.append(f"移动止盈线{rec_stop:.2f}")
+            else:
+                parts.append(f"止损守{rec_stop:.2f}")
         elif score >= 50:
             if pnl_pct is not None and pnl_pct > 0:
                 parts.append(f"持股待涨({score}分)")

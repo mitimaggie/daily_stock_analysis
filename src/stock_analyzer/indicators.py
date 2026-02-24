@@ -305,7 +305,7 @@ class TechnicalIndicators:
         if '.' in code_str:
             code_str = code_str.split('.')[0]
 
-        if code_str.startswith('300') or code_str.startswith('688'):
+        if code_str.startswith('300') or code_str.startswith('301') or code_str.startswith('688') or code_str.startswith('689'):
             limit_pct = 20.0
         elif code_str.startswith('8') or code_str.startswith('4'):
             limit_pct = 30.0
@@ -394,21 +394,22 @@ class TechnicalIndicators:
         if turnover_rate <= 0 or df is None or len(df) < lookback // 2:
             return 0.5
         try:
-            # 用量比作为换手率的代理（如果没有直接的换手率序列）
-            if 'volume_ratio' in df.columns:
-                series = df['volume_ratio'].dropna().tail(lookback)
-                current = df['volume_ratio'].iloc[-1]
-            else:
-                vol_series = df['volume'].dropna().tail(lookback)
-                avg = vol_series.mean()
-                if avg <= 0:
-                    return 0.5
-                series = vol_series / avg
-                current = vol_series.iloc[-1] / avg
-            
-            if len(series) < lookback // 2:
+            # 优先用 df 中的历史换手率序列（如果存在且有足够数据）
+            if 'turnover_rate' in df.columns:
+                tr_series = df['turnover_rate'].dropna().tail(lookback)
+                if len(tr_series) >= lookback // 2:
+                    return float((tr_series < turnover_rate).sum() / len(tr_series))
+
+            # 回退：用成交量序列计算相对分位（成交量越大≈换手率越高）
+            vol_series = df['volume'].dropna().tail(lookback)
+            if len(vol_series) < lookback // 2:
                 return 0.5
-            return float((series < current).sum() / len(series))
+            avg = vol_series.mean()
+            if avg <= 0:
+                return 0.5
+            # 用当前换手率与历史成交量分位对应（当前成交量 = 最后一行）
+            current_vol = float(vol_series.iloc[-1])
+            return float((vol_series < current_vol).sum() / len(vol_series))
         except Exception:
             return 0.5
 

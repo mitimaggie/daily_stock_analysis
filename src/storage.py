@@ -376,6 +376,8 @@ class DatabaseManager:
 
                     if existing:
                         existing.fetched_at = datetime.now()
+                        if query_context and query_context.get("query_id"):
+                            existing.query_id = query_context["query_id"]
                     else:
                         try:
                             with session.begin_nested():

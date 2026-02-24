@@ -121,7 +121,7 @@ class DataFetcherManager:
         self._fetchers = [akshare, efinance, baostock, yfinance, pytdx]
         self._fetchers.sort(key=lambda f: f.priority)
         
-        logger.info(f"🚀 数据源加载顺序: {', '.join([f.name for f in self._fetchers])}")
+        logger.debug(f"🚀 数据源加载顺序: {', '.join([f.name for f in self._fetchers])}")
 
     def get_daily_data(self, stock_code: str, **kwargs) -> Tuple[pd.DataFrame, str]:
         errors = []
