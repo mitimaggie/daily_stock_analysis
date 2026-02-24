@@ -20,6 +20,38 @@ logger = logging.getLogger(__name__)
 
 STANDARD_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']
 
+
+def normalize_stock_code(stock_code: str) -> str:
+    """
+    归一化股票代码，去除交易所前缀/后缀。
+
+    支持格式：
+    - '600519'      -> '600519'  (已是纯净格式)
+    - 'SH600519'    -> '600519'  (去除 SH 前缀)
+    - 'SZ000001'    -> '000001'  (去除 SZ 前缀)
+    - '600519.SH'   -> '600519'  (去除 .SH 后缀)
+    - '000001.SZ'   -> '000001'  (去除 .SZ 后缀)
+    - 'AAPL'        -> 'AAPL'    (美股代码保持不变)
+    - 'HK00700'     -> 'HK00700' (港股代码保持不变)
+    """
+    code = (stock_code or '').strip()
+    upper = code.upper()
+
+    # 去除 SH/SZ 前缀（如 SH600519 -> 600519）
+    if upper.startswith(('SH', 'SZ')) and not upper.startswith(('SH.', 'SZ.')):
+        candidate = code[2:]
+        if candidate.isdigit() and len(candidate) in (5, 6):
+            return candidate
+
+    # 去除 .SH/.SZ/.SS 后缀（如 600519.SH -> 600519）
+    if '.' in code:
+        base, suffix = code.rsplit('.', 1)
+        if suffix.upper() in ('SH', 'SZ', 'SS') and base.isdigit():
+            return base
+
+    return code
+
+
 class DataFetchError(Exception): pass
 class RateLimitError(DataFetchError): pass
 class DataSourceUnavailableError(DataFetchError): pass
@@ -124,6 +156,7 @@ class DataFetcherManager:
         logger.debug(f"🚀 数据源加载顺序: {', '.join([f.name for f in self._fetchers])}")
 
     def get_daily_data(self, stock_code: str, **kwargs) -> Tuple[pd.DataFrame, str]:
+        stock_code = normalize_stock_code(stock_code)
         errors = []
         for fetcher in self._fetchers:
             try:
@@ -319,6 +352,7 @@ class DataFetcherManager:
         return filled
 
     def get_realtime_quote(self, stock_code: str):
+        stock_code = normalize_stock_code(stock_code)
         from .akshare_fetcher import _is_us_code
         from src.config import get_config
         

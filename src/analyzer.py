@@ -184,6 +184,26 @@ class GeminiAnalyzer:
 - 输出风格：客观、数据驱动、有一说一，不做过度的行情预测。
 """
 
+    # A股 ETF 代码前缀（沪市 51/52/56/58，深市 15/16/18）
+    _A_ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
+    # 美股/港股 ETF 名称关键词
+    _ETF_NAME_KEYWORDS = ('ETF', 'FUND', 'TRUST', 'INDEX', 'TRACKER')
+
+    @staticmethod
+    def is_index_or_etf(code: str, name: str = '') -> bool:
+        """判断标的是否为 ETF 或指数，用于调整 AI 分析约束"""
+        c = (code or '').strip().split('.')[0].upper()
+        if not c:
+            return False
+        # A股 ETF
+        if c.isdigit() and len(c) == 6 and c.startswith(GeminiAnalyzer._A_ETF_PREFIXES):
+            return True
+        # 美股/港股 ETF（名称含关键词）
+        name_upper = (name or '').upper()
+        if any(kw in name_upper for kw in GeminiAnalyzer._ETF_NAME_KEYWORDS):
+            return True
+        return False
+
     # 角色3: 基金经理 (核心决策者 - 用于个股分析，空仓者视角)
     PROMPT_TRADER = """你是一位理性、数据驱动的股票分析师。用客观专业的语言输出分析，禁止使用「我作为…」等人称表述。
 
@@ -198,7 +218,8 @@ class GeminiAnalyzer:
 - 大盘环境 → 仓位上限（顺势重仓，逆势轻仓）
 - 个股逻辑 → 是否值得买入（基本面优+技术面多头=出击；基本面差+技术面破位=不介入）
 - 数据矛盾时 → 诚实表达不确定性，不要强行给结论
-- 估值约束 → PE>50需降档操作
+- 估值约束 → PE明显偏高（如远超行业均值或历史均值）时，需在风险点中说明；高成长股可适当容忍较高PE，但需有业绩支撑
+- 强势趋势放宽 → 强势趋势股（多头排列且趋势强度高、量能配合）可适当放宽乖离率要求，可轻仓追踪，但仍需设置止损
 
 ## 输出质量要求
 - one_sentence 必须具体、有信息量，禁止模板化（如"该股基本面良好"这种废话）
@@ -514,8 +535,22 @@ class GeminiAnalyzer:
             position_advice_protocol = 'position_advice: { no_position: "空仓者建议（是否值得买入及入场条件）" }'
             one_sentence_hint = "针对空仓者，说明是否值得买入及关键理由"
 
+        # ETF/指数约束段落
+        stock_name_for_etf = context.get('stock_name') or name
+        is_etf = GeminiAnalyzer.is_index_or_etf(code, stock_name_for_etf)
+        etf_constraint = ""
+        if is_etf:
+            etf_constraint = """
+> ⚠️ **指数/ETF 分析约束**：该标的为指数跟踪型 ETF 或市场指数。
+> - 风险分析仅关注：**指数走势、跟踪误差、市场流动性、成分股集中度**
+> - **严禁**将基金公司的诉讼、声誉、高管变动、公司经营纳入风险警报
+> - 业绩预期基于**指数成分股整体表现**，而非基金公司财报
+> - `risk_alerts` 中不得出现基金管理人相关的公司经营风险
+"""
+
         # 组装精简 Prompt
         return f"""{header}
+{etf_constraint}
 
 基于以下数据，完成你的3项职责（舆情解读/基本面定性/综合结论）。技术面分析已由量化模型完成，不要重复。
 

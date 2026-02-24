@@ -27,14 +27,27 @@ export async function sendChatMessage(req: ChatRequest): Promise<ChatResponse> {
   return res.json();
 }
 
+export interface AgentEvent {
+  type: 'thinking' | 'tool_start' | 'tool_done' | 'chunk' | 'done' | 'error';
+  tool?: string;
+  display_name?: string;
+  text?: string;
+  message?: string;
+  // legacy compat
+  chunk?: string;
+  done?: boolean;
+  error?: string;
+}
+
 /**
- * 流式对话 — SSE 逐 chunk 回调
+ * 流式对话 — SSE 事件回调（支持 Agent 工具调用进度）
  */
 export async function sendChatMessageStream(
   req: ChatRequest,
   onChunk: (text: string) => void,
   onDone: () => void,
   onError: (err: string) => void,
+  onAgentEvent?: (event: AgentEvent) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
     method: 'POST',
@@ -68,15 +81,28 @@ export async function sendChatMessageStream(
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
       try {
-        const payload = JSON.parse(line.slice(6));
-        if (payload.done) {
+        const payload = JSON.parse(line.slice(6)) as AgentEvent;
+
+        // 新格式：通过 type 字段路由
+        if (payload.type === 'done' || payload.done) {
           onDone();
           return;
         }
-        if (payload.error) {
-          onError(payload.error);
+        if (payload.type === 'error' || payload.error) {
+          onError(payload.message || payload.error || 'Unknown error');
           return;
         }
+        if (payload.type === 'chunk') {
+          const text = payload.text || payload.chunk || '';
+          if (text) onChunk(text);
+          continue;
+        }
+        // Agent 进度事件（thinking / tool_start / tool_done）
+        if (payload.type && onAgentEvent) {
+          onAgentEvent(payload);
+          continue;
+        }
+        // 旧格式兼容
         if (payload.chunk) {
           onChunk(payload.chunk);
         }

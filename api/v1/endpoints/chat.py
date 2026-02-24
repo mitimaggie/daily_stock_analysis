@@ -76,15 +76,26 @@ def chat(
 @router.post(
     "/stream",
     summary="AI 流式对话",
-    description="基于分析报告上下文，流式返回 AI 回复（SSE）",
+    description="基于分析报告上下文，流式返回 AI 回复（SSE）。支持 Agent 工具调用进度事件。",
 )
 def chat_stream(
     req: ChatRequest,
     db_manager: DatabaseManager = Depends(get_database_manager),
 ):
-    """流式对话端点 — SSE 格式"""
+    """流式对话端点 — SSE 格式
+
+    SSE 事件格式（每行 data: <json>）：
+    - {"type": "thinking"}                                    — AI 正在思考
+    - {"type": "tool_start", "tool": ..., "display_name": ...} — 工具调用开始
+    - {"type": "tool_done",  "tool": ..., "display_name": ...} — 工具调用完成
+    - {"type": "chunk", "text": ...}                          — 回复文本片段
+    - {"type": "done"}                                        — 完成
+    - {"type": "error", "message": ...}                       — 错误
+
+    兼容旧格式：旧客户端可通过 payload.chunk / payload.done / payload.error 读取
+    """
     svc = get_chat_service()
-    if not svc.is_available():
+    if not svc.is_available() and not svc.is_agent_available():
         raise HTTPException(status_code=503, detail="AI 服务未配置")
 
     history_svc = HistoryService(db_manager)
@@ -97,13 +108,24 @@ def chat_stream(
 
     def event_generator():
         try:
-            for chunk in svc.chat_stream(messages, report_context):
-                data = json.dumps({"chunk": chunk}, ensure_ascii=False)
+            for event in svc.chat_stream(messages, report_context, query_id=req.query_id):
+                event_type = event.get("type", "")
+                if event_type == "chunk":
+                    # 兼容旧格式：同时发送 chunk 字段
+                    payload = {**event, "chunk": event.get("text", "")}
+                elif event_type == "done":
+                    # 兼容旧格式：同时发送 done 字段
+                    payload = {**event, "done": True}
+                elif event_type == "error":
+                    # 兼容旧格式：同时发送 error 字段
+                    payload = {**event, "error": event.get("message", "")}
+                else:
+                    payload = event
+                data = json.dumps(payload, ensure_ascii=False)
                 yield f"data: {data}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'message': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(),

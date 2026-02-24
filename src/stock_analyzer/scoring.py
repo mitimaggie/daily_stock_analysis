@@ -107,6 +107,7 @@ class ScoringSystem:
     def _calc_bias_score(result: TrendAnalysisResult) -> int:
         """计算乖离率评分 (0-20)，使用布林带宽度自适应归一化"""
         bias = result.bias_ma5
+        is_strong_bull = result.trend_status == TrendStatus.STRONG_BULL
         
         # 自适应归一化：用布林带宽度衡量该股正常波动范围
         # bb_width = (upper - lower) / middle，典型值 0.05~0.20
@@ -115,9 +116,13 @@ class ScoringSystem:
             half_bb_pct = result.bb_width * 50  # 半个布林带宽度(%)
             norm_bias = bias / half_bb_pct  # 归一化：1.0 = 到达布林带边缘
             if norm_bias > 1.5:
-                return 0   # 远超布林上轨
+                # 强势趋势中大乖离：不追高但不严重惩罚（给中性分）
+                return 8 if is_strong_bull else 0
             elif norm_bias > 1.0:
-                return 5   # 接近或超过布林上轨
+                # 强势趋势中等正乖离：给中性分，普通趋势仍惩罚
+                return 12 if is_strong_bull else 5
+            elif 0.5 < norm_bias <= 1.0 and is_strong_bull:
+                return 14  # 强势趋势中偏大正乖离：轻微惩罚
             elif 0 <= norm_bias <= 0.5 and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
                 return 18  # 多头趋势中小幅正乖离
             elif -0.5 <= norm_bias < 0:
@@ -132,9 +137,11 @@ class ScoringSystem:
         
         # 回退：无布林带数据时使用原始阈值
         if bias > 8:
-            return 0
+            return 8 if is_strong_bull else 0
         elif bias > 5:
-            return 5
+            return 12 if is_strong_bull else 5
+        elif 3 < bias <= 5 and is_strong_bull:
+            return 14  # 强势趋势中偏大正乖离
         elif 0 <= bias <= 3 and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
             return 18
         elif -3 <= bias < 0:

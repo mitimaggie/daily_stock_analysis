@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { ChatMessage } from '../../api/chat';
+import type { ChatMessage, AgentEvent } from '../../api/chat';
 import { sendChatMessageStream } from '../../api/chat';
 
 // ============ 常量 ============
@@ -14,6 +14,61 @@ const QUICK_QUESTIONS = [
   '如果明天跳空高开怎么办？',
   '帮我制定一个操作计划',
 ];
+
+// ============ Agent 进度状态 ============
+
+interface AgentStep {
+  type: 'thinking' | 'tool_start' | 'tool_done';
+  display_name?: string;
+  tool?: string;
+}
+
+function AgentProgressBubble({ steps }: { steps: AgentStep[] }) {
+  if (steps.length === 0) return null;
+  const last = steps[steps.length - 1];
+  const isThinking = last.type === 'thinking';
+  const toolName = last.display_name || last.tool || '';
+
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-[12px] bg-surface-2 border border-white/5 text-white/50">
+        <div className="flex items-center gap-2">
+          {isThinking ? (
+            <>
+              <span className="inline-flex gap-0.5">
+                <span className="w-1 h-1 rounded-full bg-cyan/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1 h-1 rounded-full bg-cyan/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1 h-1 rounded-full bg-cyan/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </span>
+              <span>AI 正在思考...</span>
+            </>
+          ) : (
+            <>
+              <span className="text-cyan/70">⚙</span>
+              <span>
+                {last.type === 'tool_start' ? `正在${toolName}` : `${toolName}完成`}
+              </span>
+              {last.type === 'tool_start' && (
+                <span className="inline-flex gap-0.5 ml-1">
+                  <span className="w-1 h-1 rounded-full bg-cyan/40 animate-pulse" />
+                </span>
+              )}
+            </>
+          )}
+        </div>
+        {steps.length > 1 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {steps.filter(s => s.type === 'tool_done').map((s, i) => (
+              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">
+                ✓ {s.display_name || s.tool}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ============ 持久化 ============
 
@@ -50,6 +105,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -58,6 +114,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
     setMessages(loadMessages(queryId));
     setStreamingText('');
     setError(null);
+    setAgentSteps([]);
   }, [queryId]);
 
   // 持久化消息
@@ -90,6 +147,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
     setError(null);
     setLoading(true);
     setStreamingText('');
+    setAgentSteps([]);
 
     let accumulated = '';
 
@@ -103,18 +161,30 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
         () => {
           setMessages(prev => [...prev, { role: 'assistant', content: accumulated }]);
           setStreamingText('');
+          setAgentSteps([]);
           setLoading(false);
         },
         (errMsg) => {
           setError(errMsg);
           setLoading(false);
           setStreamingText('');
+          setAgentSteps([]);
+        },
+        (event: AgentEvent) => {
+          if (event.type === 'thinking' || event.type === 'tool_start' || event.type === 'tool_done') {
+            setAgentSteps(prev => [...prev, {
+              type: event.type as AgentStep['type'],
+              display_name: event.display_name,
+              tool: event.tool,
+            }]);
+          }
         },
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : '请求失败');
       setLoading(false);
       setStreamingText('');
+      setAgentSteps([]);
     }
   }, [input, loading, messages, queryId]);
 
@@ -196,6 +266,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
           </div>
         ))}
 
+        {/* Agent 工具调用进度（loading 且有进度事件时显示） */}
+        {loading && agentSteps.length > 0 && !streamingText && (
+          <AgentProgressBubble steps={agentSteps} />
+        )}
+
         {/* Streaming response */}
         {loading && streamingText && (
           <div className="flex justify-start">
@@ -206,8 +281,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
           </div>
         )}
 
-        {/* Loading indicator (before first chunk) */}
-        {loading && !streamingText && (
+        {/* Loading indicator (before first chunk, no agent steps) */}
+        {loading && !streamingText && agentSteps.length === 0 && (
           <div className="flex justify-start">
             <div className="bg-surface-2 border border-white/5 rounded-xl px-3.5 py-2.5 text-[13px] text-muted">
               <span className="inline-flex gap-1">

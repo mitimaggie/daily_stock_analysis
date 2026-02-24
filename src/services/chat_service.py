@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    """AI 对话服务（Phase 1: 纯 prompt + 报告上下文）"""
+    """AI 对话服务（Agent 模式：支持 function calling 主动获取数据）"""
 
     SYSTEM_PROMPT = """你是一位专业的A股投资分析助手。用户正在查看一份股票分析报告，你需要基于报告内容与用户深入探讨。
 
@@ -47,6 +47,8 @@ class ChatService:
         self._openai_client = None
         self._use_openai = False
         self._initialized = False
+        self._agent_executor = None
+        self._agent_initialized = False
 
     def _ensure_init(self):
         """延迟初始化 AI 模型"""
@@ -79,9 +81,26 @@ class ChatService:
             except Exception as e:
                 logger.warning(f"Chat: OpenAI 初始化失败: {e}")
 
+    def _ensure_agent_init(self):
+        """延迟初始化 Agent 执行引擎"""
+        if self._agent_initialized:
+            return
+        self._agent_initialized = True
+        try:
+            from src.agent.executor import AgentExecutor
+            config = get_config()
+            self._agent_executor = AgentExecutor(config)
+        except Exception as e:
+            logger.warning(f"Chat: Agent 初始化失败: {e}")
+
     def is_available(self) -> bool:
         self._ensure_init()
         return self._model is not None or self._openai_client is not None
+
+    def is_agent_available(self) -> bool:
+        """检查 Agent 模式是否可用"""
+        self._ensure_agent_init()
+        return self._agent_executor is not None and self._agent_executor.is_available()
 
     def build_report_context(self, report_data: Dict[str, Any]) -> str:
         """从报告数据构建上下文摘要（注入 system prompt）"""
@@ -289,16 +308,41 @@ class ChatService:
         self,
         messages: List[Dict[str, str]],
         report_context: str,
+        query_id: Optional[str] = None,
+        progress_callback=None,
     ) -> str:
-        """同步对话（非流式）
+        """同步对话（优先使用 Agent function calling 模式）
 
         Args:
             messages: 对话历史 [{"role": "user"/"assistant", "content": "..."}]
-            report_context: 报告上下文文本
+            report_context: 报告上下文文本（Agent 模式下作为初始上下文注入）
+            query_id: 关联的报告 ID（可选，Agent 可主动调用 get_analysis_context）
+            progress_callback: 工具调用进度回调（可选）
 
         Returns:
             AI 回复文本
         """
+        # 优先尝试 Agent 模式
+        if self.is_agent_available():
+            try:
+                user_message = messages[-1]["content"] if messages else ""
+                history = messages[:-1] if len(messages) > 1 else []
+                context = {"report_context": report_context}
+                if query_id:
+                    context["query_id"] = query_id
+                result = self._agent_executor.chat(
+                    message=user_message,
+                    history=history,
+                    progress_callback=progress_callback,
+                    context=context,
+                )
+                if result.success:
+                    return result.content
+                logger.warning(f"Agent chat failed: {result.error}, falling back to plain prompt")
+            except Exception as e:
+                logger.warning(f"Agent chat exception: {e}, falling back to plain prompt")
+
+        # 回退：纯 prompt 模式
         self._ensure_init()
         if not self.is_available():
             return "AI 服务未配置，请检查 GEMINI_API_KEY 或 OPENAI_API_KEY 环境变量。"
@@ -386,21 +430,96 @@ class ChatService:
         self,
         messages: List[Dict[str, str]],
         report_context: str,
-    ) -> Iterator[str]:
-        """流式对话，逐 chunk 产出文本"""
+        query_id: Optional[str] = None,
+    ) -> Iterator[Dict]:
+        """流式对话，产出事件字典序列。
+
+        事件类型：
+        - {"type": "thinking"}                          — AI 正在思考
+        - {"type": "tool_start", "tool": ..., "display_name": ...}  — 工具调用开始
+        - {"type": "tool_done",  "tool": ..., "display_name": ...}  — 工具调用完成
+        - {"type": "chunk",  "text": ...}               — 最终回复文本片段
+        - {"type": "done"}                              — 完成
+        - {"type": "error", "message": ...}             — 错误
+        """
+        # 优先尝试 Agent 模式（同步执行，通过 callback 收集进度事件）
+        if self.is_agent_available():
+            import queue
+            import threading
+
+            event_queue: queue.Queue = queue.Queue()
+
+            def progress_callback(event: Dict):
+                event_queue.put(event)
+
+            def run_agent():
+                try:
+                    user_message = messages[-1]["content"] if messages else ""
+                    history = messages[:-1] if len(messages) > 1 else []
+                    context = {"report_context": report_context}
+                    if query_id:
+                        context["query_id"] = query_id
+                    result = self._agent_executor.chat(
+                        message=user_message,
+                        history=history,
+                        progress_callback=progress_callback,
+                        context=context,
+                    )
+                    if result.success:
+                        event_queue.put({"type": "final", "content": result.content})
+                    else:
+                        event_queue.put({"type": "agent_error", "error": result.error})
+                except Exception as e:
+                    event_queue.put({"type": "agent_error", "error": str(e)})
+
+            t = threading.Thread(target=run_agent, daemon=True)
+            t.start()
+
+            # 从队列中读取事件，转发给调用方
+            while True:
+                try:
+                    event = event_queue.get(timeout=120)
+                except queue.Empty:
+                    yield {"type": "error", "message": "Agent 超时"}
+                    return
+
+                if event["type"] == "final":
+                    # 将最终文本拆成 chunks 逐字输出
+                    content = event["content"]
+                    chunk_size = 20
+                    for i in range(0, len(content), chunk_size):
+                        yield {"type": "chunk", "text": content[i:i + chunk_size]}
+                    yield {"type": "done"}
+                    return
+                elif event["type"] == "agent_error":
+                    logger.warning(f"Agent stream error: {event['error']}, falling back")
+                    # Agent 失败，回退到纯 prompt 模式
+                    break
+                else:
+                    # thinking / tool_start / tool_done 进度事件
+                    yield event
+
+        # 回退：纯 prompt 流式模式
         self._ensure_init()
         if not self.is_available():
-            yield "AI 服务未配置，请检查 GEMINI_API_KEY 或 OPENAI_API_KEY 环境变量。"
+            yield {"type": "error", "message": "AI 服务未配置，请检查 GEMINI_API_KEY 或 OPENAI_API_KEY 环境变量。"}
             return
 
         config = get_config()
         temperature = getattr(config, "gemini_temperature", 0.3)
         full_system = f"{self.SYSTEM_PROMPT}\n\n## 当前报告数据\n{report_context}"
 
-        if self._use_openai and self._openai_client:
-            yield from self._stream_openai(full_system, messages, config)
-        else:
-            yield from self._stream_gemini(full_system, messages, temperature)
+        try:
+            if self._use_openai and self._openai_client:
+                for text in self._stream_openai(full_system, messages, config):
+                    yield {"type": "chunk", "text": text}
+            else:
+                for text in self._stream_gemini(full_system, messages, temperature):
+                    yield {"type": "chunk", "text": text}
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
+            return
+        yield {"type": "done"}
 
     def _stream_gemini(
         self, system: str, messages: List[Dict[str, str]],
