@@ -12,6 +12,7 @@ import { TaskPanel } from '../components/tasks';
 import { Watchlist } from '../components/watchlist';
 import { useTaskStream } from '../hooks';
 import { ChatPanel } from '../components/chat/ChatPanel';
+import { BacktestPanel } from '../components/backtest/BacktestPanel';
 
 /**
  * 首页 - 重新设计的布局
@@ -84,6 +85,9 @@ const HomePage: React.FC = () => {
 
   // AI 对话面板状态
   const [chatOpen, setChatOpen] = useState(false);
+
+  // 主视图标签
+  const [mainTab, setMainTab] = useState<'analysis' | 'backtest'>('analysis');
 
   // 持久化总资金和展开状态
   useEffect(() => {
@@ -455,6 +459,32 @@ const HomePage: React.FC = () => {
           {/* 分隔线 */}
           <div className="w-px h-5 bg-white/10 hidden sm:block" />
 
+          {/* 主视图标签 */}
+          <div className="hidden sm:flex items-center gap-0.5 bg-white/[0.04] rounded-lg p-0.5">
+            <button
+              type="button"
+              onClick={() => setMainTab('analysis')}
+              className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
+                mainTab === 'analysis'
+                  ? 'bg-white/10 text-white/90'
+                  : 'text-white/35 hover:text-white/60'
+              }`}
+            >
+              分析
+            </button>
+            <button
+              type="button"
+              onClick={() => setMainTab('backtest')}
+              className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
+                mainTab === 'backtest'
+                  ? 'bg-white/10 text-white/90'
+                  : 'text-white/35 hover:text-white/60'
+              }`}
+            >
+              回测
+            </button>
+          </div>
+
           {/* 移动端侧边栏切换 */}
           <button
             type="button"
@@ -608,45 +638,51 @@ const HomePage: React.FC = () => {
         </aside>
 
         {/* 右侧报告区 */}
-        <section className={`flex-1 overflow-y-auto p-3 lg:p-4 transition-all duration-200 ${chatOpen ? 'mr-0' : ''}`}>
-          {isLoadingReport ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="w-10 h-10 border-[3px] border-cyan/15 border-t-cyan rounded-full animate-spin" />
-              <p className="text-[13px] text-white/30">加载报告中...</p>
-            </div>
-          ) : selectedReport ? (
-            <>
-              <div className="max-w-4xl mx-auto animate-fade-in">
-                <ReportSummary data={selectedReport} isHistory onRefresh={handleRefreshReport} isRefreshing={isAnalyzing} />
-              </div>
+        <section className={`flex-1 overflow-y-auto transition-all duration-200 ${mainTab === 'backtest' ? '' : 'p-3 lg:p-4'} ${chatOpen ? 'mr-0' : ''}`}>
+          {/* 回测面板 */}
+          {mainTab === 'backtest' && <BacktestPanel />}
 
-              {/* AI 对话浮动按钮 */}
-              {!chatOpen && (
-                <button
-                  onClick={() => setChatOpen(true)}
-                  className="fixed bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-cyan/20 border border-cyan/30 text-cyan hover:bg-cyan/30 hover:scale-105 shadow-lg shadow-cyan/10 transition-all flex items-center justify-center"
-                  title="AI 深度探讨"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          {/* 分析面板 */}
+          {mainTab === 'analysis' && (
+            isLoadingReport ? (
+              <div className="flex flex-col items-center justify-center h-full gap-3">
+                <div className="w-10 h-10 border-[3px] border-cyan/15 border-t-cyan rounded-full animate-spin" />
+                <p className="text-[13px] text-white/30">加载报告中...</p>
+              </div>
+            ) : selectedReport ? (
+              <>
+                <div className="max-w-4xl mx-auto animate-fade-in">
+                  <ReportSummary data={selectedReport} isHistory onRefresh={handleRefreshReport} isRefreshing={isAnalyzing} />
+                </div>
+
+                {/* AI 对话浮动按钮 */}
+                {!chatOpen && (
+                  <button
+                    onClick={() => setChatOpen(true)}
+                    className="fixed bottom-6 right-6 z-50 w-12 h-12 rounded-full bg-cyan/20 border border-cyan/30 text-cyan hover:bg-cyan/30 hover:scale-105 shadow-lg shadow-cyan/10 transition-all flex items-center justify-center"
+                    title="AI 深度探讨"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+                <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+                  <svg className="w-7 h-7 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
-                </button>
-              )}
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
-                <svg className="w-7 h-7 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
+                </div>
+                <div>
+                  <h3 className="text-[15px] font-semibold text-white/80 mb-1">开始分析</h3>
+                  <p className="text-[12px] text-white/25 max-w-[260px] leading-relaxed">
+                    输入股票代码进行 AI 智能分析，或从左侧选择历史报告
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-[15px] font-semibold text-white/80 mb-1">开始分析</h3>
-                <p className="text-[12px] text-white/25 max-w-[260px] leading-relaxed">
-                  输入股票代码进行 AI 智能分析，或从左侧选择历史报告
-                </p>
-              </div>
-            </div>
+            )
           )}
         </section>
 

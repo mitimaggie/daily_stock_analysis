@@ -289,6 +289,27 @@ def main() -> int:
 
     # ========== 守护进程模式: FastAPI + 定时调度，不立即分析 ==========
     if args.daemon:
+        # 检查是否已有 daemon 进程在运行（防止重复启动）
+        import subprocess, os as _os
+        current_pid = _os.getpid()
+        try:
+            result = subprocess.run(
+                ['pgrep', '-f', 'python.*main.py.*daemon'],
+                capture_output=True, text=True
+            )
+            existing_pids = [int(p) for p in result.stdout.strip().split() if p and int(p) != current_pid]
+            if existing_pids:
+                logger.error("=" * 60)
+                logger.error(f"⚠️  已有 daemon 进程在运行 (PID: {', '.join(map(str, existing_pids))})")
+                logger.error("请先停止旧进程再启动新的 daemon：")
+                logger.error(f"  pkill -f 'python.*main.py.*daemon'")
+                logger.error("或强制终止：")
+                logger.error(f"  kill -9 {' '.join(map(str, existing_pids))}")
+                logger.error("=" * 60)
+                return 1
+        except Exception:
+            pass  # pgrep 不可用时跳过检查
+
         logger.info("=" * 60)
         logger.info("模式: 守护进程 (FastAPI + 定时调度)")
         logger.info("=" * 60)
@@ -322,6 +343,20 @@ def main() -> int:
             )
         except Exception as e:
             logger.warning(f"新闻抓取任务注册失败（可忽略）: {e}")
+        # 5. 每日回测自动回填（20:00，分析完成后）
+        def run_backtest_job():
+            try:
+                from src.backtest import BacktestRunner
+                runner = BacktestRunner()
+                report = runner.run(lookback_days=90)
+                logger.info(f"[回测] 自动回填完成")
+                logger.debug(f"[回测] {report[:200]}")
+            except Exception as e:
+                logger.warning(f"[回测] 自动回填失败: {e}")
+
+        scheduler.add_daily_job("20:00", run_backtest_job)
+        logger.info("已注册每日回测自动回填任务，执行时间: 20:00")
+
         logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
         logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
         logger.info("按 Ctrl+C 退出")

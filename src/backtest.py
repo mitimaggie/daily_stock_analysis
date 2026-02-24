@@ -137,12 +137,16 @@ class BacktestRunner:
         return filled
 
     def _get_prices_after(self, code: str, after_date: date, days: int = 10) -> Optional[pd.DataFrame]:
-        """从 stock_daily 获取指定日期之后的价格数据"""
+        """从 stock_daily 获取指定日期（含当天）起的价格数据。
+        
+        第一条记录为分析日当天收盘价（买入基准），
+        后续 idx=4/9/19 分别对应 5/10/20 日后收益。
+        """
         try:
             sql = text("""
                 SELECT date, open, high, low, close, volume 
                 FROM stock_daily
-                WHERE code = :code AND date > :after_date
+                WHERE code = :code AND date >= :after_date
                 ORDER BY date ASC
                 LIMIT :limit
             """)
