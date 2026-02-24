@@ -61,7 +61,6 @@ class RiskManager:
             raw_mid = min(sl_atr_mid, sl_ma20) if sl_ma20 > 0 else sl_atr_mid
             result.stop_loss_mid = round(max(raw_mid, limit_floor), 2)
         
-        result.stop_loss_anchor = result.stop_loss_short
         # 理想买点：优先用 MA5/MA10 回踩，但不能高于现价
         ma_anchor = result.ma5 if result.ma5 > 0 else result.ma10
         if ma_anchor > 0 and ma_anchor <= price:
@@ -305,13 +304,23 @@ class RiskManager:
         if len(df) >= 10 and 'volume' in df.columns and 'close' in df.columns:
             # 计算近10日日均成交额（万元）
             recent = df.tail(10)
-            avg_amount = (recent['volume'] * recent['close']).mean()
-            # 部分数据源 volume 单位是手(100股)，需要适配
-            # 如果 avg_amount 明显偏大（>1e12），说明 volume 单位是股
-            if avg_amount > 1e12:
-                avg_amount_wan = avg_amount / 10000
+            # 优先使用 amount 列（单位：元），避免 volume 单位歧义
+            if 'amount' in df.columns:
+                avg_amount_raw = recent['amount'].mean()
+                avg_amount_wan = avg_amount_raw / 10000  # 元 → 万元
             else:
-                avg_amount_wan = avg_amount * 100 / 10000  # volume是手 → 股 → 万元
+                # 回退：用 volume * close 估算，需判断 volume 单位
+                # 判断依据：A股单日成交额通常在百万~千亿量级
+                # volume*close > 1e10 且 close < 1000 → volume 单位是股
+                avg_close = float(recent['close'].mean())
+                avg_vol = float(recent['volume'].mean())
+                raw_product = avg_vol * avg_close
+                if avg_close > 0 and raw_product / avg_close > 1e6:
+                    # volume 单位是股（直接用）
+                    avg_amount_wan = raw_product / 10000
+                else:
+                    # volume 单位是手（×100 转股）
+                    avg_amount_wan = raw_product * 100 / 10000
             
             if avg_amount_wan < 1000:  # < 1000万
                 reasons.append(f"🚫 流动性极差：日均成交额约{avg_amount_wan:.0f}万，低于1000万，买卖困难")
@@ -450,8 +459,10 @@ class RiskManager:
         # --- 天量/地量检测 ---
         lookback = min(60, len(df))
         vol_window = df['volume'].tail(lookback)
-        vol_max = float(vol_window.max())
-        vol_min = float(vol_window[:-1].min()) if len(vol_window) > 1 else latest_vol  # 排除当日
+        # 排除今日（最后一行），只用历史数据作为基准
+        hist_window = vol_window.iloc[:-1] if len(vol_window) > 1 else vol_window
+        vol_max = float(hist_window.max())
+        vol_min = float(hist_window.min())
         
         if latest_vol >= vol_max and lookback >= 30:
             result.volume_extreme = "天量"

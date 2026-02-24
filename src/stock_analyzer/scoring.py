@@ -1146,14 +1146,16 @@ class ScoringSystem:
         # === ADX 趋势强度修正 ===
         adx_val = getattr(result, 'adx', 0)
         if adx_val >= 30:
-            # 强趋势确认：如果方向与评分一致则加分，不一致则减分
+            # 强趋势确认：用 trend_status 判断方向（避免依赖未最终化的 signal_score）
             plus_di = getattr(result, 'plus_di', 0)
             minus_di = getattr(result, 'minus_di', 0)
-            if plus_di > minus_di and result.signal_score >= 55:
+            is_bull_trend = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]
+            is_bear_trend = result.trend_status in [TrendStatus.STRONG_BEAR, TrendStatus.BEAR, TrendStatus.WEAK_BEAR]
+            if plus_di > minus_di and is_bull_trend:
                 adj += 2
                 result.signal_reasons.append(f"ADX={adx_val:.0f}(强趋势)+DI领先，多头趋势确认")
                 result.score_breakdown['adx_adj'] = 2
-            elif minus_di > plus_di and result.signal_score <= 45:
+            elif minus_di > plus_di and is_bear_trend:
                 adj -= 2
                 result.risk_factors.append(f"ADX={adx_val:.0f}(强趋势)-DI领先，空头趋势确认")
                 result.score_breakdown['adx_adj'] = -2
