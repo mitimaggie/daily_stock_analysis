@@ -384,7 +384,11 @@ class RiskManager:
                     result.market_risk_cap = min(result.market_risk_cap, cap)
             
             # 成交额萎缩（两市成交额 < 6000亿 → 市场冷清）
-            if isinstance(total_vol, (int, float)) and 0 < total_vol < 6000:
+            # 仅 14:00 后才判断（已过 ~62% 成交量，全天总额估算可靠）
+            # 盘中开盘初期实时累计额远低于全天，会导致误报"市场冷清"
+            from datetime import datetime as _dt_mkt
+            _now_h = _dt_mkt.now().hour
+            if isinstance(total_vol, (int, float)) and 0 < total_vol < 6000 and _now_h >= 14:
                 reasons.append(f"🟡 两市成交额{total_vol:.0f}亿，市场冷清，不宜重仓")
                 result.market_risk_cap = min(result.market_risk_cap, 30)
 

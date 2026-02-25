@@ -394,11 +394,45 @@ class TechnicalIndicators:
         if turnover_rate <= 0 or df is None or len(df) < lookback // 2:
             return 0.5
         try:
+            # 盘中折算：换手率是当日累计值，需用经验分布推算全天等价值再与历史比较
+            # A股成交分布不均匀（开盘和收盘前集中），不能用线性时间折算
+            # 与 market_monitor.py 保持同一套经验权重曲线
+            _INTRADAY_CUM_WEIGHTS = [
+                ((9, 30),  0.000),
+                ((10, 0),  0.220),
+                ((10, 30), 0.330),
+                ((11, 0),  0.415),
+                ((11, 30), 0.480),
+                ((13, 0),  0.480),
+                ((13, 30), 0.545),
+                ((14, 0),  0.620),
+                ((14, 30), 0.710),
+                ((15, 0),  1.000),
+            ]
+            from datetime import datetime as _dt
+            _now = _dt.now()
+            _h, _m = _now.hour, _now.minute
+
+            def _get_cum_ratio_tr(h, m):
+                t = h * 60 + m
+                for i in range(len(_INTRADAY_CUM_WEIGHTS) - 1):
+                    (h0, m0), r0 = _INTRADAY_CUM_WEIGHTS[i]
+                    (h1, m1), r1 = _INTRADAY_CUM_WEIGHTS[i + 1]
+                    t0, t1 = h0 * 60 + m0, h1 * 60 + m1
+                    if t0 <= t <= t1:
+                        return r0 + (r1 - r0) * (t - t0) / (t1 - t0) if t1 != t0 else r0
+                return 1.0 if t >= 15 * 60 else 0.0
+
+            cum_ratio = _get_cum_ratio_tr(_h, _m)
+            adjusted_rate = turnover_rate
+            if 0 < cum_ratio < 1.0:
+                adjusted_rate = turnover_rate / cum_ratio
+            
             # 优先用 df 中的历史换手率序列（如果存在且有足够数据）
             if 'turnover_rate' in df.columns:
                 tr_series = df['turnover_rate'].dropna().tail(lookback)
                 if len(tr_series) >= lookback // 2:
-                    return float((tr_series < turnover_rate).sum() / len(tr_series))
+                    return float((tr_series < adjusted_rate).sum() / len(tr_series))
 
             # 回退：用成交量序列计算相对分位（成交量越大≈换手率越高）
             vol_series = df['volume'].dropna().tail(lookback)

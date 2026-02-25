@@ -306,12 +306,15 @@ class AkshareFetcher(BaseFetcher):
         if _is_us_code(stock_code) or _is_etf_code(stock_code):
             return None
 
-        # 检查缓存
+        # 检查缓存（ttl 字段由写入时决定，盘中 180s，盘后 600s）
         cached = self._capital_flow_cache.get(stock_code)
-        if cached and time.time() - cached['ts'] < self._CAPITAL_FLOW_TTL:
-            return cached['data']
+        if cached:
+            _ttl = cached.get('ttl', self._CAPITAL_FLOW_TTL)
+            if time.time() - cached['ts'] < _ttl:
+                return cached['data']
 
         import akshare as ak
+        from datetime import datetime as _dt, date as _date
 
         market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
         try:
@@ -320,7 +323,30 @@ class AkshareFetcher(BaseFetcher):
             if df is None or df.empty:
                 return None
 
-            latest = df.iloc[-1]
+            # 优先取今日数据；盘中今日数据可能尚未入库，则退回最新一行并标注
+            today_str = _dt.now().strftime('%Y-%m-%d')
+            # 检测日期列名
+            date_col = None
+            for c in ('日期', 'date', 'Date'):
+                if c in df.columns:
+                    date_col = c
+                    break
+            
+            latest = None
+            is_today = False
+            if date_col:
+                df[date_col] = df[date_col].astype(str)
+                today_rows = df[df[date_col] == today_str]
+                if not today_rows.empty:
+                    latest = today_rows.iloc[-1]
+                    is_today = True
+                else:
+                    # 今日无数据（盘前/接口延迟），取最新一行（昨日）
+                    latest = df.iloc[-1]
+                    is_today = False
+            else:
+                latest = df.iloc[-1]
+                is_today = False
 
             # 主力净流入（元 → 万元）
             main_net_raw = safe_float(latest.get('主力净流入-净额', 0))
@@ -336,9 +362,16 @@ class AkshareFetcher(BaseFetcher):
                 super_large_net=round(super_large / 10000, 2) if super_large else 0,
                 large_net=round(large / 10000, 2) if large else 0,
             )
-            # 写入缓存
-            self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time()}
-            logger.info(f"💰 [{stock_code}] 资金流向: 主力净流入={result.main_net_flow:.0f}万 ({result.main_net_flow_pct:.1f}%)")
+            # 盘中缩短缓存 TTL 到 3 分钟，让资金流数据更新更频繁
+            try:
+                from src.core.pipeline import is_market_intraday
+                _intraday = is_market_intraday()
+            except Exception:
+                _intraday = False
+            ttl = 180 if _intraday else self._CAPITAL_FLOW_TTL
+            self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time(), 'ttl': ttl}
+            data_tag = "今日" if is_today else "昨日"
+            logger.info(f"💰 [{stock_code}] 资金流向({data_tag}): 主力净流入={result.main_net_flow:.0f}万 ({result.main_net_flow_pct:.1f}%)")
             return result
 
         except Exception as e:

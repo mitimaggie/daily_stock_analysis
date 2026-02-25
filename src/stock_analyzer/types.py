@@ -273,6 +273,21 @@ class TrendAnalysisResult:
     candle_net_signal: str = ""            # "看多" / "看空" / "中性"
     candle_score_adj: int = 0              # 形态对评分的调整 (-5 ~ +5)
     
+    # === 周线趋势（P0: 日线分析的大背景）===
+    weekly_trend: str = ""                 # "多头" / "空头" / "震荡"
+    weekly_ma5: float = 0.0               # 周线MA5（周内5周均线）
+    weekly_ma10: float = 0.0              # 周线MA10
+    weekly_ma20: float = 0.0              # 周线MA20
+    weekly_rsi: float = 50.0             # 周线RSI(14周)
+    weekly_trend_adj: int = 0             # 周线趋势对评分的调整(-6 ~ +6)
+    weekly_trend_note: str = ""           # 周线趋势描述（供LLM/展示使用）
+    
+    # === 经典形态识别（P0: 头肩顶/底、双顶/双底）===
+    chart_pattern: str = ""               # 识别到的经典形态名称
+    chart_pattern_signal: str = ""        # "看空" / "看多" / ""
+    chart_pattern_note: str = ""          # 形态描述（颈线位、目标位等）
+    chart_pattern_adj: int = 0            # 形态对评分的调整(-8 ~ +8)
+    
     # === 不交易过滤器（P0级风控）===
     no_trade: bool = False                     # True=当前不适合交易（比trading_halt更广）
     no_trade_reasons: List[str] = field(default_factory=list)  # 不交易原因列表
@@ -309,6 +324,23 @@ class TrendAnalysisResult:
     # === 信号详情 ===
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)
+    
+    # === 黄金分割回撤位（P1）===
+    fib_swing_high: float = 0.0            # 近期波段高点
+    fib_swing_low: float = 0.0             # 近期波段低点
+    fib_level_382: float = 0.0             # 0.382 回撤位
+    fib_level_500: float = 0.0             # 0.500 回撤位
+    fib_level_618: float = 0.0             # 0.618 回撤位
+    fib_current_zone: str = ""             # 当前价格所处区间: "0.382支撑区"/"0.618深度回撤"/"已跌破0.618"/""
+    fib_signal: str = ""                   # "接近支撑买入区"/"接近阻力卖出区"/"中性"/""
+    fib_adj: int = 0                       # 黄金分割对评分的调整(-5 ~ +5)
+    fib_note: str = ""                     # 说明文字
+    
+    # === 量价结构（P1: 放量突破/缩量回踩）===
+    vol_price_structure: str = ""          # "放量突破"/"缩量回踩"/"放量下跌"/"缩量反弹"/""
+    vol_price_breakout_price: float = 0.0  # 突破/跌破的关键价位
+    vol_price_structure_adj: int = 0       # 量价结构对评分的调整(-6 ~ +6)
+    vol_price_structure_note: str = ""     # 说明文字
     
     # === 结构化评分明细 ===
     score_breakdown: Dict[str, int] = field(default_factory=dict)

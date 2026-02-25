@@ -596,6 +596,85 @@ class EfinanceFetcher(BaseFetcher):
             return None
     
 
+    # 进程级周线缓存: {code: (fetch_ts, DataFrame)}，TTL=6小时
+    _weekly_cache: dict = {}
+    _WEEKLY_CACHE_TTL = 6 * 3600
+
+    @staticmethod
+    def get_weekly_history(stock_code: str, years: int = 3) -> Optional[pd.DataFrame]:
+        """从 efinance 直接拉取周线数据（klt=102），避免手动重采样误差。
+        
+        加了进程级内存缓存（TTL=6小时）和全局限流器：
+        - 同一进程内同一股票只拉一次，批量分析时不会触发频率封禁
+        - 通过全局限流器（令牌桶）控制请求速率
+        
+        Args:
+            stock_code: 股票代码，如 '600519'
+            years: 拉取年数，默认3年（约150根周线，足够 MA20 计算）
+            
+        Returns:
+            标准化后的周线 DataFrame，列名：date/open/high/low/close/volume
+            获取失败返回 None
+        """
+        import efinance as ef
+        from datetime import date, timedelta
+
+        # 检查缓存
+        cache = EfinanceFetcher._weekly_cache
+        ttl = EfinanceFetcher._WEEKLY_CACHE_TTL
+        now = time.time()
+        if stock_code in cache:
+            fetch_ts, cached_df = cache[stock_code]
+            if now - fetch_ts < ttl:
+                logger.debug(f"[周线缓存] {stock_code}: 命中缓存，跳过接口请求")
+                return cached_df
+
+        # 全局限流（避免批量分析频繁请求被封）
+        try:
+            limiter = get_global_limiter()
+            limiter.acquire('efinance', blocking=True, timeout=15.0)
+        except Exception:
+            pass
+
+        try:
+            end_dt = date.today()
+            beg_dt = end_dt - timedelta(days=365 * years)
+            beg_str = beg_dt.strftime('%Y%m%d')
+            end_str = end_dt.strftime('%Y%m%d')
+            
+            df = ef.stock.get_quote_history(
+                stock_codes=stock_code,
+                beg=beg_str,
+                end=end_str,
+                klt=102,  # 周线
+                fqt=1     # 前复权
+            )
+            
+            if df is None or df.empty:
+                return None
+            
+            # 标准化列名（efinance 返回中文列名）
+            col_map = {
+                '日期': 'date', '开盘': 'open', '最高': 'high',
+                '最低': 'low', '收盘': 'close', '成交量': 'volume',
+            }
+            df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+            df['date'] = pd.to_datetime(df['date'])
+            for col in ['open', 'high', 'low', 'close']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            if 'volume' in df.columns:
+                df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+            df = df.dropna(subset=['date', 'close']).sort_values('date').reset_index(drop=True)
+            logger.debug(f"[周线] {stock_code}: 获取 {len(df)} 根周线 (klt=102)")
+            # 写入缓存
+            EfinanceFetcher._weekly_cache[stock_code] = (time.time(), df)
+            return df
+        except Exception as e:
+            logger.debug(f"[周线] {stock_code}: efinance 获取周线失败: {e}")
+            return None
+
+
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.DEBUG)

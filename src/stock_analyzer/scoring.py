@@ -1192,6 +1192,578 @@ class ScoringSystem:
             result.score_breakdown['ma_spread'] = 1
         
     @staticmethod
+    def score_weekly_trend(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P0: 周线趋势分析 — 日线分析的大背景
+        
+        从日线数据重采样为周线，计算 MA5/MA10/MA20/RSI 判断周线多空趋势。
+        数据来源优先级：DB 长历史（500天≈2年）> 传入的 df。
+        
+        周线 MA20 需要至少 20 根周线 = 约 100 个交易日 ≈ 5 个月日线数据。
+        因此直接从 DB 取 500 天确保足够，而不依赖分析用的短窗口 df（120天偏紧）。
+        
+        - 周线多头（MA5>MA10>MA20 且 RSI>50）：+3~+6
+        - 周线空头（MA5<MA10<MA20 且 RSI<50）：-3~-6
+        - 日线多头但周线空头（日内反弹，大趋势向下）：额外降分至 -6
+        - 周线震荡：中性
+        """
+        try:
+            # 优先级 1: efinance 接口直接拉周线（klt=102，最准确，约150根）
+            weekly = None
+            try:
+                from data_provider.efinance_fetcher import EfinanceFetcher
+                wdf = EfinanceFetcher.get_weekly_history(result.code, years=3)
+                if wdf is not None and len(wdf) >= 22:
+                    wdf = wdf.set_index('date')
+                    weekly = wdf
+            except Exception:
+                pass
+
+            # 优先级 2: DB 长历史重采样（500天日线 → 周线）
+            if weekly is None:
+                try:
+                    from src.storage import DatabaseManager
+                    db = DatabaseManager.get_instance()
+                    long_df = db.get_stock_history_df(result.code, days=500)
+                    if long_df is not None and len(long_df) >= 100:
+                        w = long_df.copy()
+                        if 'date' in w.columns:
+                            w['date'] = pd.to_datetime(w['date'])
+                            w = w.set_index('date')
+                        weekly = w.resample('W').agg({
+                            'open': 'first', 'high': 'max', 'low': 'min',
+                            'close': 'last', 'volume': 'sum'
+                        }).dropna()
+                except Exception:
+                    pass
+
+            # 优先级 3: 传入 df 重采样（最短，仅兜底）
+            if weekly is None:
+                if df is None or len(df) < 60:
+                    return
+                w = df.copy()
+                if 'date' in w.columns:
+                    w['date'] = pd.to_datetime(w['date'])
+                    w = w.set_index('date')
+                elif not isinstance(w.index, pd.DatetimeIndex):
+                    return
+                weekly = w.resample('W').agg({
+                    'open': 'first', 'high': 'max', 'low': 'min',
+                    'close': 'last', 'volume': 'sum'
+                }).dropna()
+
+            if len(weekly) < 22:
+                return
+
+            c = weekly['close']
+            # 周线均线
+            wma5 = float(c.rolling(5).mean().iloc[-1]) if len(c) >= 5 else 0
+            wma10 = float(c.rolling(10).mean().iloc[-1]) if len(c) >= 10 else 0
+            wma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else 0
+
+            # 周线RSI(14)
+            delta = c.diff()
+            gain = delta.clip(lower=0).rolling(14).mean()
+            loss = (-delta.clip(upper=0)).rolling(14).mean()
+            wrsi = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] > 0 else 50.0
+
+            result.weekly_ma5 = round(wma5, 2)
+            result.weekly_ma10 = round(wma10, 2)
+            result.weekly_ma20 = round(wma20, 2)
+            result.weekly_rsi = round(wrsi, 1)
+
+            # 判断周线趋势
+            price = float(c.iloc[-1])
+            is_weekly_bull = wma5 > wma10 > wma20 * 0.99 and price > wma10 and wrsi > 52
+            is_weekly_bear = wma5 < wma10 < wma20 * 1.01 and price < wma10 and wrsi < 48
+            is_weekly_bull_weak = wma5 > wma20 and wrsi > 50  # 弱多头
+            is_weekly_bear_weak = wma5 < wma20 and wrsi < 50  # 弱空头
+
+            adj = 0
+            is_daily_bull = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL)
+            is_daily_bear = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR)
+
+            if is_weekly_bull:
+                result.weekly_trend = "多头"
+                adj = 4
+                note = f"周线均线多头排列(MA5={wma5:.2f}>MA10={wma10:.2f}>MA20={wma20:.2f})，RSI{wrsi:.0f}，中长线向好"
+                result.signal_reasons.append(f"🗓️ 周线多头：{note}")
+                # 日线多头 + 周线多头 = 双共振
+                if is_daily_bull:
+                    adj = 6
+                    result.signal_reasons.append("🗓️ 日周双周期多头共振，趋势强度高")
+            elif is_weekly_bull_weak:
+                result.weekly_trend = "弱多头"
+                adj = 2
+                note = f"周线偏多(MA5>{wma20:.2f})，RSI{wrsi:.0f}，趋势偏正面"
+            elif is_weekly_bear:
+                result.weekly_trend = "空头"
+                adj = -4
+                note = f"周线均线空头排列(MA5={wma5:.2f}<MA10={wma10:.2f}<MA20={wma20:.2f})，RSI{wrsi:.0f}，中长线向下"
+                result.risk_factors.append(f"⚠️ 周线空头：{note}")
+                # 日线多头 + 周线空头 = 日内反弹，逆势危险
+                if is_daily_bull:
+                    adj = -6
+                    result.risk_factors.append("⚠️ 日线多头但周线空头，可能仅为下降趋势中的反弹，风险极高")
+            elif is_weekly_bear_weak:
+                result.weekly_trend = "弱空头"
+                adj = -2
+                note = f"周线偏空(MA5<{wma20:.2f})，RSI{wrsi:.0f}，趋势偏负面"
+                if is_daily_bull:
+                    result.risk_factors.append(f"⚠️ 周线偏空，日线上涨或为反弹，需谨慎追高")
+            else:
+                result.weekly_trend = "震荡"
+                adj = 0
+                note = f"周线横盘震荡，RSI{wrsi:.0f}"
+
+            result.weekly_trend_adj = adj
+            result.weekly_trend_note = note
+            if adj != 0:
+                result.score_breakdown['weekly_trend_adj'] = adj
+
+        except Exception as e:
+            logger.debug(f"[周线趋势] 计算失败: {e}")
+
+    @staticmethod
+    def score_chart_patterns(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P0: 经典形态识别 — 头肩顶/底、双顶/双底(M头/W底)
+        
+        基于日线价格序列识别主要反转形态：
+        - 头肩顶：顶部反转，强烈看空信号（-6 ~ -8）
+        - 头肩底：底部反转，强烈看多信号（+6 ~ +8）
+        - 双顶(M头)：顶部反转，看空（-4 ~ -6）
+        - 双底(W底)：底部反转，看多（+4 ~ +6）
+        
+        识别逻辑基于局部高低点（swing high/low），不依赖精确点位。
+        """
+        if df is None or len(df) < 40:
+            return
+        try:
+            closes = df['close'].values
+            highs = df['high'].values
+            lows = df['low'].values
+            n = len(closes)
+
+            # 识别局部极值点（swing high/low），窗口=5日
+            def find_swing_highs(arr, window=5):
+                """局部最高点索引"""
+                peaks = []
+                for i in range(window, len(arr) - window):
+                    if arr[i] == max(arr[i - window:i + window + 1]):
+                        peaks.append((i, arr[i]))
+                return peaks
+
+            def find_swing_lows(arr, window=5):
+                """局部最低点索引"""
+                troughs = []
+                for i in range(window, len(arr) - window):
+                    if arr[i] == min(arr[i - window:i + window + 1]):
+                        troughs.append((i, arr[i]))
+                return troughs
+
+            peaks = find_swing_highs(highs, window=5)
+            troughs = find_swing_lows(lows, window=5)
+
+            if not peaks or not troughs:
+                return
+
+            last_price = float(closes[-1])
+
+            # === 双顶(M头) 检测 ===
+            # 条件：最近2个高点高度相近(差<3%)，中间有一个低点（颈线），当前价接近或跌破颈线
+            if len(peaks) >= 2:
+                p1_idx, p1_val = peaks[-2]
+                p2_idx, p2_val = peaks[-1]
+                height_diff = abs(p1_val - p2_val) / max(p1_val, p2_val)
+                # 两个高点高度相近（<3%），且第二个高点在近40根K线内
+                if height_diff < 0.03 and (n - 1 - p2_idx) <= 20:
+                    # 找两峰之间的最低点（颈线）
+                    between_lows = [t for t in troughs if p1_idx < t[0] < p2_idx]
+                    if between_lows:
+                        neckline = min(t[1] for t in between_lows)
+                        pattern_height = max(p1_val, p2_val) - neckline
+                        # 当前价在颈线附近或已跌破
+                        if last_price <= neckline * 1.02:
+                            target = neckline - pattern_height
+                            result.chart_pattern = "双顶(M头)"
+                            result.chart_pattern_signal = "看空"
+                            result.chart_pattern_note = (
+                                f"双顶形态：两峰约{max(p1_val, p2_val):.2f}，颈线{neckline:.2f}，"
+                                f"理论目标位{target:.2f}"
+                            )
+                            result.chart_pattern_adj = -5
+                            result.risk_factors.append(f"⚠️ 识别到双顶(M头)形态，颈线{neckline:.2f}，看空信号")
+                            result.score_breakdown['chart_pattern_adj'] = -5
+                            return
+
+            # === 双底(W底) 检测 ===
+            if len(troughs) >= 2:
+                t1_idx, t1_val = troughs[-2]
+                t2_idx, t2_val = troughs[-1]
+                height_diff = abs(t1_val - t2_val) / max(t1_val, t2_val)
+                if height_diff < 0.03 and (n - 1 - t2_idx) <= 20:
+                    # 找两谷之间的最高点（颈线）
+                    between_highs = [p for p in peaks if t1_idx < p[0] < t2_idx]
+                    if between_highs:
+                        neckline = max(p[1] for p in between_highs)
+                        pattern_height = neckline - min(t1_val, t2_val)
+                        # 当前价在颈线附近或已突破
+                        if last_price >= neckline * 0.98:
+                            target = neckline + pattern_height
+                            result.chart_pattern = "双底(W底)"
+                            result.chart_pattern_signal = "看多"
+                            result.chart_pattern_note = (
+                                f"双底形态：两谷约{min(t1_val, t2_val):.2f}，颈线{neckline:.2f}，"
+                                f"理论目标位{target:.2f}"
+                            )
+                            result.chart_pattern_adj = 5
+                            result.signal_reasons.append(f"✅ 识别到双底(W底)形态，颈线{neckline:.2f}，看多信号，目标{target:.2f}")
+                            result.score_breakdown['chart_pattern_adj'] = 5
+                            return
+
+            # === 头肩顶 检测 ===
+            # 条件：三个高点，中间最高（头），两侧较低（肩），左右肩高度相近
+            if len(peaks) >= 3:
+                ls_idx, ls_val = peaks[-3]  # 左肩
+                hd_idx, hd_val = peaks[-2]  # 头
+                rs_idx, rs_val = peaks[-1]  # 右肩
+                # 头比两肩高，两肩高度相近(差<5%)
+                if (hd_val > ls_val * 1.01 and hd_val > rs_val * 1.01
+                        and abs(ls_val - rs_val) / max(ls_val, rs_val) < 0.05
+                        and (n - 1 - rs_idx) <= 25):
+                    # 颈线 = 头左右两个低点的均值
+                    left_troughs = [t for t in troughs if ls_idx < t[0] < hd_idx]
+                    right_troughs = [t for t in troughs if hd_idx < t[0] < rs_idx]
+                    if left_troughs and right_troughs:
+                        neckline = (min(t[1] for t in left_troughs) + min(t[1] for t in right_troughs)) / 2
+                        pattern_height = hd_val - neckline
+                        if last_price <= neckline * 1.02:
+                            target = neckline - pattern_height
+                            result.chart_pattern = "头肩顶"
+                            result.chart_pattern_signal = "看空"
+                            result.chart_pattern_note = (
+                                f"头肩顶：头部{hd_val:.2f}，颈线{neckline:.2f}，"
+                                f"理论跌幅目标{target:.2f}"
+                            )
+                            result.chart_pattern_adj = -7
+                            result.risk_factors.append(f"🚨 识别到头肩顶形态，颈线{neckline:.2f}，经典顶部反转，强烈看空")
+                            result.score_breakdown['chart_pattern_adj'] = -7
+                            return
+
+            # === 头肩底 检测 ===
+            if len(troughs) >= 3:
+                ls_idx, ls_val = troughs[-3]
+                hd_idx, hd_val = troughs[-2]
+                rs_idx, rs_val = troughs[-1]
+                if (hd_val < ls_val * 0.99 and hd_val < rs_val * 0.99
+                        and abs(ls_val - rs_val) / max(ls_val, rs_val) < 0.05
+                        and (n - 1 - rs_idx) <= 25):
+                    left_peaks = [p for p in peaks if ls_idx < p[0] < hd_idx]
+                    right_peaks = [p for p in peaks if hd_idx < p[0] < rs_idx]
+                    if left_peaks and right_peaks:
+                        neckline = (max(p[1] for p in left_peaks) + max(p[1] for p in right_peaks)) / 2
+                        pattern_height = neckline - hd_val
+                        if last_price >= neckline * 0.98:
+                            target = neckline + pattern_height
+                            result.chart_pattern = "头肩底"
+                            result.chart_pattern_signal = "看多"
+                            result.chart_pattern_note = (
+                                f"头肩底：底部{hd_val:.2f}，颈线{neckline:.2f}，"
+                                f"理论涨幅目标{target:.2f}"
+                            )
+                            result.chart_pattern_adj = 7
+                            result.signal_reasons.append(f"✅ 识别到头肩底形态，颈线{neckline:.2f}，经典底部反转，强烈看多，目标{target:.2f}")
+                            result.score_breakdown['chart_pattern_adj'] = 7
+                            return
+
+        except Exception as e:
+            logger.debug(f"[形态识别] 计算失败: {e}")
+
+    @staticmethod
+    def score_intraday_volume_signal(result: TrendAnalysisResult):
+        """盘中量比×价格联动主力行为检测
+        
+        换手率盘中是累计残缺值，不可靠。
+        量比（当前每分钟成交速率 vs 过去5日同时段均值）是已归一化的盘中指标，
+        结合价格方向可判断主力行为：
+        - 量比>2 + 价格上涨  → 放量拉升（主力买入信号）+2
+        - 量比>3 + 价格上涨  → 强势放量拉升 +3
+        - 量比>2 + 价格下跌  → 放量出货（主力离场信号）-2
+        - 量比>3 + 价格下跌  → 强势出货 -3
+        - 量比<0.5           → 缩量（流动性差，中性偏负）-1
+        
+        仅盘中（15:00前）触发，收盘后由换手率历史百分位接管。
+        """
+        from datetime import datetime as _dt_iv
+        if _dt_iv.now().hour >= 15:
+            return  # 收盘后由换手率历史百分位接管，不重复计
+
+        vr = result.volume_ratio
+        if not isinstance(vr, (int, float)) or vr <= 0:
+            return
+
+        from .types import TrendStatus, VolumeStatus
+        # 用 trend_status + volume_status 联合判断价格方向
+        is_rising = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL) or \
+                    result.volume_status in (VolumeStatus.HEAVY_VOLUME_UP,)
+        is_falling = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR) or \
+                     result.volume_status in (VolumeStatus.HEAVY_VOLUME_DOWN,)
+
+        adj = 0
+        if vr >= 3.0:
+            if is_rising:
+                adj = 3
+                result.signal_reasons.append(f"量比{vr:.1f}强势放量拉升，主力积极买入")
+            elif is_falling:
+                adj = -3
+                result.risk_factors.append(f"量比{vr:.1f}强势放量下跌，主力出货信号")
+        elif vr >= 2.0:
+            if is_rising:
+                adj = 2
+                result.signal_reasons.append(f"量比{vr:.1f}放量上涨，资金活跃")
+            elif is_falling:
+                adj = -2
+                result.risk_factors.append(f"量比{vr:.1f}放量下跌，警惕主力出货")
+        elif vr < 0.5:
+            adj = -1
+            result.risk_factors.append(f"量比{vr:.1f}极度缩量，流动性不足")
+
+        if adj != 0:
+            result.score_breakdown['intraday_vol_signal'] = adj
+
+    @staticmethod
+    def score_fibonacci_levels(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P1: 黄金分割回撤位分析
+        
+        基于近期波段高低点（过去60根K线内）计算 0.382 / 0.500 / 0.618 回撤位。
+        判断当前价格是否处于关键支撑/阻力区，给出操作信号和评分调整：
+        
+        上升段回撤：高点→低点方向
+        - 当前价在 0.382 支撑区（±2%）：+4（黄金回撤买入区）
+        - 当前价在 0.500 支撑区（±2%）：+2（中度回撤，可关注）
+        - 当前价在 0.618 支撑区（±2%）：+3（深度回撤，超跌反弹机会）
+        - 当前价已跌破 0.618：-3（结构破坏，趋势可能反转）
+        
+        下跌段反弹（阻力位）：
+        - 当前价触及 0.382 阻力（±2%）：-2（可能遇阻回落）
+        - 当前价触及 0.618 阻力（±2%）：-3（强阻力，建议减仓）
+        """
+        if df is None or len(df) < 30:
+            return
+        try:
+            close = df['close'].values
+            n = min(60, len(close))
+            recent = close[-n:]
+            
+            swing_high_idx = int(recent.argmax())
+            swing_low_idx = int(recent.argmin())
+            swing_high = float(recent[swing_high_idx])
+            swing_low = float(recent[swing_low_idx])
+            
+            if swing_high <= swing_low or (swing_high - swing_low) / swing_high < 0.03:
+                return  # 振幅太小，黄金分割无意义
+            
+            current_price = float(close[-1])
+            diff = swing_high - swing_low
+            
+            # 判断当前是上升段（高点在后）还是下跌段（高点在前）
+            is_uptrend_context = swing_high_idx > swing_low_idx  # 先低后高：回撤分析
+            
+            f382 = round(swing_high - diff * 0.382, 2)
+            f500 = round(swing_high - diff * 0.500, 2)
+            f618 = round(swing_high - diff * 0.618, 2)
+            
+            result.fib_swing_high = swing_high
+            result.fib_swing_low = swing_low
+            result.fib_level_382 = f382
+            result.fib_level_500 = f500
+            result.fib_level_618 = f618
+            
+            tol = 0.02  # ±2% 容忍带
+            adj = 0
+            
+            def near(price, level, tolerance=tol):
+                return abs(price - level) / level <= tolerance if level > 0 else False
+            
+            if is_uptrend_context:
+                # 上升趋势回调：寻找支撑
+                if current_price < f618 * (1 - tol):
+                    result.fib_current_zone = "已跌破0.618（结构破坏）"
+                    result.fib_signal = "结构破坏，谨慎"
+                    adj = -3
+                    result.risk_factors.append(f"价格已跌破黄金分割0.618支撑({f618:.2f})，上升结构可能破坏")
+                elif near(current_price, f618):
+                    result.fib_current_zone = "0.618深度回撤支撑区"
+                    result.fib_signal = "接近支撑买入区"
+                    adj = 3
+                    result.signal_reasons.append(f"价格触及0.618黄金分割支撑({f618:.2f})，深度回调逢低机会")
+                elif near(current_price, f500):
+                    result.fib_current_zone = "0.500中度回撤支撑区"
+                    result.fib_signal = "接近支撑买入区"
+                    adj = 2
+                    result.signal_reasons.append(f"价格在0.5回撤支撑附近({f500:.2f})，中度回调可关注")
+                elif near(current_price, f382):
+                    result.fib_current_zone = "0.382浅度回撤支撑区"
+                    result.fib_signal = "接近支撑买入区"
+                    adj = 4
+                    result.signal_reasons.append(f"价格在0.382黄金分割支撑({f382:.2f})，浅回调强势特征")
+                else:
+                    result.fib_current_zone = ""
+                    result.fib_signal = "中性"
+            else:
+                # 下跌趋势反弹：寻找阻力
+                if near(current_price, f382):
+                    result.fib_current_zone = "0.382反弹阻力区"
+                    result.fib_signal = "接近阻力卖出区"
+                    adj = -2
+                    result.risk_factors.append(f"反弹触及0.382阻力位({f382:.2f})，注意减仓")
+                elif near(current_price, f618):
+                    result.fib_current_zone = "0.618强阻力区"
+                    result.fib_signal = "接近阻力卖出区"
+                    adj = -3
+                    result.risk_factors.append(f"反弹触及0.618强阻力({f618:.2f})，建议减仓防回落")
+                else:
+                    result.fib_current_zone = ""
+                    result.fib_signal = "中性"
+            
+            result.fib_adj = adj
+            if adj != 0:
+                result.score_breakdown['fib_adj'] = adj
+            result.fib_note = (
+                f"波段高={swing_high:.2f} 低={swing_low:.2f} | "
+                f"0.382={f382:.2f} 0.5={f500:.2f} 0.618={f618:.2f} | "
+                f"{result.fib_current_zone or '价格在区间中部'}"
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def score_vol_price_structure(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P1: 量价结构分析——放量突破 / 缩量回踩
+        
+        识别最近30根K线内是否存在有效的量价结构信号：
+        
+        放量突破（看多 +4~+6）：
+        - 近5日内出现成交量 ≥ 近20日均量1.8倍的K线
+        - 且该K线收盘价突破近20日最高价（前高阻力）
+        - 当前价格仍在突破位上方
+        
+        缩量回踩（看多 +3~+4）：
+        - 之前已有放量突破信号（10日内）
+        - 当前回踩但成交量 < 5日均量的0.7倍（缩量）
+        - 价格在突破位 ±3% 内（正常回踩，非破位）
+        
+        放量下跌（看空 -3~-4）：
+        - 近5日成交量 ≥ 近20日均量1.8倍
+        - 且收盘跌幅 > 2%
+        
+        缩量反弹（看空 -2）：
+        - 当前处于下跌趋势中
+        - 近3日反弹但缩量（成交量 < 5日均量0.7倍）
+        """
+        if df is None or len(df) < 25:
+            return
+        try:
+            close = df['close'].values.astype(float)
+            volume = df['volume'].values.astype(float)
+            high = df['high'].values.astype(float)
+            low = df['low'].values.astype(float)
+            
+            n = len(close)
+            vol_ma20 = float(pd.Series(volume).rolling(20).mean().iloc[-1]) if n >= 20 else float(volume[-n:].mean())
+            vol_ma5 = float(pd.Series(volume).rolling(5).mean().iloc[-1]) if n >= 5 else float(volume[-n:].mean())
+            current_vol = float(volume[-1])
+            current_price = float(close[-1])
+            
+            if vol_ma20 <= 0:
+                return
+            
+            # === 检测近10日内有无放量突破 ===
+            lookback = min(10, n - 5)
+            breakout_price = None
+            breakout_day_idx = None
+            
+            for i in range(n - lookback, n):
+                vol_i = float(volume[i])
+                close_i = float(close[i])
+                # 以该K线前20日高点为阻力
+                prev_high = float(high[max(0, i-20):i].max()) if i >= 5 else 0
+                if prev_high <= 0:
+                    continue
+                # 放量（≥1.8倍均量）且突破前高
+                local_vol_ma = float(volume[max(0, i-20):i].mean()) if i >= 5 else vol_ma20
+                if local_vol_ma > 0 and vol_i >= local_vol_ma * 1.8 and close_i > prev_high:
+                    breakout_price = close_i
+                    breakout_day_idx = i
+            
+            from .types import TrendStatus
+            adj = 0
+            
+            if breakout_price is not None:
+                days_since = n - 1 - breakout_day_idx
+                if days_since <= 3:
+                    # 放量突破刚发生
+                    result.vol_price_structure = "放量突破"
+                    result.vol_price_breakout_price = breakout_price
+                    adj = 5 if current_vol >= vol_ma20 * 1.5 else 4
+                    result.signal_reasons.append(
+                        f"放量突破前高({breakout_price:.2f})，成交量{current_vol/vol_ma20:.1f}倍均量，趋势确认"
+                    )
+                else:
+                    # 放量突破后回踩
+                    is_near_breakout = abs(current_price - breakout_price) / breakout_price <= 0.03
+                    is_light_vol = current_vol < vol_ma5 * 0.7
+                    if is_near_breakout and is_light_vol:
+                        result.vol_price_structure = "缩量回踩"
+                        result.vol_price_breakout_price = breakout_price
+                        adj = 4
+                        result.signal_reasons.append(
+                            f"缩量回踩突破位({breakout_price:.2f})，量能萎缩健康，可关注买入机会"
+                        )
+                    elif not is_near_breakout and current_price < breakout_price * 0.97:
+                        # 已跌破突破位，信号失败
+                        result.vol_price_structure = "突破失败"
+                        result.vol_price_breakout_price = breakout_price
+                        adj = -3
+                        result.risk_factors.append(
+                            f"前期放量突破位({breakout_price:.2f})已跌破，形态失败，注意风险"
+                        )
+            else:
+                # 无突破，检测放量下跌 / 缩量反弹
+                recent_vol_avg = float(volume[-5:].mean()) if n >= 5 else vol_ma20
+                recent_close_chg = (float(close[-1]) - float(close[-6])) / float(close[-6]) if n >= 6 else 0
+                
+                is_trending_down = result.trend_status in (
+                    getattr(TrendStatus, 'STRONG_BEAR', None),
+                    getattr(TrendStatus, 'BEAR', None),
+                ) if hasattr(result, 'trend_status') else False
+                
+                if recent_vol_avg >= vol_ma20 * 1.8 and recent_close_chg < -0.02:
+                    result.vol_price_structure = "放量下跌"
+                    adj = -4
+                    result.risk_factors.append(
+                        f"近5日放量下跌，成交量{recent_vol_avg/vol_ma20:.1f}倍均量，主力出货信号"
+                    )
+                elif is_trending_down and recent_vol_avg < vol_ma5 * 0.7 and recent_close_chg > 0.01:
+                    result.vol_price_structure = "缩量反弹"
+                    adj = -2
+                    result.risk_factors.append(
+                        f"下跌趋势中缩量反弹，量能不支持，建议不追高"
+                    )
+            
+            result.vol_price_structure_adj = adj
+            if adj != 0:
+                result.score_breakdown['vol_price_structure'] = adj
+            
+            if result.vol_price_structure:
+                result.vol_price_structure_note = (
+                    f"{result.vol_price_structure}"
+                    + (f" | 关键价位={result.vol_price_breakout_price:.2f}" if result.vol_price_breakout_price else "")
+                    + f" | 当量/均量={current_vol/vol_ma20:.1f}x"
+                )
+        except Exception:
+            pass
+
+    @staticmethod
     def cap_adjustments(result: TrendAnalysisResult):
         """统一应用所有评分修正因子（取代逐步截断）
         
@@ -1207,7 +1779,9 @@ class ScoringSystem:
                    'limit_adj', 'limit_risk', 'vp_divergence', 'vwap_adj', 'turnover_adj', 'gap_adj',
                    'timeframe_resonance', 'vol_extreme', 'vol_trend_3d', 'sentiment_extreme',
                    'candle_pattern', 'obv_divergence', 'obv_trend', 'adx_adj', 'ma_spread',
-                   'forecast_adj', 'mcap_risk', 'beta_adj']
+                   'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
+                   'weekly_trend_adj', 'chart_pattern_adj',
+                   'fib_adj', 'vol_price_structure']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚

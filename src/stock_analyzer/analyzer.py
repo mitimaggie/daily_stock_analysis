@@ -326,9 +326,13 @@ class StockTrendAnalyzer:
             elif result.ma_spread_rate < -1.0:
                 result.ma_spread_signal = "收敛"
 
-            # 换手率分位数（需要 quote_extra 中的 turnover_rate）
+            # 换手率分位数：仅收盘后（15:00后）才计算历史百分位
+            # 盘中换手率是当日累计值，任何折算都不准确，可能导致"异常活跃"误报
+            # 盘中改用量比×价格联动检测主力行为（见 score_intraday_volume_signal）
             turnover = getattr(quote_extra, 'turnover_rate', 0) or 0 if quote_extra else 0
-            if turnover > 0:
+            from datetime import datetime as _dt_tr
+            _is_after_close = _dt_tr.now().hour >= 15
+            if turnover > 0 and _is_after_close:
                 result.turnover_percentile = TechnicalIndicators.calc_turnover_percentile(df, turnover)
 
             self._analyze_volume(result, df, latest, prev)
@@ -364,6 +368,11 @@ class StockTrendAnalyzer:
                 result.score_breakdown['candle_pattern'] = result.candle_score_adj
             # OBV/ADX/均线发散 评分修正
             ScoringSystem.score_obv_adx(result)
+            ScoringSystem.score_weekly_trend(result, df)
+            ScoringSystem.score_chart_patterns(result, df)
+            ScoringSystem.score_fibonacci_levels(result, df)
+            ScoringSystem.score_vol_price_structure(result, df)
+            ScoringSystem.score_intraday_volume_signal(result)
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)
