@@ -1531,6 +1531,136 @@ class ScoringSystem:
             result.score_breakdown['intraday_vol_signal'] = adj
 
     @staticmethod
+    def score_vol_anomaly(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P2: 天量/地量异常检测
+        
+        基于近60日成交量历史分位，检测当日量能异常：
+        
+        天量（>95分位）：
+        - 上涨天量：+3（放量拉升，主力积极）
+        - 下跌天量：-4（放量出货，强烈警告）
+        - 横盘天量：+1（量能积累，方向待定）
+        
+        次天量（>85分位）：
+        - 上涨：+2；下跌：-2
+        
+        地量（<5分位）：
+        - 下跌趋势中地量：+2（缩量到极致，有止跌可能）
+        - 上涨趋势中地量：-1（量能枯竭，上涨乏力）
+        - 横盘地量：0（蓄势待变）
+        
+        次地量（<15分位）：
+        - 视趋势给 ±1
+        """
+        if df is None or len(df) < 20:
+            return
+        try:
+            volume = df['volume'].values.astype(float)
+            close = df['close'].values.astype(float)
+            
+            n = len(volume)
+            lookback = min(60, n)
+            hist_vol = volume[-lookback:]
+            current_vol = float(volume[-1])
+            
+            # 计算当日量在历史分位
+            pct = float((hist_vol < current_vol).sum()) / len(hist_vol) * 100
+            result.vol_percentile_60d = round(pct, 1)
+            
+            # 判断价格方向（近3日涨跌）
+            if n >= 4:
+                price_chg = (float(close[-1]) - float(close[-4])) / float(close[-4])
+            else:
+                price_chg = 0.0
+            
+            is_rising = price_chg > 0.015
+            is_falling = price_chg < -0.015
+            
+            from .types import TrendStatus
+            trend_down = getattr(result, 'trend_status', None) in (
+                getattr(TrendStatus, 'STRONG_BEAR', None),
+                getattr(TrendStatus, 'BEAR', None),
+            )
+            trend_up = getattr(result, 'trend_status', None) in (
+                getattr(TrendStatus, 'STRONG_BULL', None),
+                getattr(TrendStatus, 'BULL', None),
+            )
+            
+            vol_ma20 = float(pd.Series(volume).rolling(20).mean().iloc[-1]) if n >= 20 else float(hist_vol.mean())
+            x_times = current_vol / vol_ma20 if vol_ma20 > 0 else 1.0
+            
+            adj = 0
+            
+            if pct >= 95:
+                result.vol_anomaly = "天量"
+                if is_rising:
+                    adj = 3
+                    result.signal_reasons.append(
+                        f"天量放量上涨（分位{pct:.0f}%，{x_times:.1f}倍均量），主力积极买入"
+                    )
+                elif is_falling:
+                    adj = -4
+                    result.risk_factors.append(
+                        f"天量放量下跌（分位{pct:.0f}%，{x_times:.1f}倍均量），强烈警告主力出货"
+                    )
+                else:
+                    adj = 1
+                    result.signal_reasons.append(
+                        f"天量横盘（分位{pct:.0f}%，{x_times:.1f}倍均量），量能积累，方向待定"
+                    )
+            elif pct >= 85:
+                result.vol_anomaly = "次天量"
+                if is_rising:
+                    adj = 2
+                    result.signal_reasons.append(
+                        f"放量上涨（量能分位{pct:.0f}%），趋势强化"
+                    )
+                elif is_falling:
+                    adj = -2
+                    result.risk_factors.append(
+                        f"放量下跌（量能分位{pct:.0f}%），注意主力出货风险"
+                    )
+            elif pct <= 5:
+                result.vol_anomaly = "地量"
+                if trend_down:
+                    adj = 2
+                    result.signal_reasons.append(
+                        f"下跌趋势中出现地量（分位{pct:.0f}%），缩量到极致，关注止跌反转"
+                    )
+                elif trend_up or is_rising:
+                    adj = -1
+                    result.risk_factors.append(
+                        f"上涨趋势中量能枯竭（地量分位{pct:.0f}%），涨势恐后继无力"
+                    )
+                else:
+                    result.signal_reasons.append(
+                        f"地量横盘（分位{pct:.0f}%），蓄势待变，等待方向选择"
+                    )
+            elif pct <= 15:
+                result.vol_anomaly = "次地量"
+                if trend_down:
+                    adj = 1
+                    result.signal_reasons.append(
+                        f"缩量下跌（分位{pct:.0f}%），抛压减轻，可关注止跌信号"
+                    )
+                elif trend_up or is_rising:
+                    adj = -1
+                    result.risk_factors.append(
+                        f"缩量上涨（分位{pct:.0f}%），量能不配合，上涨持续性存疑"
+                    )
+            
+            result.vol_anomaly_adj = adj
+            if adj != 0:
+                result.score_breakdown['vol_anomaly'] = adj
+            
+            if result.vol_anomaly:
+                result.vol_anomaly_note = (
+                    f"{result.vol_anomaly}（{x_times:.1f}倍均量，近60日{pct:.0f}%分位）"
+                )
+        except Exception:
+            pass
+
+    @staticmethod
     def score_fibonacci_levels(result: TrendAnalysisResult, df: pd.DataFrame):
         """P1: 黄金分割回撤位分析
         
@@ -1781,7 +1911,7 @@ class ScoringSystem:
                    'candle_pattern', 'obv_divergence', 'obv_trend', 'adx_adj', 'ma_spread',
                    'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
                    'weekly_trend_adj', 'chart_pattern_adj',
-                   'fib_adj', 'vol_price_structure']
+                   'fib_adj', 'vol_price_structure', 'vol_anomaly']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚

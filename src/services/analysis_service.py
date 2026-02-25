@@ -237,6 +237,7 @@ class AnalysisService:
                 "technical_analysis": getattr(result, "technical_analysis", "") or "",
                 "fundamental_analysis": getattr(result, "fundamental_analysis", "") or "",
                 "risk_warning": getattr(result, "risk_warning", "") or "",
+                "dashboard": dashboard,
             }
         }
         

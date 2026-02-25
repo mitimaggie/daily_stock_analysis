@@ -321,6 +321,141 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             </div>
           </div>
 
+          {/* ===== P0/P1 新增：周线趋势 + 经典形态 + 黄金分割 + 量价结构 ===== */}
+          {/* 周线趋势 */}
+          {(qe.weekly_trend) && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">周线大背景</h4>
+              <div className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[13px] font-bold ${
+                    qe.weekly_trend === '多头' ? 'text-success' :
+                    qe.weekly_trend === '空头' ? 'text-danger' : 'text-warning'
+                  }`}>
+                    周线{qe.weekly_trend}
+                    {(qe.weekly_trend_adj ?? 0) !== 0 && (
+                      <span className={`ml-2 text-[11px] font-mono ${(qe.weekly_trend_adj ?? 0) > 0 ? 'text-success/70' : 'text-danger/70'}`}>
+                        {(qe.weekly_trend_adj ?? 0) > 0 ? `+${qe.weekly_trend_adj}` : qe.weekly_trend_adj}分
+                      </span>
+                    )}
+                  </span>
+                  {qe.weekly_rsi != null && (
+                    <span className="text-[10px] text-white/30 font-mono">周RSI {(qe.weekly_rsi as number).toFixed(0)}</span>
+                  )}
+                </div>
+                {qe.weekly_trend_note && (
+                  <div className="text-[10px] text-white/40 leading-relaxed">{qe.weekly_trend_note}</div>
+                )}
+                {(qe.weekly_ma5 || qe.weekly_ma10 || qe.weekly_ma20) && (
+                  <div className="text-[10px] text-white/25 mt-1 font-mono">
+                    周MA5={qe.weekly_ma5?.toFixed(2) ?? '--'} MA10={qe.weekly_ma10?.toFixed(2) ?? '--'} MA20={qe.weekly_ma20?.toFixed(2) ?? '--'}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 经典形态 */}
+          {qe.chart_pattern && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">经典形态识别</h4>
+              <div className={`rounded-lg p-3 border ${
+                qe.chart_pattern_signal === '看多' ? 'bg-success/10 border-success/20' :
+                qe.chart_pattern_signal === '看空' ? 'bg-danger/10 border-danger/20' :
+                'bg-white/[0.03] border-white/[0.04]'
+              }`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`text-[13px] font-bold ${
+                    qe.chart_pattern_signal === '看多' ? 'text-success' :
+                    qe.chart_pattern_signal === '看空' ? 'text-danger' : 'text-white/80'
+                  }`}>
+                    {qe.chart_pattern}
+                  </span>
+                  {qe.chart_pattern_signal && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                      qe.chart_pattern_signal === '看多' ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'
+                    }`}>{qe.chart_pattern_signal}</span>
+                  )}
+                  {(qe.chart_pattern_adj ?? 0) !== 0 && (
+                    <span className={`text-[11px] font-mono ml-auto ${(qe.chart_pattern_adj ?? 0) > 0 ? 'text-success/70' : 'text-danger/70'}`}>
+                      {(qe.chart_pattern_adj ?? 0) > 0 ? `+${qe.chart_pattern_adj}` : qe.chart_pattern_adj}分
+                    </span>
+                  )}
+                </div>
+                {qe.chart_pattern_note && (
+                  <div className="text-[10px] text-white/40 leading-relaxed">{qe.chart_pattern_note}</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 黄金分割回撤位 */}
+          {(qe.fib_level_382 || qe.fib_swing_high) && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">黄金分割回撤位</h4>
+              <div className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className={`text-[12px] font-semibold ${
+                    qe.fib_signal?.includes('支撑') ? 'text-success' :
+                    qe.fib_signal?.includes('阻力') ? 'text-danger' :
+                    qe.fib_signal?.includes('结构破坏') ? 'text-danger' : 'text-white/60'
+                  }`}>
+                    {qe.fib_current_zone || qe.fib_signal || '区间中部'}
+                  </span>
+                  {(qe.fib_adj ?? 0) !== 0 && (
+                    <span className={`text-[11px] font-mono ${(qe.fib_adj ?? 0) > 0 ? 'text-success/70' : 'text-danger/70'}`}>
+                      {(qe.fib_adj ?? 0) > 0 ? `+${qe.fib_adj}` : qe.fib_adj}分
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  {[
+                    { label: '0.382', val: qe.fib_level_382 },
+                    { label: '0.500', val: qe.fib_level_500 },
+                    { label: '0.618', val: qe.fib_level_618 },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="bg-white/[0.02] rounded p-1.5">
+                      <div className="text-[9px] text-white/25">{label}</div>
+                      <div className="text-[11px] font-mono text-white/70">{(val as number)?.toFixed(2) ?? '--'}</div>
+                    </div>
+                  ))}
+                </div>
+                {qe.fib_note && (
+                  <div className="text-[10px] text-white/25 mt-1.5 font-mono truncate">{qe.fib_note}</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 量价结构 */}
+          {qe.vol_price_structure && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">量价结构</h4>
+              <div className={`rounded-lg p-3 border ${
+                ['放量突破', '缩量回踩'].includes(qe.vol_price_structure as string) ? 'bg-success/10 border-success/20' :
+                ['放量下跌', '突破失败', '缩量反弹'].includes(qe.vol_price_structure as string) ? 'bg-danger/10 border-danger/20' :
+                'bg-white/[0.03] border-white/[0.04]'
+              }`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-[13px] font-bold ${
+                    ['放量突破', '缩量回踩'].includes(qe.vol_price_structure as string) ? 'text-success' :
+                    ['放量下跌', '突破失败', '缩量反弹'].includes(qe.vol_price_structure as string) ? 'text-danger' : 'text-white/70'
+                  }`}>
+                    {qe.vol_price_structure}
+                  </span>
+                  {(qe.vol_price_structure_adj ?? 0) !== 0 && (
+                    <span className={`text-[11px] font-mono ${(qe.vol_price_structure_adj ?? 0) > 0 ? 'text-success/70' : 'text-danger/70'}`}>
+                      {(qe.vol_price_structure_adj ?? 0) > 0 ? `+${qe.vol_price_structure_adj}` : qe.vol_price_structure_adj}分
+                    </span>
+                  )}
+                </div>
+                {qe.vol_price_structure_note && (
+                  <div className="text-[10px] text-white/40 font-mono leading-relaxed">{qe.vol_price_structure_note}</div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 风险因子 */}
           {(qe.risk_factors ?? qe.riskFactors)?.length > 0 && (
             <div>

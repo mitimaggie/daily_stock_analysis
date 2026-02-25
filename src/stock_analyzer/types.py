@@ -342,6 +342,12 @@ class TrendAnalysisResult:
     vol_price_structure_adj: int = 0       # 量价结构对评分的调整(-6 ~ +6)
     vol_price_structure_note: str = ""     # 说明文字
     
+    # === 天量/地量异常检测（P2）===
+    vol_percentile_60d: float = -1.0       # 当日成交量在近60日中的百分位(0-100)
+    vol_anomaly: str = ""                  # "天量" / "次天量" / "地量" / "次地量" / ""
+    vol_anomaly_adj: int = 0               # 天量/地量对评分的调整(-4 ~ +4)
+    vol_anomaly_note: str = ""             # 说明文字
+    
     # === 结构化评分明细 ===
     score_breakdown: Dict[str, int] = field(default_factory=dict)
     
