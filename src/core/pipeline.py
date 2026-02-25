@@ -211,15 +211,24 @@ class StockAnalysisPipeline:
             if len(fresh) < min_count:
                 return ""
             lines = []
-            for i, n in enumerate(fresh[:limit]):
+            seen_keys: set = set()
+            idx = 1
+            for n in fresh[:limit * 2]:  # 多取一些供去重后筛选
                 title = (getattr(n, "title", "") or "").strip()
                 snippet = (getattr(n, "snippet", "") or "").strip()
                 source = (getattr(n, "source", "") or "").strip()
+                # 去重键：同来源 + 标题前20字（避免同一事件不同措辞被重复注入）
+                dedup_key = f"{source}|{title[:20]}"
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
                 pub = getattr(n, "published_date", None)
                 pub_str = f" ({pub})" if pub else ""
-                head = f"{i+1}. 【{source}】{title}{pub_str}".strip()
-                body = snippet
-                lines.append(f"{head}\n{body}".strip())
+                head = f"{idx}. 【{source}】{title}{pub_str}".strip()
+                lines.append(f"{head}\n{snippet}".strip())
+                idx += 1
+                if idx > limit:
+                    break
             return "\n".join(lines) if lines else ""
         except Exception:
             return ""

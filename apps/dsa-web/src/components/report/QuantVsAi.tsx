@@ -26,22 +26,35 @@ const scoreDirection = (s: number | null | undefined): string => {
  * 量化 vs AI 对比卡片
  */
 export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
-  const { quantScore, quantAdvice, aiScore, aiAdvice, divergenceReason } = data;
+  const { quantScore, quantAdvice, aiScore, aiAdvice, divergenceReason, divergenceAlert } = data;
 
-  // 分歧度
-  const divergence = aiScore != null ? Math.abs(quantScore - aiScore) : 0;
-  const hasDivergence = divergence >= 15;
+  // 分歧度（优先用后端计算值）
+  const divergence = data.divergence ?? (aiScore != null ? Math.abs(quantScore - aiScore) : 0);
+  const hasSevereDivergence = divergence >= 20;
+  const hasMildDivergence = divergence >= 10 && divergence < 20;
 
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
       <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5 mb-3">
         <span>⚖️</span> 量化 vs AI
-        {hasDivergence && (
+        {hasSevereDivergence && (
+          <span className="ml-auto text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold animate-pulse">
+            ⚠️ 严重分歧 {divergence}分
+          </span>
+        )}
+        {hasMildDivergence && (
           <span className="ml-auto text-[11px] px-2 py-0.5 rounded bg-orange-500/15 text-orange-400">
             分歧 {divergence}分
           </span>
         )}
       </h3>
+
+      {/* 严重分歧告警横幅 */}
+      {hasSevereDivergence && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/25 text-[11px] text-red-300 leading-relaxed">
+          {divergenceAlert || `量化(${quantScore}分) 与 AI(${aiScore}分) 严重分歧，建议以量化结论为主，参考 AI 理由后再决策`}
+        </div>
+      )}
 
       {/* 对比表格 */}
       <table className="w-full text-xs">

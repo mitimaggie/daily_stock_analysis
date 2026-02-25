@@ -367,6 +367,13 @@ class StockTrendAnalyzer:
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)
+            # 熊市评分硬上限：系统性风险环境下，单股评分不超过 70，避免误导追涨
+            BEAR_SCORE_CAP = 70
+            if market_regime == MarketRegime.BEAR and result.signal_score > BEAR_SCORE_CAP:
+                result.score_breakdown['bear_market_cap'] = BEAR_SCORE_CAP - result.signal_score
+                result.signal_score = BEAR_SCORE_CAP
+                result.risk_factors.append(f"⚠️ 熊市环境下评分已压至上限 {BEAR_SCORE_CAP}，建议控制仓位")
+                ScoringSystem.update_buy_signal(result)
             ScoringSystem.detect_signal_conflict(result)
             
             RiskManager.calculate_stop_loss_and_take_profit(result, df)

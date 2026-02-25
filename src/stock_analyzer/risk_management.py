@@ -83,10 +83,24 @@ class RiskManager:
             tp_multiplier_short = 1.5
             tp_multiplier_mid = 2.5
         
-        result.take_profit_short = round(price + tp_multiplier_short * atr, 2)
+        atr_tp_short = round(price + tp_multiplier_short * atr, 2)
+        # 止盈取 min(ATR止盈, 最近阻力位-0.5%)：阻力位是现实的压力墙，避免止盈设在墙外
+        if result.resistance_levels:
+            nearest_resistance = result.resistance_levels[0]
+            resistance_tp = round(nearest_resistance * 0.995, 2)  # 阻力位下方 0.5%
+            # 只在阻力位高于现价且低于 ATR 止盈时才采纳（否则阻力位太低没参考价值）
+            if price < resistance_tp < atr_tp_short:
+                result.take_profit_short = resistance_tp
+                result.score_breakdown['tp_capped_by_resistance'] = 1  # 仅作日志标记
+            else:
+                result.take_profit_short = atr_tp_short
+        else:
+            result.take_profit_short = atr_tp_short
         
         if result.resistance_levels:
-            result.take_profit_mid = round(result.resistance_levels[0], 2)
+            # take_profit_mid 取第二阻力位（若存在），否则 ATR 止盈
+            mid_resistance = result.resistance_levels[1] if len(result.resistance_levels) > 1 else result.resistance_levels[0]
+            result.take_profit_mid = round(mid_resistance * 0.995, 2)
         else:
             result.take_profit_mid = round(price + tp_multiplier_mid * atr, 2)
         

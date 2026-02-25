@@ -1207,7 +1207,38 @@ class ScoringSystem:
                    'limit_adj', 'limit_risk', 'vp_divergence', 'vwap_adj', 'turnover_adj', 'gap_adj',
                    'timeframe_resonance', 'vol_extreme', 'vol_trend_3d', 'sentiment_extreme',
                    'candle_pattern', 'obv_divergence', 'obv_trend', 'adx_adj', 'ma_spread',
-                   'forecast_adj', 'mcap_risk']
+                   'forecast_adj', 'mcap_risk', 'beta_adj']
+        
+        # === Beta 系数调整 ===
+        # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚
+        # 低 Beta (<0.6) 说明安全属性强、独立行情概率大，酌情加分
+        beta = getattr(result, 'beta_vs_index', 1.0) or 1.0
+        from .types import MarketRegime
+        trend_st = getattr(result, 'trend_status', None)
+        # 从 score_breakdown 推断 market_regime（BEAR标记由外部在 bear_market_cap 注入）
+        is_bear = 'bear_market_cap' in result.score_breakdown
+        beta_adj = 0
+        if beta > 1.5 and is_bear:
+            # 高Beta + 熊市：额外降分（最多 -5）
+            beta_adj = max(-5, round(-(beta - 1.5) * 5, 0))
+        elif beta > 1.3 and is_bear:
+            beta_adj = -2
+        elif beta < 0.6:
+            # 低Beta：独立行情属性，弱市中是优势（最多 +4）
+            beta_adj = min(4, round((0.6 - beta) * 8, 0))
+        if beta_adj != 0:
+            result.score_breakdown['beta_adj'] = int(beta_adj)
+        
+        # 单类 adj 上限 ±8：防止单一因子（如估值严重高估 -15）过度主导总分
+        SINGLE_ADJ_CAP = 8
+        clamped_breakdown = {}
+        for k in adj_keys:
+            v = result.score_breakdown.get(k, 0)
+            if v != 0:
+                cv = max(-SINGLE_ADJ_CAP, min(SINGLE_ADJ_CAP, v))
+                if cv != v:
+                    clamped_breakdown[k] = cv  # 记录被截断的键
+                    result.score_breakdown[k] = cv
         
         pos_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) > 0)
         neg_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) < 0)

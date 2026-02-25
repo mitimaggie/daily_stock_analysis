@@ -275,20 +275,52 @@ class BacktestRunner:
             if "买" in advice or "加仓" in advice:
                 buy_records.append(r)
 
+        # 买入信号数量（含全量对比用）
+        total_filled = len([r for r in records if r.actual_pct_5d is not None])
+        buy_count_total = len(buy_records)
+
         lines = [
-            f"## 📊 回测统计报告（近 {lookback_days} 天，共 {len(records)} 条已回填）",
+            f"## 📊 回测统计报告（近 {lookback_days} 天，共 {total_filled} 条已回填，其中买入信号 {buy_count_total} 条）",
+            "",
+            "> ⚠️ **回测口径说明**：胜率/收益以「买入/加仓」信号为统计基准，观望/减仓/卖出信号不纳入业绩计算（避免稀释）",
             "",
         ]
 
-        # === 1. 整体业绩摘要（含夏普、信息比率） ===
+        # === 1. 整体业绩摘要：以买入信号为核心，附全量参考 ===
+        buy_pcts_all = [r.actual_pct_5d for r in buy_records if r.actual_pct_5d is not None]
         all_pcts = [r.actual_pct_5d for r in records if r.actual_pct_5d is not None]
-        if all_pcts:
+
+        if buy_pcts_all:
+            buy_sharpe, buy_ir, buy_dd, buy_calmar = self._calc_performance_metrics(buy_records)
+            buy_avg = sum(buy_pcts_all) / len(buy_pcts_all)
+            buy_win = sum(1 for p in buy_pcts_all if p > 0) / len(buy_pcts_all) * 100
+
+            # 全量对比（参考）
+            all_avg = sum(all_pcts) / len(all_pcts) if all_pcts else 0.0
+            all_win = sum(1 for p in all_pcts if p > 0) / len(all_pcts) * 100 if all_pcts else 0.0
+
+            lines.extend([
+                "### 🎯 核心业绩指标（买入信号）",
+                "",
+                "| 指标 | 买入信号 | 全量参考 | 说明 |",
+                "|------|---------|---------|------|",
+                f"| 平均5日收益 | **{buy_avg:+.2f}%** | {all_avg:+.2f}% | 买入信号持有5日的平均收益 |",
+                f"| 胜率 | **{buy_win:.1f}%** | {all_win:.1f}% | 盈利交易占比 |",
+                f"| 夏普比率 | **{buy_sharpe:.2f}** | - | 风险调整后收益，>1优秀 |",
+                f"| 信息比率 | **{buy_ir:.2f}** | - | 相对基准的超额收益/跟踪误差 |",
+                f"| 最大回撤 | **{buy_dd:.2f}%** | - | 峰谷最大跌幅 |",
+                f"| 卡玛比率 | **{buy_calmar:.2f}** | - | 年化收益/最大回撤，>2优秀 |",
+                "",
+                "---",
+                "",
+            ])
+        elif all_pcts:
+            # 没有买入信号时退回全量展示
             sharpe, info_ratio, max_dd, calmar = self._calc_performance_metrics(records)
             total_avg = sum(all_pcts) / len(all_pcts)
             total_win = sum(1 for p in all_pcts if p > 0) / len(all_pcts) * 100
-            
             lines.extend([
-                "### 🎯 整体业绩指标",
+                "### 🎯 整体业绩指标（无买入信号，展示全量）",
                 "",
                 "| 指标 | 数值 | 说明 |",
                 "|------|------|------|",

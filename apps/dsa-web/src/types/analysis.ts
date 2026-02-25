@@ -51,6 +51,8 @@ export interface QuantVsAi {
   aiScore: number | null;
   aiAdvice: string;
   divergenceReason: string;
+  divergence?: number;
+  divergenceAlert?: string;
 }
 
 /** 盘中关键价位 */

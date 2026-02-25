@@ -156,12 +156,28 @@ class AnalysisService:
         llm_score = getattr(result, "llm_score", None)
         llm_advice = getattr(result, "llm_advice", "") or ""
         llm_reasoning = getattr(result, "llm_reasoning", "") or ""
+        # 计算量化 vs AI 分歧并生成告警
+        _divergence = abs(score - llm_score) if llm_score is not None else 0
+        _divergence_alert = ""
+        if _divergence >= 20:
+            q_dir = "看多" if score >= 60 else ("看空" if score <= 40 else "中性")
+            a_dir = "看多" if llm_score >= 60 else ("看空" if llm_score <= 40 else "中性")
+            _divergence_alert = (
+                f"⚠️ 量化({score}分/{q_dir}) 与 AI({llm_score}分/{a_dir}) 严重分歧，"
+                f"建议以量化结论为主，参考 AI 理由后再决策"
+            )
+            if llm_reasoning and llm_reasoning != "与量化结论一致":
+                _divergence_alert += f" | AI理由: {llm_reasoning[:80]}"
+        elif _divergence >= 10:
+            _divergence_alert = f"量化({score}) vs AI({llm_score}) 存在一定分歧（{_divergence}分）"
         quant_vs_ai = {
             "quant_score": score,
             "quant_advice": getattr(result, "operation_advice", ""),
             "ai_score": llm_score,
             "ai_advice": llm_advice,
             "divergence_reason": llm_reasoning,
+            "divergence": _divergence,
+            "divergence_alert": _divergence_alert,
         }
         
         # === 盘中关键价位（从 quant_extras.intraday_watchlist） ===
