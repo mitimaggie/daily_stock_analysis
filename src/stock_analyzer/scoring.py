@@ -1516,18 +1516,35 @@ class ScoringSystem:
             result.risk_factors.append("弱势多头中MACD死叉，中长期风险较高（回测20日均-1.6%）")
 
         # === 换手率分位数 adj（回测结论：高换手=强信号）===
-        # very_high(>90th): 20d=+2.84%  high(70-90th): 20d=+1.45%  normal: 20d=+0.59%  very_low: 20d=+0.22%
+        # 全体: very_high 20d=+2.84%, high 20d=+1.45%, very_low 20d=+0.22%
+        # WEAK_BULL: very_high 20d=+3.07%（+放量上涨则+4.18%）
+        # STRONG_BEAR: very_high 20d=+4.54%（超跌资金抄底信号最强）
         tp = getattr(result, 'turnover_percentile', 0.0)
         if tp > 0:
             if tp >= 0.9:
-                result.score_breakdown['turnover_adj'] = 3
-                result.signal_reasons.append(f"换手率极高（近90th分位），资金活跃度强（回测20d均+2.84%）")
+                trend = result.trend_status
+                vol_up = result.volume_status == VolumeStatus.HEAVY_VOLUME_UP
+                if trend == TrendStatus.STRONG_BEAR:
+                    # 强势空头极高换手=超跌资金抄底，最强反转信号
+                    adj_val = 5
+                    result.signal_reasons.append(f"换手率极高（>90th）+强势空头，超跌资金抄底信号（回测20d均+4.54%）")
+                elif trend == TrendStatus.WEAK_BULL and vol_up:
+                    # 弱势多头极高换手+放量上涨=突破反转
+                    adj_val = 4
+                    result.signal_reasons.append(f"换手率极高（>90th）+放量上涨，弱势多头反转共振（回测20d均+4.18%）")
+                elif trend == TrendStatus.WEAK_BULL:
+                    adj_val = 4
+                    result.signal_reasons.append(f"换手率极高（>90th），弱势多头中资金异动（回测20d均+3.07%）")
+                else:
+                    adj_val = 3
+                    result.signal_reasons.append(f"换手率极高（>90th），资金活跃度强（回测20d均+2.84%）")
+                result.score_breakdown['turnover_adj'] = adj_val
             elif tp >= 0.7:
                 result.score_breakdown['turnover_adj'] = 1
-                result.signal_reasons.append(f"换手率偏高（70-90th分位），市场关注度上升")
+                result.signal_reasons.append(f"换手率偏高（70-90th分位），市场关注度上升（回测20d均+1.45%）")
             elif tp <= 0.1:
                 result.score_breakdown['turnover_adj'] = -1
-                result.risk_factors.append(f"换手率极低（近10th分位），市场活跃度不足（回测20d均+0.22%）")
+                result.risk_factors.append(f"换手率极低（<10th分位），市场活跃度不足（回测20d均+0.22%）")
         
     @staticmethod
     def score_weekly_trend(result: TrendAnalysisResult, df: pd.DataFrame):

@@ -7,7 +7,7 @@
 import logging
 import pandas as pd
 from typing import List, Tuple, Dict, Any, Optional
-from .types import TrendAnalysisResult, TrendStatus, MarketRegime
+from .types import TrendAnalysisResult, TrendStatus, MarketRegime, RSIStatus, VolumeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -859,6 +859,259 @@ class RiskManager:
             parts.append(f"止损{rec_stop:.2f}")
 
         return "，".join(parts)
+
+    @staticmethod
+    def generate_trade_advice(result: TrendAnalysisResult, position_info: Optional[Dict[str, Any]] = None):
+        """
+        基于回测场景识别生成操作建议（L1→L4层级递进框架）
+
+        场景识别优先级（按强度从高到低）：
+        A: STRONG_BEAR + very_high换手 → 超跌反弹场景（20d预期+4-6%，胜率61%+）
+        B: WEAK_BULL + very_high换手 → 弱势多头资金异动（20d预期+2-3%，胜率53%+）
+        C: STRONG_BULL + very_high换手 → 强势趋势共振（20d预期+3-4%，胜率57%+）
+        D: 任意趋势 + RSI超卖 + very_high换手 → 超卖反弹共振（20d预期+4-6%）
+        E: 警示场景（低换手+缩量上涨 / WEAK_BULL+缩量回调）
+        F: 无明显场景信号
+        """
+        price = result.current_price
+        trend = result.trend_status
+        tp = getattr(result, 'turnover_percentile', 0.0) or 0.0
+        vol = result.volume_status
+        macd = result.macd_status
+        rsi = result.rsi_status
+        sl_short = result.stop_loss_short or 0.0
+        sl_mid = result.stop_loss_mid or 0.0
+        tp_short = result.take_profit_short or 0.0
+        tp_mid = result.take_profit_mid or 0.0
+        score = result.signal_score
+
+        # 持仓信息
+        cost_price = float(position_info.get('cost_price', 0) or 0) if position_info else 0.0
+        has_position = cost_price > 0
+        pnl_pct: Optional[float] = None
+        if has_position and price > 0:
+            pnl_pct = (price - cost_price) / cost_price * 100
+
+        # ── 场景识别 ────────────────────────────────────────────────
+        scenario_id = "none"
+        scenario_label = ""
+        scenario_confidence = "低"
+        expected_20d = ""
+        win_rate = ""
+        base_position = 0
+
+        # 换手率分级
+        turn_very_high = tp >= 0.9
+        turn_high = tp >= 0.7
+        turn_low = tp <= 0.1
+        turn_very_low = tp <= 0.1
+
+        # RSI超卖判断
+        rsi_oversold = rsi in [RSIStatus.OVERSOLD, RSIStatus.GOLDEN_CROSS_OVERSOLD]
+
+        # 量能状态
+        vol_shrink_up = vol == VolumeStatus.SHRINK_VOLUME_UP
+        vol_shrink_down = vol == VolumeStatus.SHRINK_VOLUME_DOWN
+        vol_heavy_up = vol == VolumeStatus.HEAVY_VOLUME_UP
+
+        # 场景D（最高优先级）：RSI超卖 + very_high换手（无论趋势）
+        if rsi_oversold and turn_very_high:
+            scenario_id = "D"
+            if trend == TrendStatus.STRONG_BEAR:
+                scenario_label = "超卖反弹共振（空头区RSI超卖+极高换手）"
+                expected_20d = "+4-6%"
+                win_rate = "~60%"
+                scenario_confidence = "高"
+                base_position = 25
+            else:
+                scenario_label = "RSI超卖+资金异动共振"
+                expected_20d = "+3-5%"
+                win_rate = "~58%"
+                scenario_confidence = "高"
+                base_position = 25
+
+        # 场景A：STRONG_BEAR + very_high换手
+        elif trend == TrendStatus.STRONG_BEAR and turn_very_high:
+            scenario_id = "A"
+            if vol_heavy_up:
+                scenario_label = "超跌反弹-极强场景（空头区放量+极高换手）"
+                expected_20d = "+6%"
+                win_rate = "61%"
+                scenario_confidence = "高"
+                base_position = 30
+            else:
+                scenario_label = "超跌反弹场景（强势空头+极高换手）"
+                expected_20d = "+4-6%"
+                win_rate = "61%"
+                scenario_confidence = "高"
+                base_position = 25
+
+        # 场景B：WEAK_BULL + very_high换手
+        elif trend == TrendStatus.WEAK_BULL and turn_very_high:
+            scenario_id = "B"
+            if vol_heavy_up:
+                scenario_label = "弱势多头量能突破（极高换手+放量上涨）"
+                expected_20d = "+3-4%"
+                win_rate = "53%"
+                scenario_confidence = "高"
+                base_position = 35
+            else:
+                scenario_label = "弱势多头资金异动（极高换手）"
+                expected_20d = "+2-3%"
+                win_rate = "54%"
+                scenario_confidence = "高"
+                base_position = 30
+
+        # 场景C：STRONG_BULL + very_high换手
+        elif trend == TrendStatus.STRONG_BULL and turn_very_high:
+            scenario_id = "C"
+            scenario_label = "强势趋势+资金共振（强多头+极高换手）"
+            expected_20d = "+3-4%"
+            win_rate = "57%"
+            scenario_confidence = "高"
+            base_position = 45
+
+        # BULL + very_high换手（中强）
+        elif trend == TrendStatus.BULL and turn_very_high:
+            scenario_id = "C2"
+            scenario_label = "多头趋势+资金激活（多头+极高换手）"
+            expected_20d = "+2%"
+            win_rate = "55%"
+            scenario_confidence = "中"
+            base_position = 35
+
+        # STRONG_BEAR + high换手（次强反弹）
+        elif trend == TrendStatus.STRONG_BEAR and turn_high:
+            scenario_id = "A2"
+            scenario_label = "超跌反弹潜力（强势空头+偏高换手）"
+            expected_20d = "+2%"
+            win_rate = "54%"
+            scenario_confidence = "中"
+            base_position = 15
+
+        # 场景E：警示场景
+        elif vol_shrink_up and turn_low:
+            scenario_id = "E1"
+            scenario_label = "假突破警示（低换手+缩量上涨）"
+            expected_20d = "-1.5%~-4%"
+            win_rate = "~44%"
+            scenario_confidence = "高"
+            base_position = 0
+        elif trend == TrendStatus.WEAK_BULL and vol_shrink_down and not turn_high:
+            scenario_id = "E2"
+            scenario_label = "弱势多头缩量回调（阴跌风险）"
+            expected_20d = "-0.5%~-2%"
+            win_rate = "~40%"
+            scenario_confidence = "中"
+            base_position = 0
+        elif trend == TrendStatus.BEAR:
+            scenario_id = "E3"
+            scenario_label = "空头排列回避区"
+            expected_20d = "<-1%"
+            win_rate = "<45%"
+            scenario_confidence = "高"
+            base_position = 0
+        else:
+            scenario_id = "none"
+            scenario_label = "无明显场景信号"
+            expected_20d = "基准±1%"
+            win_rate = "~50%"
+            scenario_confidence = "低"
+            base_position = 0
+
+        # ── 生成操作建议文本 ──────────────────────────────────────────
+        sl_ref = sl_short if sl_short > 0 else sl_mid
+        tp_ref = tp_short if tp_short > 0 else 0.0
+
+        # 空仓者建议
+        if scenario_id.startswith("E") or scenario_id == "none":
+            if scenario_id == "E1":
+                advice_empty = f"⚠️ 不建议入场：低换手缩量上涨为假突破信号（回测20d均-1.5%～-4%），等待量能放大再看"
+            elif scenario_id == "E2":
+                advice_empty = f"⚠️ 暂不入场：弱势多头缩量回调，有阴跌风险，等待换手率回升或趋势企稳"
+            elif scenario_id == "E3":
+                advice_empty = f"❌ 回避：空头排列趋势，历史回测20d均-0.96%，等待趋势扭转再考虑"
+            else:
+                advice_empty = f"观望为主：当前无强信号场景，等待换手率异动（>70th分位）或趋势明确后介入"
+        else:
+            pos_pct = min(base_position, result.suggested_position_pct or 50) if result.suggested_position_pct else base_position
+            sl_str = f"止损{sl_ref:.2f}" if sl_ref > 0 else "止损参考MA20"
+            tp_str = f"目标{tp_ref:.2f}" if tp_ref > 0 else ""
+            advice_empty = (
+                f"✅ 【场景{scenario_id}：{scenario_label}】"
+                f"可考虑建仓（仓位≤{pos_pct}%），"
+                f"预期20日收益{expected_20d}，胜率{win_rate}。"
+                f"{sl_str}，持有15-20日。"
+                + (f" {tp_str}" if tp_str else "")
+            )
+
+        # 持仓者建议
+        if has_position and pnl_pct is not None:
+            pnl_str = f"+{pnl_pct:.1f}%" if pnl_pct >= 0 else f"{pnl_pct:.1f}%"
+            if scenario_id.startswith("E") or scenario_id == "E3":
+                advice_holding = (
+                    f"⚠️ 持仓风险：当前场景（{scenario_label}）对持仓不利，浮盈{pnl_str}。"
+                    f"建议{('止盈减仓' if pnl_pct > 0 else '止损离场')}，"
+                    f"跌破{sl_ref:.2f}必须执行止损。"
+                ) if sl_ref > 0 else (
+                    f"⚠️ 持仓风险：{scenario_label}，浮盈{pnl_str}，考虑减仓。"
+                )
+            elif scenario_id in ("C", "C2", "A", "D") and pnl_pct >= 0:
+                advice_holding = (
+                    f"✅ 持股续涨：{scenario_label}，当前浮盈{pnl_str}，场景预期{expected_20d}。"
+                    f"建议持有，移动止盈跟踪（当前止损{sl_ref:.2f}）。"
+                ) if sl_ref > 0 else (
+                    f"✅ 持股续涨：{scenario_label}，浮盈{pnl_str}，建议持有。"
+                )
+            elif scenario_id in ("B",) and pnl_pct >= 0:
+                advice_holding = (
+                    f"持有观察：{scenario_label}，浮盈{pnl_str}，预期{expected_20d}。"
+                    f"止损守{sl_ref:.2f}，反弹至{tp_ref:.2f}可部分止盈。"
+                ) if sl_ref > 0 and tp_ref > 0 else (
+                    f"持有观察：{scenario_label}，浮盈{pnl_str}，持有15日。"
+                )
+            elif pnl_pct < -5 and score < 50:
+                advice_holding = (
+                    f"⚠️ 浮亏{pnl_str}且技术面偏弱（评分{score}），"
+                    f"建议止损，跌破{sl_ref:.2f}果断离场。"
+                ) if sl_ref > 0 else (
+                    f"⚠️ 浮亏{pnl_str}且技术面偏弱，考虑止损。"
+                )
+            else:
+                advice_holding = (
+                    f"持有等待：{scenario_label or '无强信号'}，当前{pnl_str}。"
+                    f"止损守{sl_ref:.2f}"
+                    + (f"，目标{tp_ref:.2f}" if tp_ref > 0 else "")
+                    + "。"
+                ) if sl_ref > 0 else (
+                    f"持有等待：当前{pnl_str}，等待信号明确。"
+                )
+        else:
+            # 无持仓信息时的通用持仓建议
+            if score >= 70 and not scenario_id.startswith("E"):
+                advice_holding = (
+                    f"强势持仓：{scenario_label or '技术面良好'}（评分{score}），"
+                    f"移动止盈跟踪，跌破{sl_ref:.2f}减仓。"
+                ) if sl_ref > 0 else f"强势持仓（评分{score}），持有为主。"
+            elif score >= 50:
+                advice_holding = (
+                    f"持股观察（评分{score}），止损守{sl_ref:.2f}，"
+                    f"无明显卖点前继续持有。"
+                ) if sl_ref > 0 else f"持股观察（评分{score}）。"
+            else:
+                advice_holding = (
+                    f"考虑减仓（评分{score}偏弱），跌破{sl_ref:.2f}果断离场。"
+                ) if sl_ref > 0 else f"考虑减仓（评分{score}偏弱）。"
+
+        # 写入result字段
+        result.scenario_id = scenario_id
+        result.scenario_label = scenario_label
+        result.scenario_confidence = scenario_confidence
+        result.scenario_expected_20d = expected_20d
+        result.scenario_win_rate = win_rate
+        result.trade_advice_empty = advice_empty
+        result.trade_advice_holding = advice_holding
+        result.trade_advice_position_pct = base_position
 
     @staticmethod
     def check_stop_loss_distance(result: TrendAnalysisResult, atr_multiplier: float = 2.0):

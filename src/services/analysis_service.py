@@ -118,30 +118,32 @@ class AnalysisService:
         if hasattr(result, 'get_sniper_points'):
             sniper_points = result.get_sniper_points() or {}
         
-        # 持仓建议（空仓/持仓分开展示，优先用量化 holding_strategy）
+        # 持仓建议（空仓/持仓分开展示，优先用量化 trade_advice → holding_strategy → AI）
         dashboard = getattr(result, "dashboard", None) or {}
         core = dashboard.get("core_conclusion") or {}
         pos_advice = core.get("position_advice") or {}
         hs = dashboard.get("holding_strategy") or {}
         qe_tmp = dashboard.get("quant_extras") or {}
-        # 空仓者：优先 holding_strategy.entry_advice → quant_extras.advice_for_empty → AI
+        ta = dashboard.get("trade_advice") or {}  # 场景化操作建议（最高优先级）
+        # 空仓者：优先 trade_advice.advice_empty → holding_strategy.entry_advice → quant_extras → AI
         no_position = (
-            hs.get("entry_advice", "")
+            ta.get("advice_empty", "")
+            or hs.get("entry_advice", "")
             or qe_tmp.get("advice_for_empty", "")
             or pos_advice.get("no_position", "")
         )
-        entry_pct = hs.get("entry_position_pct", 0) or qe_tmp.get("suggested_position_pct", 0) or 0
-        if entry_pct and no_position and f"{entry_pct}%" not in no_position:
-            no_position = f"{no_position}（仓位≤{entry_pct}%）"
-        # 持仓者：优先 holding_strategy.advice → quant_extras.advice_for_holding → AI
-        has_position = (
-            hs.get("advice", "")
+        entry_pct = ta.get("position_pct", 0) or hs.get("entry_position_pct", 0) or qe_tmp.get("suggested_position_pct", 0) or 0
+        # 持仓者：优先 trade_advice.advice_holding → holding_strategy.advice → quant_extras → AI
+        has_position_advice = (
+            ta.get("advice_holding", "")
+            or hs.get("advice", "")
             or qe_tmp.get("advice_for_holding", "")
             or pos_advice.get("has_position", "")
         )
         position_advice = {
             "no_position": no_position,
-            "has_position": has_position,
+            "has_position": has_position_advice,
+            "trade_advice": ta,  # 完整场景数据，供前端展示
         }
         
         # 计算情绪标签（兼容无 sentiment_score）

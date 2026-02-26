@@ -801,6 +801,22 @@ class StockAnalysisPipeline:
                     _trend_obj, cost_price=_user_cost,
                 )
 
+                # === 场景识别+操作建议（generate_trade_advice）===
+                # 需要真实的TrendAnalysisResult对象，从_prepare_stock_context中取
+                _trend_result_obj = context.get('trend_result')
+                if _trend_result_obj is not None:
+                    _RM.generate_trade_advice(_trend_result_obj, position_info=position_info)
+                    dashboard['trade_advice'] = {
+                        'scenario_id':        _trend_result_obj.scenario_id,
+                        'scenario_label':     _trend_result_obj.scenario_label,
+                        'scenario_confidence': _trend_result_obj.scenario_confidence,
+                        'expected_20d':       _trend_result_obj.scenario_expected_20d,
+                        'win_rate':           _trend_result_obj.scenario_win_rate,
+                        'advice_empty':       _trend_result_obj.trade_advice_empty,
+                        'advice_holding':     _trend_result_obj.trade_advice_holding,
+                        'position_pct':       _trend_result_obj.trade_advice_position_pct,
+                    }
+
                 # === 防守模式判定（复合条件） ===
                 _qs = int(quant_score) if quant_score is not None else 50
                 _as = result.llm_score if result.llm_score is not None else 50

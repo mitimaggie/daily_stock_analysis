@@ -329,6 +329,16 @@ class TrendAnalysisResult:
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)
     
+    # === 场景识别（generate_trade_advice）===
+    scenario_id: str = ""               # 匹配到的场景ID，如 "A","B","C","D","E","F","none"
+    scenario_label: str = ""            # 场景描述，如 "超跌反弹场景"
+    scenario_confidence: str = ""       # "高"/"中"/"低"，基于样本量和一致性
+    scenario_expected_20d: str = ""     # 预期20日收益描述，如 "+4-6%"
+    scenario_win_rate: str = ""         # 胜率描述，如 "61%"
+    trade_advice_empty: str = ""        # 空仓者的操作建议（基于场景）
+    trade_advice_holding: str = ""      # 持仓者的操作建议（基于场景）
+    trade_advice_position_pct: int = 0  # 建议仓位比例（空仓者入场参考）
+    
     # === 黄金分割回撤位（P1/P5-D）===
     fib_swing_high: float = 0.0            # 近期波段高点
     fib_swing_low: float = 0.0             # 近期波段低点

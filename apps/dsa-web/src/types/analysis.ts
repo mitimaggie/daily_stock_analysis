@@ -38,10 +38,23 @@ export interface ReportMeta {
 /** 情绪标签 */
 export type SentimentLabel = '极度悲观' | '悲观' | '中性' | '乐观' | '极度乐观';
 
+/** 场景化操作建议（generate_trade_advice输出）*/
+export interface TradeAdvice {
+  scenarioId?: string;
+  scenarioLabel?: string;
+  scenarioConfidence?: string;
+  expectedReturn20d?: string;
+  winRate?: string;
+  adviceEmpty?: string;
+  adviceHolding?: string;
+  positionPct?: number;
+}
+
 /** 空仓/持仓分开展示 */
 export interface PositionAdvice {
   noPosition?: string;
   hasPosition?: string;
+  tradeAdvice?: TradeAdvice;
 }
 
 /** 量化 vs AI 对比 */

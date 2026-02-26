@@ -187,8 +187,48 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         {oneSentence || summary.analysisSummary || '暂无分析结论'}
       </p>
 
-      {/* 持仓建议：有持仓信息时显示持仓策略，无持仓信息时显示空仓建议 */}
-      {(hasPositionInfo ? summary.positionAdvice?.hasPosition : summary.positionAdvice?.noPosition) && (
+      {/* 场景识别卡片（有场景时展示） */}
+      {summary.positionAdvice?.tradeAdvice?.scenarioId && summary.positionAdvice.tradeAdvice.scenarioId !== 'none' && (() => {
+        const ta = summary.positionAdvice!.tradeAdvice!;
+        const isPositive = !ta.scenarioId?.startsWith('E');
+        const confColor = ta.scenarioConfidence === '高' ? 'text-emerald-400' : ta.scenarioConfidence === '中' ? 'text-amber-400' : 'text-white/40';
+        const borderColor = isPositive ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5';
+        return (
+          <div className={`border-t border-white/5 pt-3`}>
+            <div className={`rounded-lg p-3 border ${borderColor} space-y-2`}>
+              {/* 场景标题行 */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${isPositive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                  场景{ta.scenarioId}
+                </span>
+                <span className="text-[12px] text-white/80 font-medium">{ta.scenarioLabel}</span>
+                <span className={`text-[10px] ml-auto ${confColor}`}>置信度: {ta.scenarioConfidence}</span>
+              </div>
+              {/* 预期收益 + 胜率 */}
+              {(ta.expectedReturn20d || ta.winRate) && (
+                <div className="flex gap-4 text-[11px]">
+                  {ta.expectedReturn20d && (
+                    <span className="text-white/50">20日预期: <span className={`font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>{ta.expectedReturn20d}</span></span>
+                  )}
+                  {ta.winRate && (
+                    <span className="text-white/50">历史胜率: <span className="font-mono text-white/70">{ta.winRate}</span></span>
+                  )}
+                </div>
+              )}
+              {/* 操作建议 */}
+              {(hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty) && (
+                <p className="text-[12px] text-white/70 leading-relaxed">
+                  {hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 持仓建议：兜底展示（无场景时显示）*/}
+      {(!summary.positionAdvice?.tradeAdvice?.scenarioId || summary.positionAdvice?.tradeAdvice?.scenarioId === 'none') &&
+        (hasPositionInfo ? summary.positionAdvice?.hasPosition : summary.positionAdvice?.noPosition) && (
         <div className="border-t border-white/5 pt-3 space-y-2">
           {hasPositionInfo && summary.positionAdvice?.hasPosition && (
             <div className="flex gap-2 items-start text-[13px]">
