@@ -1430,13 +1430,11 @@ class ScoringSystem:
         # === OBV 背离（比量价背离更可靠）===
         obv_div = getattr(result, 'obv_divergence', '')
         if obv_div == "OBV顶背离":
-            adj -= 3
+            adj -= 2
             result.risk_factors.append("OBV顶背离：价格新高但累积量能未跟上，上涨可能虚假")
-            result.score_breakdown['obv_divergence'] = -3
-        elif obv_div == "OBV底背离":
-            adj += 3
-            result.signal_reasons.append("OBV底背离：价格新低但累积量能企稳，底部信号")
-            result.score_breakdown['obv_divergence'] = 3
+            result.score_breakdown['obv_divergence'] = -2
+        # OBV底背离不给正分（回测显示价格仍在下跌中，底部确认需结合更多信号）
+        # elif obv_div == "OBV底背离": adj += 3
         
         # === OBV 趋势确认/否定 ===
         obv_trend = getattr(result, 'obv_trend', '')
@@ -1454,25 +1452,11 @@ class ScoringSystem:
             result.score_breakdown['obv_trend'] = 2
         
         # === ADX 趋势强度修正 ===
+        # 回测显示ADX高位时均值回归效应强（强多头ADX后均-0.07%，强空头ADX后均+0.67%）
+        # ADX仅作为展示信息，不影响评分
         adx_val = getattr(result, 'adx', 0)
-        if adx_val >= 30:
-            # 强趋势确认：用 trend_status 判断方向（避免依赖未最终化的 signal_score）
-            plus_di = getattr(result, 'plus_di', 0)
-            minus_di = getattr(result, 'minus_di', 0)
-            is_bull_trend = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]
-            is_bear_trend = result.trend_status in [TrendStatus.STRONG_BEAR, TrendStatus.BEAR, TrendStatus.WEAK_BEAR]
-            if plus_di > minus_di and is_bull_trend:
-                adj += 2
-                result.signal_reasons.append(f"ADX={adx_val:.0f}(强趋势)+DI领先，多头趋势确认")
-                result.score_breakdown['adx_adj'] = 2
-            elif minus_di > plus_di and is_bear_trend:
-                adj -= 2
-                result.risk_factors.append(f"ADX={adx_val:.0f}(强趋势)-DI领先，空头趋势确认")
-                result.score_breakdown['adx_adj'] = -2
-        elif adx_val < 15 and adx_val > 0:
-            # 极弱趋势 → 震荡市场，趋势指标信号不可靠
+        if adx_val < 15 and adx_val > 0:
             result.risk_factors.append(f"ADX={adx_val:.0f}(极弱)，市场无方向，趋势信号可靠性低")
-            result.score_breakdown['adx_adj'] = 0
         
         # === 均线发散速率 ===
         spread_signal = getattr(result, 'ma_spread_signal', '')

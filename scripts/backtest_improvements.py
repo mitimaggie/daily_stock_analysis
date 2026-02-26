@@ -108,6 +108,28 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df[f'VWAP{window}'] = vwap
         df[f'VWAP{window}_SLOPE'] = (vwap - vwap.shift(window)) / window
 
+    # OBV（能量潮）
+    prev_close = close.shift(1)
+    obv = (vol * ((close > prev_close).astype(float) - (close < prev_close).astype(float))).cumsum()
+    df['OBV'] = obv
+    df['OBV_MA20'] = obv.rolling(20).mean()
+
+    # ADX / +DI / -DI（14日）
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    plus_dm = (high - prev_high).clip(lower=0).where(
+        (high - prev_high) > (prev_low - low), 0)
+    minus_dm = (prev_low - low).clip(lower=0).where(
+        (prev_low - low) > (high - prev_high), 0)
+    atr14 = df['ATR14']
+    smoothed_plus = plus_dm.ewm(alpha=1/14, adjust=False).mean()
+    smoothed_minus = minus_dm.ewm(alpha=1/14, adjust=False).mean()
+    df['PLUS_DI'] = 100 * smoothed_plus / atr14.replace(0, float('nan'))
+    df['MINUS_DI'] = 100 * smoothed_minus / atr14.replace(0, float('nan'))
+    dx = 100 * ((df['PLUS_DI'] - df['MINUS_DI']).abs() /
+                (df['PLUS_DI'] + df['MINUS_DI']).replace(0, float('nan')))
+    df['ADX'] = dx.ewm(span=14, adjust=False).mean()
+
     return df
 
 
@@ -317,6 +339,37 @@ def build_result(df_slice: pd.DataFrame, code: str) -> TrendAnalysisResult:
         else:
             result.vwap_trend = "机构成本横盘"
         result.vwap_position = "价格在VWAP上方" if result.current_price > _vwap_ref else "价格在VWAP下方"
+
+    # OBV 背离 / 趋势
+    _n = len(df_slice)
+    if _n >= 20:
+        _close_arr = df_slice['close'].values.astype(float)
+        _obv_arr = df_slice['OBV'].values if 'OBV' in df_slice.columns else None
+        _obv_ma20_arr = df_slice['OBV_MA20'].values if 'OBV_MA20' in df_slice.columns else None
+        if _obv_arr is not None and not pd.isna(_obv_arr[-1]):
+            _obv_cur = float(_obv_arr[-1])
+            _obv_5_ago = float(_obv_arr[-5]) if _n >= 5 else _obv_cur
+            _close_5_ago = float(_close_arr[-5]) if _n >= 5 else float(_close_arr[-1])
+            _close_cur = float(_close_arr[-1])
+            _obv_20_ago = float(_obv_arr[-20]) if _n >= 20 else _obv_cur
+            _close_20_ago = float(_close_arr[-20]) if _n >= 20 else _close_cur
+            _close_rising = _close_cur > _close_20_ago
+            _obv_rising = _obv_cur > _obv_20_ago
+            if _close_rising and not _obv_rising:
+                result.obv_divergence = "OBV顶背离"
+            elif not _close_rising and _obv_rising:
+                result.obv_divergence = "OBV底背离"
+            if _obv_ma20_arr is not None and not pd.isna(_obv_ma20_arr[-1]):
+                result.obv_trend = "OBV多头" if _obv_cur > float(_obv_ma20_arr[-1]) else "OBV空头"
+
+    # ADX 趋势强度
+    _adx = float(row.get('ADX', 0) or 0)
+    _plus_di = float(row.get('PLUS_DI', 0) or 0)
+    _minus_di = float(row.get('MINUS_DI', 0) or 0)
+    if _adx > 0:
+        result.adx = round(_adx, 1)
+        result.plus_di = round(_plus_di, 1)
+        result.minus_di = round(_minus_di, 1)
 
     # 成交量状态
     vol = float(row.get('volume', 0) or 0)
