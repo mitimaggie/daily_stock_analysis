@@ -234,6 +234,127 @@ class ChatService:
             if resonance:
                 parts.append(f"信号共振({len(resonance)}项): {', '.join(resonance)}")
 
+            # ---- P0: 周线趋势 ----
+            weekly_trend = qe.get("weekly_trend")
+            if weekly_trend:
+                weekly_rsi = qe.get("weekly_rsi")
+                weekly_adj = qe.get("weekly_trend_adj", 0)
+                weekly_note = qe.get("weekly_trend_note", "")
+                parts.append(f"\n## 周线大背景")
+                line = f"周线{weekly_trend}"
+                if weekly_rsi is not None:
+                    line += f"（周RSI={weekly_rsi:.0f}）"
+                if weekly_adj:
+                    line += f"，评分调整{weekly_adj:+d}分"
+                parts.append(line)
+                if weekly_note:
+                    parts.append(f"周线说明: {weekly_note}")
+
+            # ---- P0: 经典形态 ----
+            chart_pattern = qe.get("chart_pattern")
+            if chart_pattern:
+                cp_signal = qe.get("chart_pattern_signal", "")
+                cp_adj = qe.get("chart_pattern_adj", 0)
+                cp_note = qe.get("chart_pattern_note", "")
+                parts.append(f"\n## 经典形态")
+                line = f"{chart_pattern}"
+                if cp_signal:
+                    line += f"（{cp_signal}）"
+                if cp_adj:
+                    line += f"，评分调整{cp_adj:+d}分"
+                parts.append(line)
+                if cp_note:
+                    parts.append(f"形态说明: {cp_note}")
+
+            # ---- P1: 黄金分割回撤位 ----
+            fib_note = qe.get("fib_note")
+            fib_zone = qe.get("fib_current_zone")
+            fib_signal = qe.get("fib_signal")
+            fib_adj = qe.get("fib_adj", 0)
+            if fib_note or fib_zone:
+                parts.append(f"\n## 黄金分割回撤位")
+                if fib_zone:
+                    line = fib_zone
+                    if fib_signal and fib_signal != "中性":
+                        line += f"，{fib_signal}"
+                    if fib_adj:
+                        line += f"，评分调整{fib_adj:+d}分"
+                    parts.append(line)
+                if fib_note:
+                    parts.append(f"分位详情: {fib_note}")
+
+            # ---- P1: 量价结构 ----
+            vps = qe.get("vol_price_structure")
+            if vps:
+                vps_adj = qe.get("vol_price_structure_adj", 0)
+                vps_note = qe.get("vol_price_structure_note", "")
+                vps_price = qe.get("vol_price_breakout_price")
+                parts.append(f"\n## 量价结构")
+                line = vps
+                if vps_price:
+                    line += f"（关键价位={vps_price:.2f}）"
+                if vps_adj:
+                    line += f"，评分调整{vps_adj:+d}分"
+                parts.append(line)
+                if vps_note:
+                    parts.append(f"量价说明: {vps_note}")
+
+            # ---- P2: 天量/地量异常 ----
+            vol_anomaly = qe.get("vol_anomaly")
+            if vol_anomaly:
+                va_adj = qe.get("vol_anomaly_adj", 0)
+                va_note = qe.get("vol_anomaly_note", "")
+                va_pct = qe.get("vol_percentile_60d")
+                parts.append(f"\n## 量能异常")
+                line = vol_anomaly
+                if va_pct is not None and va_pct >= 0:
+                    line += f"（近60日{va_pct:.0f}%分位）"
+                if va_adj:
+                    line += f"，评分调整{va_adj:+d}分"
+                parts.append(line)
+                if va_note:
+                    parts.append(f"量能说明: {va_note}")
+
+            # ---- P3: 多日时序行为链 ----
+            seq_behaviors = qe.get("seq_behaviors") or []
+            seq_note = qe.get("seq_behavior_note", "")
+            if seq_behaviors:
+                parts.append(f"\n## 近期行为链")
+                parts.append(f"识别行为: {' / '.join(seq_behaviors)}")
+                if seq_note:
+                    parts.append(f"行为说明: {seq_note}")
+
+            # ---- P3: 多信号共振 ----
+            resonance_level = qe.get("resonance_level")
+            resonance_intent = qe.get("resonance_intent")
+            resonance_adj = qe.get("resonance_score_adj", 0)
+            resonance_detail = qe.get("resonance_detail", "")
+            if resonance_level:
+                parts.append(f"\n## 多信号共振")
+                line = resonance_level
+                if resonance_intent:
+                    line += f"，操作意图：{resonance_intent}"
+                if resonance_adj:
+                    line += f"，评分调整{resonance_adj:+d}分"
+                parts.append(line)
+                if resonance_detail:
+                    parts.append(f"共振信号: {resonance_detail}")
+
+            # ---- P3: 1-5日行情预判 ----
+            forecast_scenario = qe.get("forecast_scenario")
+            if forecast_scenario:
+                prob_up = qe.get("forecast_prob_up", 0)
+                prob_down = qe.get("forecast_prob_down", 0)
+                prob_sw = qe.get("forecast_prob_sideways", 0)
+                trigger = qe.get("forecast_trigger", "")
+                forecast_note = qe.get("forecast_note", "")
+                parts.append(f"\n## 1-5日行情预判")
+                parts.append(f"主情景：{forecast_scenario}（涨{prob_up}% / 震{prob_sw}% / 跌{prob_down}%）")
+                if trigger:
+                    parts.append(f"触发条件: {trigger}")
+                if forecast_note and forecast_note != forecast_scenario:
+                    parts.append(f"预判说明: {forecast_note}")
+
         # ---- 情报面 ----
         intel = dashboard.get("intelligence") or {}
         if intel.get("sentiment_summary"):

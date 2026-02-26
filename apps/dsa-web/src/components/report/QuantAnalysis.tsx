@@ -456,6 +456,118 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             </div>
           )}
 
+          {/* 天量/地量异常检测 */}
+          {qe.vol_anomaly && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">量能异常检测</h4>
+              <div className={`rounded-lg p-3 border ${
+                qe.vol_anomaly === '天量' && (qe.vol_anomaly_adj ?? 0) > 0 ? 'bg-success/10 border-success/20' :
+                qe.vol_anomaly === '天量' && (qe.vol_anomaly_adj ?? 0) < 0 ? 'bg-danger/10 border-danger/20' :
+                ['地量', '次地量'].includes(qe.vol_anomaly as string) && (qe.vol_anomaly_adj ?? 0) > 0 ? 'bg-success/10 border-success/20' :
+                ['地量', '次地量'].includes(qe.vol_anomaly as string) && (qe.vol_anomaly_adj ?? 0) < 0 ? 'bg-warning/10 border-warning/20' :
+                'bg-white/[0.03] border-white/[0.04]'
+              }`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-[13px] font-bold ${
+                    (qe.vol_anomaly_adj ?? 0) > 0 ? 'text-success' :
+                    (qe.vol_anomaly_adj ?? 0) < 0 ? 'text-danger' : 'text-warning'
+                  }`}>
+                    {qe.vol_anomaly}
+                    {qe.vol_percentile_60d != null && (qe.vol_percentile_60d as number) >= 0 && (
+                      <span className="ml-2 text-[10px] font-mono text-white/30">
+                        近60日{(qe.vol_percentile_60d as number).toFixed(0)}%分位
+                      </span>
+                    )}
+                  </span>
+                  {(qe.vol_anomaly_adj ?? 0) !== 0 && (
+                    <span className={`text-[11px] font-mono ${(qe.vol_anomaly_adj ?? 0) > 0 ? 'text-success/70' : 'text-danger/70'}`}>
+                      {(qe.vol_anomaly_adj ?? 0) > 0 ? `+${qe.vol_anomaly_adj}` : qe.vol_anomaly_adj}分
+                    </span>
+                  )}
+                </div>
+                {qe.vol_anomaly_note && (
+                  <div className="text-[10px] text-white/40 font-mono leading-relaxed">{qe.vol_anomaly_note}</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* P3: 行情预判 */}
+          {(qe.forecast_scenario || qe.resonance_level) && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">行情预判（1-5日）</h4>
+              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+                {/* 共振级别 + 操作意图 */}
+                {qe.resonance_level && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                      (qe.resonance_level as string).includes('做多') ? 'bg-success/15 text-success' :
+                      (qe.resonance_level as string).includes('做空') ? 'bg-danger/15 text-danger' :
+                      (qe.resonance_level as string).includes('分歧') ? 'bg-warning/15 text-warning' :
+                      'bg-white/10 text-white/50'
+                    }`}>{qe.resonance_level}</span>
+                    {qe.resonance_intent && (
+                      <span className="text-[11px] text-white/50 font-mono">意图：{qe.resonance_intent}</span>
+                    )}
+                    {(qe.resonance_score_adj ?? 0) !== 0 && (
+                      <span className={`text-[10px] font-mono ${(qe.resonance_score_adj as number) > 0 ? 'text-success/60' : 'text-danger/60'}`}>
+                        {(qe.resonance_score_adj as number) > 0 ? `+${qe.resonance_score_adj}` : qe.resonance_score_adj}分
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* 行为链标签 */}
+                {(qe.seq_behaviors as string[])?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {(qe.seq_behaviors as string[]).map((b: string, i: number) => (
+                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/50 font-mono">{b}</span>
+                    ))}
+                  </div>
+                )}
+                {/* 主情景 + 概率条 */}
+                {qe.forecast_scenario && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] text-white/60 font-medium">主情景：{qe.forecast_scenario}</span>
+                    </div>
+                    <div className="flex gap-0.5 h-4 rounded overflow-hidden">
+                      {(qe.forecast_prob_up as number) > 0 && (
+                        <div className="bg-success/60 flex items-center justify-center text-[9px] text-white/80 font-mono"
+                             style={{width: `${qe.forecast_prob_up}%`}}>
+                          {(qe.forecast_prob_up as number) >= 20 ? `涨${qe.forecast_prob_up}%` : ''}
+                        </div>
+                      )}
+                      {(qe.forecast_prob_sideways as number) > 0 && (
+                        <div className="bg-white/20 flex items-center justify-center text-[9px] text-white/60 font-mono"
+                             style={{width: `${qe.forecast_prob_sideways}%`}}>
+                          {(qe.forecast_prob_sideways as number) >= 20 ? `震${qe.forecast_prob_sideways}%` : ''}
+                        </div>
+                      )}
+                      {(qe.forecast_prob_down as number) > 0 && (
+                        <div className="bg-danger/60 flex items-center justify-center text-[9px] text-white/80 font-mono"
+                             style={{width: `${qe.forecast_prob_down}%`}}>
+                          {(qe.forecast_prob_down as number) >= 20 ? `跌${qe.forecast_prob_down}%` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {/* 触发条件 */}
+                {qe.forecast_trigger && (
+                  <div className="text-[10px] text-white/35 font-mono leading-relaxed border-t border-white/[0.05] pt-1.5">
+                    触发：{qe.forecast_trigger}
+                  </div>
+                )}
+                {/* 共振明细 */}
+                {qe.resonance_detail && (
+                  <div className="text-[10px] text-white/30 font-mono leading-relaxed">
+                    {qe.resonance_detail}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 风险因子 */}
           {(qe.risk_factors ?? qe.riskFactors)?.length > 0 && (
             <div>

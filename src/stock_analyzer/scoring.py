@@ -1531,6 +1531,497 @@ class ScoringSystem:
             result.score_breakdown['intraday_vol_signal'] = adj
 
     @staticmethod
+    def detect_sequential_behavior(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P3: 多日时序行为识别
+        
+        识别近期连贯的量价行为链：
+        
+        行为分类：
+        - 缩量横盘：近N日量均在MA20 70%以下且价格振幅<2%/日 → 蓄势
+        - 放量上攻：近N日量均>MA20且收阳比例高 → 主动买入
+        - 缩量回踩：上涨后连续缩量小跌 → 健康回调
+        - 冲高回落：单日振幅>3%且收盘接近日低 → 试盘/压力
+        - 连续放量下跌：近N日量均>MA20且收阴 → 出货
+        - 地量止跌：极低量后出现阳线反弹 → 止跌迹象
+        """
+        if df is None or len(df) < 10:
+            return
+        try:
+            close = df['close'].values.astype(float)
+            high = df['high'].values.astype(float)
+            low = df['low'].values.astype(float)
+            volume = df['volume'].values.astype(float)
+            n = len(close)
+
+            vol_ma20 = float(pd.Series(volume).rolling(20).mean().iloc[-1]) if n >= 20 else float(volume.mean())
+            
+            behaviors = []
+            behavior_days = {}
+            notes = []
+
+            # === 1. 冲高回落检测（近3日内是否存在）===
+            for i in range(-3, 0):
+                if abs(i) > n:
+                    continue
+                amp = (high[i] - low[i]) / close[i - 1] if close[i - 1] > 0 else 0
+                shadow_down = (high[i] - close[i]) / (high[i] - low[i] + 1e-6)
+                if amp > 0.025 and shadow_down > 0.55:
+                    behaviors.append("冲高回落")
+                    behavior_days["冲高回落"] = abs(i)
+                    notes.append(f"近{abs(i)}日冲高回落（振幅{amp*100:.1f}%，上影线占比{shadow_down*100:.0f}%）")
+                    break
+
+            # === 2. 连续缩量识别（近3/5日）===
+            for window in [5, 3]:
+                if n < window + 2:
+                    continue
+                recent_vols = volume[-window:]
+                if all(v < vol_ma20 * 0.75 for v in recent_vols):
+                    amp_list = [(high[-window + j] - low[-window + j]) / close[-window + j - 1]
+                                for j in range(window) if close[-window + j - 1] > 0]
+                    if amp_list and max(amp_list) < 0.025:
+                        tag = f"连续{window}日缩量横盘"
+                        behaviors.append(tag)
+                        behavior_days["缩量横盘"] = window
+                        notes.append(f"{tag}（量均{sum(recent_vols)/len(recent_vols)/vol_ma20*100:.0f}%均量）")
+                    else:
+                        tag = f"连续{window}日缩量"
+                        behaviors.append(tag)
+                        behavior_days["缩量"] = window
+                        notes.append(tag)
+                    break
+
+            # === 3. 连续放量上涨 / 放量下跌（近3/5日）===
+            for window in [5, 3]:
+                if n < window + 2:
+                    continue
+                recent_vols = volume[-window:]
+                recent_close = close[-window:]
+                recent_close_prev = close[-window - 1:-1]
+                if all(v > vol_ma20 * 1.2 for v in recent_vols):
+                    up_days = sum(1 for c, p in zip(recent_close, recent_close_prev) if c > p)
+                    down_days = window - up_days
+                    if up_days >= window * 0.6:
+                        tag = f"连续{window}日放量上攻"
+                        behaviors.append(tag)
+                        behavior_days["放量上攻"] = window
+                        notes.append(f"{tag}（{up_days}/{window}日收阳）")
+                    elif down_days >= window * 0.6:
+                        tag = f"连续{window}日放量下跌"
+                        behaviors.append(tag)
+                        behavior_days["放量下跌"] = window
+                        notes.append(f"{tag}（{down_days}/{window}日收阴）")
+                    break
+
+            # === 4. 缩量回踩识别（前期上涨后缩量小跌）===
+            if n >= 15 and "缩量横盘" not in behavior_days and "缩量" not in behavior_days:
+                pre_period = close[-15:-5]
+                recent_period = close[-5:]
+                pre_trend_up = float(pre_period[-1]) > float(pre_period[0]) * 1.03
+                recent_small_fall = float(recent_period[-1]) < float(recent_period[0]) and \
+                                    float(recent_period[0]) - float(recent_period[-1]) < float(recent_period[0]) * 0.04
+                recent_low_vol = all(volume[-5 + j] < vol_ma20 * 0.8 for j in range(5))
+                if pre_trend_up and recent_small_fall and recent_low_vol:
+                    behaviors.append("缩量回踩")
+                    behavior_days["缩量回踩"] = 5
+                    notes.append("前期拉升后缩量小幅回踩（健康回调形态）")
+
+            # === 5. 地量止跌识别（极低量后反弹）===
+            if n >= 5:
+                prev_vols = volume[-5:-1]
+                yesterday_low_vol = float(volume[-2]) < vol_ma20 * 0.4
+                today_up = float(close[-1]) > float(close[-2])
+                today_vol_recover = float(volume[-1]) > float(volume[-2]) * 1.3
+                if yesterday_low_vol and today_up and today_vol_recover:
+                    behaviors.append("地量止跌反弹")
+                    behavior_days["地量止跌"] = 1
+                    notes.append("昨日地量今日放量反弹，止跌迹象")
+
+            # === 6. 主力试盘特征（冲高回落+量能异常）===
+            has_surge_fall = "冲高回落" in behavior_days
+            has_vol_anomaly = getattr(result, 'vol_anomaly', '') in ('天量', '次天量')
+            if has_surge_fall and has_vol_anomaly:
+                if "主力试盘" not in behaviors:
+                    behaviors.append("主力试盘")
+                    notes.append("冲高回落+放量特征，疑似主力试盘探测抛压")
+
+            result.seq_behaviors = behaviors
+            result.seq_behavior_days = behavior_days
+            result.seq_behavior_note = " | ".join(notes) if notes else ""
+
+        except Exception:
+            pass
+
+    @staticmethod
+    def score_multi_signal_resonance(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P3: 多信号时序共振分析
+        
+        结合行为链 + K线 + MACD/KDJ + 量价结构 + Fib + 周线趋势，
+        综合判断主力操作意图和共振强度。
+        
+        共振规则：
+        做多共振（+信号叠加）：
+        - 缩量回踩/横盘 + 周线多头 + RSI未超买 + Fib支撑区 → 洗盘后拉升
+        - 放量突破 + 多信号确认 → 突破加速
+        
+        做空共振（-信号叠加）：
+        - 冲高回落 + 主力试盘 + 放量 + 高位 → 出货警告
+        - 连续放量下跌 + 周线空头 → 趋势下跌
+        
+        分歧（信号矛盾）：
+        - 高位缩量（量能枯竭）+ 日线多头 → 信号分歧
+        """
+        if df is None or len(df) < 10:
+            return
+        try:
+            close = df['close'].values.astype(float)
+            n = len(close)
+
+            behaviors = getattr(result, 'seq_behaviors', [])
+            weekly_trend = getattr(result, 'weekly_trend', '')
+            fib_zone = getattr(result, 'fib_current_zone', '')
+            fib_adj = getattr(result, 'fib_adj', 0)
+            vol_anomaly = getattr(result, 'vol_anomaly', '')
+            vps = getattr(result, 'vol_price_structure', '')
+            chart_pattern = getattr(result, 'chart_pattern', '')
+            chart_pattern_adj = getattr(result, 'chart_pattern_adj', 0)
+
+            from .types import TrendStatus
+            trend_status = getattr(result, 'trend_status', None)
+            is_bull = trend_status in (
+                getattr(TrendStatus, 'STRONG_BULL', None),
+                getattr(TrendStatus, 'BULL', None),
+            )
+            is_bear = trend_status in (
+                getattr(TrendStatus, 'STRONG_BEAR', None),
+                getattr(TrendStatus, 'BEAR', None),
+            )
+
+            bull_signals = 0
+            bear_signals = 0
+            intent_parts = []
+            detail_parts = []
+
+            # ---- 行为链信号 ----
+            if "缩量回踩" in behaviors or "连续5日缩量横盘" in behaviors or "连续3日缩量横盘" in behaviors:
+                bull_signals += 2
+                intent_parts.append("缩量蓄势")
+                detail_parts.append("缩量蓄势（看多信号）")
+            # 连续放量上攻：区分「一次放量突破」和「连续多日放量上攻」
+            # 连续多日放量上攻往往是顶部信号（追高风险），而非持续看多
+            has_vol_up = any("放量上攻" in b for b in behaviors)
+            has_consecutive_vol_up = any(("连续" in b and "放量上攻" in b) for b in behaviors)
+            if has_consecutive_vol_up:
+                # 连续放量上攻：短期追高风险，反而偏空
+                bear_signals += 1
+                intent_parts.append("追高风险")
+                detail_parts.append("连续放量上攻（短期追高风险）")
+            elif has_vol_up:
+                bull_signals += 1
+                intent_parts.append("放量上攻")
+                detail_parts.append("放量主动买入")
+            if "地量止跌反弹" in behaviors:
+                bull_signals += 2
+                intent_parts.append("止跌反弹")
+                detail_parts.append("地量止跌反弹")
+            if "主力试盘" in behaviors:
+                bear_signals += 2
+                intent_parts.append("主力试盘")
+                detail_parts.append("冲高回落试盘（谨慎）")
+            if "连续" in " ".join(behaviors) and "放量下跌" in " ".join(behaviors):
+                bear_signals += 3
+                intent_parts.append("持续出货")
+                detail_parts.append("连续放量下跌（出货信号）")
+            if "冲高回落" in behaviors and "主力试盘" not in behaviors:
+                bear_signals += 1
+                detail_parts.append("冲高回落（压力显现）")
+
+            # ---- 周线背景 ----
+            if weekly_trend in ('多头', '强多头'):
+                bull_signals += 2
+                detail_parts.append(f"周线{weekly_trend}背景")
+            elif weekly_trend in ('空头', '强空头'):
+                bear_signals += 2
+                detail_parts.append(f"周线{weekly_trend}背景（系统性压力）")
+
+            # ---- Fib支撑/阻力 ----
+            if fib_adj > 0:
+                bull_signals += 1
+                detail_parts.append(f"处于Fib支撑区（{fib_zone}）")
+            elif fib_adj < 0:
+                bear_signals += 1
+                detail_parts.append(f"处于Fib阻力区（{fib_zone}）")
+
+            # ---- 量价结构 ----
+            if vps == '放量突破':
+                bull_signals += 2
+                detail_parts.append("量价结构：放量突破")
+            elif vps == '缩量回踩':
+                bull_signals += 1
+                detail_parts.append("量价结构：缩量回踩（健康）")
+            elif vps == '放量下跌':
+                bear_signals += 2
+                detail_parts.append("量价结构：放量下跌")
+
+            # ---- 形态 ----
+            if chart_pattern_adj > 0:
+                bull_signals += 1
+                detail_parts.append(f"形态：{chart_pattern}（看多）")
+            elif chart_pattern_adj < 0:
+                bear_signals += 1
+                detail_parts.append(f"形态：{chart_pattern}（看空）")
+
+            # ---- 日线趋势 ----
+            if is_bull:
+                bull_signals += 1
+            elif is_bear:
+                bear_signals += 1
+
+            total = bull_signals + bear_signals
+            diff = bull_signals - bear_signals
+
+            # 判定共振级别（提高强共振阈值，避免过度乐观/悲观）
+            if diff >= 6:
+                result.resonance_level = "强共振做多"
+                result.resonance_score_adj = min(8, diff)
+            elif diff >= 3:
+                result.resonance_level = "中度共振做多"
+                result.resonance_score_adj = 4
+            elif diff <= -6:
+                result.resonance_level = "强共振做空"
+                result.resonance_score_adj = max(-8, diff)
+            elif diff <= -3:
+                result.resonance_level = "中度共振做空"
+                result.resonance_score_adj = -4
+            elif abs(diff) <= 1 and total >= 4:
+                result.resonance_level = "信号分歧"
+                result.resonance_score_adj = 0
+            else:
+                result.resonance_level = "弱共振"
+                result.resonance_score_adj = diff // 2  # 弱共振调整幅度减半
+
+            # 操作意图（需要信号差值足够大才给定性意图，避免噪声主导）
+            if "持续出货" in intent_parts or ("主力试盘" in intent_parts and bear_signals > bull_signals + 1):
+                result.resonance_intent = "主力出货"
+            elif "主力试盘" in intent_parts and bull_signals >= bear_signals:
+                result.resonance_intent = "主力洗盘"
+            elif "缩量蓄势" in intent_parts and bull_signals >= bear_signals + 2:
+                result.resonance_intent = "主力洗盘"
+            elif "放量上攻" in intent_parts and bull_signals >= bear_signals + 3 and "追高风险" not in intent_parts:
+                result.resonance_intent = "主力拉升"
+            elif "止跌反弹" in intent_parts and bull_signals > bear_signals:
+                result.resonance_intent = "自然止跌"
+            elif bear_signals > bull_signals + 2:
+                # 需要熊信号明显领先才判断"自然回调"，避免细微差距误判
+                result.resonance_intent = "自然回调"
+            else:
+                result.resonance_intent = ""
+
+            result.resonance_detail = " | ".join(detail_parts[:6]) if detail_parts else ""
+
+            # 注入评分
+            if result.resonance_score_adj != 0:
+                result.score_breakdown['p3_resonance'] = result.resonance_score_adj
+
+        except Exception:
+            pass
+
+    @staticmethod
+    def forecast_next_days(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P3: 1-5日行情预判
+        
+        基于当前共振状态、行为链、量能，给出主要情景和概率分布，
+        并生成确认/失效的触发价位条件。
+        """
+        if df is None or len(df) < 10:
+            return
+        try:
+            close = df['close'].values.astype(float)
+            high = df['high'].values.astype(float)
+            low = df['low'].values.astype(float)
+            volume = df['volume'].values.astype(float)
+            n = len(close)
+
+            current_price = float(close[-1])
+            behaviors = getattr(result, 'seq_behaviors', [])
+            resonance_level = getattr(result, 'resonance_level', '')
+            resonance_intent = getattr(result, 'resonance_intent', '')
+            vol_anomaly = getattr(result, 'vol_anomaly', '')
+            vps = getattr(result, 'vol_price_structure', '')
+
+            # 近期关键价位
+            recent_high = float(high[-5:].max()) if n >= 5 else float(high[-1])
+            recent_low = float(low[-5:].min()) if n >= 5 else float(low[-1])
+            vol_ma5 = float(pd.Series(volume).rolling(5).mean().iloc[-1]) if n >= 5 else float(volume.mean())
+            vol_ma20 = float(pd.Series(volume).rolling(20).mean().iloc[-1]) if n >= 20 else float(volume.mean())
+
+            prob_up = 40
+            prob_down = 30
+            prob_sideways = 30
+            scenario = ""
+            trigger = ""
+            note_parts = []
+
+            intent = resonance_intent
+
+            # 基准概率：参考 A 股实际分布（5日内 ±1.5%定向），更均衡起点
+            # up≈32%, sideways≈37%, down≈31%
+            prob_up = 32
+            prob_down = 31
+            prob_sideways = 37
+
+            if intent == "主力洗盘":
+                # 洗盘蓄势：回测按共振级别区分
+                # 弱共振+洗盘：实际 dn=47%，偏空
+                # 中度共振做多+洗盘：实际 up=24% sw=47% dn=29%，偏横
+                if "弱共振" in resonance_level:
+                    scenario = "洗盘蓄势"
+                    prob_up = 20
+                    prob_down = 42
+                    prob_sideways = 38
+                    trigger = f"跌破{recent_low:.2f}则洗盘变出货，放量突破{recent_high:.2f}才可关注"
+                else:
+                    scenario = "洗盘蓄势"
+                    prob_up = 25
+                    prob_down = 30
+                    prob_sideways = 45
+                    trigger = f"放量突破{recent_high:.2f}确认洗盘结束，跌破{recent_low:.2f}则洗盘变出货"
+                note_parts.append("缩量蓄势/洗盘特征，等待放量突破确认")
+
+            elif intent == "主力拉升":
+                scenario = "拉升延续"
+                prob_up = 48
+                prob_down = 20
+                prob_sideways = 32
+                trigger = f"维持{current_price * 0.97:.2f}以上量能不委缩，则延续拉升"
+                note_parts.append("放量上攻，主力拉升意愿强")
+
+            elif intent == "追高风险":
+                # 连续多日放量上攻后的追高险境，回测准确率趋近 0%——实际往往是短期顶部
+                scenario = "高位震荡"
+                prob_up = 22
+                prob_down = 38
+                prob_sideways = 40
+                trigger = f"跌破{recent_low:.2f}确认高位调护，不建追高追入"
+                note_parts.append("连续放量上攻后短期追高风险")
+
+            elif intent == "主力出货":
+                scenario = "出货下跌"
+                prob_up = 18
+                prob_down = 50
+                prob_sideways = 32
+                trigger = f"跌破{recent_low:.2f}加速下跌，反弹至{recent_high:.2f}附近关注减仓"
+                note_parts.append("疑似出货特征，注意风险")
+
+            elif intent == "自然回调":
+                # 自然回调：根据回测实际方向分布设定概率
+                if "中度共振做空" in resonance_level or "强共振做空" in resonance_level:
+                    # 回测：自然回调+中度做空，实际 up=24% sw=50% dn=26%
+                    # 横盘为主！不能假设偏空
+                    scenario = "调整整理"
+                    prob_up = 25
+                    prob_down = 27
+                    prob_sideways = 48
+                    trigger = f"突破{recent_high:.2f}確認方向，跌破{recent_low:.2f}小心加展下行"
+                elif "中度共振做多" in resonance_level or "强共振做多" in resonance_level:
+                    # 健康回调：就算共振偷指多也要等放量确认
+                    scenario = "调整整理"
+                    prob_up = 35
+                    prob_down = 25
+                    prob_sideways = 40
+                    trigger = f"缩量守住{recent_low:.2f}支撑后可关注低吸机会"
+                else:
+                    # 弱共振/信号分歧：纯横盘
+                    scenario = "调整整理"
+                    prob_up = 31
+                    prob_down = 31
+                    prob_sideways = 38
+                    trigger = f"缩量守住{recent_low:.2f}支撑后可关注低吸机会"
+                note_parts.append("正常技术性回调，关注支撑是否有效")
+
+            elif intent == "自然止跌":
+                scenario = "止跌反弹"
+                prob_up = 46
+                prob_down = 20
+                prob_sideways = 34
+                trigger = f"放量站稳{current_price:.2f}上方确认反转，否则谨慎"
+                note_parts.append("地量止跌特征，但需放量确认")
+
+            else:
+                if "强共振做多" in resonance_level:
+                    scenario = "强势上攻"
+                    prob_up = 50
+                    prob_down = 18
+                    prob_sideways = 32
+                elif "中度共振做多" in resonance_level:
+                    scenario = "震荡偏强"
+                    prob_up = 42
+                    prob_down = 24
+                    prob_sideways = 34
+                elif "强共振做空" in resonance_level:
+                    # 强共振做空实际 up=35% sw=45% dn=20%！逆势大涨。概率小幅偏空但不过度自信
+                    scenario = "弱势下跌"
+                    prob_up = 30
+                    prob_down = 38
+                    prob_sideways = 32
+                elif "中度共振做空" in resonance_level:
+                    scenario = "震荡偏弱"
+                    prob_up = 24
+                    prob_down = 42
+                    prob_sideways = 34
+                elif "信号分歧" in resonance_level:
+                    scenario = "方向待定"
+                    prob_up = 33
+                    prob_down = 33
+                    prob_sideways = 34
+                    note_parts.append("多空信号相当，等待成交量方向选择")
+                else:
+                    # 弱共振默认：偏横盘
+                    scenario = "震荡整理"
+                    prob_up = 30
+                    prob_down = 30
+                    prob_sideways = 40
+
+            # 量价极端情形微调（最多±10%，避免单因子主导）
+            if vol_anomaly == "天量" and vps == "放量下跌":
+                prob_down = min(60, prob_down + 10)
+                prob_up = max(12, prob_up - 8)
+                prob_sideways = 100 - prob_up - prob_down
+                note_parts.append("天量放量下跌，短期承压")
+            elif vol_anomaly in ("地量", "次地量") and vps == "缩量回踩":
+                prob_up = min(55, prob_up + 8)
+                prob_down = max(12, prob_down - 6)
+                prob_sideways = 100 - prob_up - prob_down
+                note_parts.append("缩量回踩，抛压轻，关注反弹")
+
+            # 归一化概率（确保和为100）
+            total = prob_up + prob_down + prob_sideways
+            if total > 0:
+                prob_up = int(prob_up / total * 100)
+                prob_down = int(prob_down / total * 100)
+                prob_sideways = 100 - prob_up - prob_down
+
+            result.forecast_scenario = scenario
+            result.forecast_prob_up = prob_up
+            result.forecast_prob_down = prob_down
+            result.forecast_prob_sideways = prob_sideways
+            result.forecast_trigger = trigger
+            result.forecast_note = " | ".join(note_parts) if note_parts else scenario
+
+            # 预警注入（提高阈值，只在真正极端情况下触发）
+            if prob_down >= 50 and result.risk_factors is not None:
+                result.risk_factors.append(
+                    f"⚠ 预判1-5日主情景「{scenario}」，下跌概率{prob_down}%，{trigger}"
+                )
+            elif prob_up >= 50 and result.signal_reasons is not None:
+                result.signal_reasons.append(
+                    f"📈 预判1-5日主情景「{scenario}」，上涨概率{prob_up}%，{trigger}"
+                )
+
+        except Exception:
+            pass
+
+    @staticmethod
     def score_vol_anomaly(result: TrendAnalysisResult, df: pd.DataFrame):
         """P2: 天量/地量异常检测
         
@@ -1911,7 +2402,8 @@ class ScoringSystem:
                    'candle_pattern', 'obv_divergence', 'obv_trend', 'adx_adj', 'ma_spread',
                    'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
                    'weekly_trend_adj', 'chart_pattern_adj',
-                   'fib_adj', 'vol_price_structure', 'vol_anomaly']
+                   'fib_adj', 'vol_price_structure', 'vol_anomaly',
+                   'p3_resonance']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚

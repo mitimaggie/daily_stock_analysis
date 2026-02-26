@@ -370,8 +370,12 @@ class StockTrendAnalyzer:
             ScoringSystem.score_obv_adx(result)
             ScoringSystem.score_weekly_trend(result, df)
             ScoringSystem.score_chart_patterns(result, df)
+            ScoringSystem.score_vol_anomaly(result, df)
             ScoringSystem.score_fibonacci_levels(result, df)
             ScoringSystem.score_vol_price_structure(result, df)
+            ScoringSystem.detect_sequential_behavior(result, df)
+            ScoringSystem.score_multi_signal_resonance(result, df)
+            ScoringSystem.forecast_next_days(result, df)
             ScoringSystem.score_intraday_volume_signal(result)
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）

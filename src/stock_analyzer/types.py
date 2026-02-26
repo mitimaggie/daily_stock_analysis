@@ -348,6 +348,33 @@ class TrendAnalysisResult:
     vol_anomaly_adj: int = 0               # 天量/地量对评分的调整(-4 ~ +4)
     vol_anomaly_note: str = ""             # 说明文字
     
+    # === 多日时序行为识别（P3）===
+    seq_behaviors: List[str] = field(default_factory=list)   # 识别到的行为链标签列表，如["连续5日缩量","冲高回落","主力试盘"]
+    seq_behavior_days: Dict[str, int] = field(default_factory=dict)  # 各行为持续天数，如{"缩量":5}
+    seq_behavior_note: str = ""                               # 行为链综合说明
+
+    # === 多信号时序共振（P3）===
+    resonance_level: str = ""            # "强共振做多" / "强共振做空" / "弱共振" / "信号分歧" / ""
+    resonance_intent: str = ""           # 操作意图："主力洗盘" / "主力拉升" / "主力出货" / "自然回调" / ""
+    resonance_score_adj: int = 0         # 共振对评分的调整(-8 ~ +8)
+    resonance_detail: str = ""           # 共振详情说明
+
+    # === 1-5日行情预判（P3）===
+    forecast_scenario: str = ""          # 主要情景："洗盘后拉升" / "高位震荡" / "趋势下跌" / "突破加速" / ""
+    forecast_prob_up: int = 0            # 上涨概率(0-100)
+    forecast_prob_down: int = 0          # 下跌概率(0-100)
+    forecast_prob_sideways: int = 0      # 震荡概率(0-100)
+    forecast_trigger: str = ""           # 确认信号："放量突破XX即确认拉升" / "跌破XX则判断回调" / ""
+    forecast_note: str = ""              # 预判说明
+
+    # === 主力资金追踪（P4）===
+    capital_flow_days: int = 0               # 连续净流入/流出天数（正=流入，负=流出）
+    capital_flow_trend: str = ""             # "持续流入" / "持续流出" / "间歇流入" / "资金离场" / ""
+    capital_flow_intensity: str = ""         # "大幅" / "温和" / "轻微" / ""
+    capital_flow_5d_total: float = 0.0       # 近5日主力净流入累计（万元）
+    capital_flow_acceleration: str = ""      # "加速流入" / "加速流出" / "趋缓" / ""
+    capital_smart_money: str = ""            # 聪明钱信号："超大单持续买入" / "超大单持续卖出" / ""
+
     # === 结构化评分明细 ===
     score_breakdown: Dict[str, int] = field(default_factory=dict)
     
