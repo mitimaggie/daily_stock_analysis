@@ -48,6 +48,8 @@ export interface TradeAdvice {
   adviceEmpty?: string;
   adviceHolding?: string;
   positionPct?: number;
+  turnoverPercentileConfidence?: string;  // "收盘确认" | "盘中折算估算" | ""
+  turnoverPercentile?: number;
 }
 
 /** 空仓/持仓分开展示 */

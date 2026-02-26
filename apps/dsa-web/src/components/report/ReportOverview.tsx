@@ -193,6 +193,8 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         const isPositive = !ta.scenarioId?.startsWith('E');
         const confColor = ta.scenarioConfidence === '高' ? 'text-emerald-400' : ta.scenarioConfidence === '中' ? 'text-amber-400' : 'text-white/40';
         const borderColor = isPositive ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5';
+        const isIntraday = ta.turnoverPercentileConfidence === '盘中折算估算' || (ta.scenarioLabel?.includes('盘中') ?? false);
+        const tpDisplay = ta.turnoverPercentile !== undefined ? `${Math.round(ta.turnoverPercentile * 100)}%分位` : '';
         return (
           <div className={`border-t border-white/5 pt-3`}>
             <div className={`rounded-lg p-3 border ${borderColor} space-y-2`}>
@@ -203,6 +205,19 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                 </span>
                 <span className="text-[12px] text-white/80 font-medium">{ta.scenarioLabel}</span>
                 <span className={`text-[10px] ml-auto ${confColor}`}>置信度: {ta.scenarioConfidence}</span>
+              </div>
+              {/* 换手率分位 + 数据来源标注 */}
+              <div className="flex items-center gap-3 flex-wrap">
+                {tpDisplay && (
+                  <span className="text-[11px] text-white/40">
+                    换手率历史分位: <span className="font-mono text-white/60">{tpDisplay}</span>
+                  </span>
+                )}
+                {ta.turnoverPercentileConfidence && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isIntraday ? 'border-amber-500/30 text-amber-400/70 bg-amber-500/5' : 'border-emerald-500/20 text-emerald-400/60 bg-emerald-500/5'}`}>
+                    {ta.turnoverPercentileConfidence}
+                  </span>
+                )}
               </div>
               {/* 预期收益 + 胜率 */}
               {(ta.expectedReturn20d || ta.winRate) && (

@@ -900,11 +900,29 @@ class RiskManager:
         win_rate = ""
         base_position = 0
 
+        # 盘中状态判断
+        from datetime import datetime as _dt_gta
+        _is_intraday = _dt_gta.now().hour < 15
+        vr = getattr(result, 'volume_ratio', 1.0) or 1.0
+
         # 换手率分级
-        turn_very_high = tp >= 0.9
-        turn_high = tp >= 0.7
-        turn_low = tp <= 0.1
-        turn_very_low = tp <= 0.1
+        tp_confidence = getattr(result, 'turnover_percentile_confidence', '') or ''
+        _tp_is_intraday_est = tp_confidence == "盘中折算估算"   # 已用折算值（方案2）
+        _tp_is_default = abs(tp - 0.5) < 0.01 and not _tp_is_intraday_est  # 真正未计算（无turnover_rate）
+        _intraday_vol_proxy = _is_intraday and _tp_is_default  # 无折算值时才用量比代理（方案3）
+
+        # 量比>=2.5 代理 "极高换手"，量比>=1.8 代理 "偏高换手"（仅量比代理时用）
+        _vr_very_high = vr >= 2.5
+        _vr_high = vr >= 1.8
+
+        turn_very_high = tp >= 0.9 or (_intraday_vol_proxy and _vr_very_high)
+        turn_high = tp >= 0.7 or (_intraday_vol_proxy and _vr_high)
+        # 盘中（折算估算或量比代理）不判低换手，数据不足以确认
+        turn_low = tp <= 0.1 and not _is_intraday
+        turn_very_low = tp <= 0.1 and not _is_intraday
+
+        # 盘中（折算估算 or 量比代理）触发时，置信度降档
+        _confidence_downgrade = _is_intraday and (turn_very_high or turn_high)
 
         # RSI超卖判断
         rsi_oversold = rsi in [RSIStatus.OVERSOLD, RSIStatus.GOLDEN_CROSS_OVERSOLD]
@@ -1018,6 +1036,16 @@ class RiskManager:
             win_rate = "~50%"
             scenario_confidence = "低"
             base_position = 0
+
+        # 盘中触发时，置信度降档并在标签中标注数据来源
+        if _confidence_downgrade and scenario_id not in ("none", "E1", "E2", "E3"):
+            _confidence_map = {"高": "中", "中": "低", "低": "低"}
+            scenario_confidence = _confidence_map.get(scenario_confidence, "低")
+            if "盘中" not in scenario_label:
+                if _tp_is_intraday_est:
+                    scenario_label = f"{scenario_label}（盘中换手率折算估算，待收盘确认）"
+                else:
+                    scenario_label = f"{scenario_label}（盘中量比代理估算，待收盘确认）"
 
         # ── 生成操作建议文本 ──────────────────────────────────────────
         sl_ref = sl_short if sl_short > 0 else sl_mid

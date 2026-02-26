@@ -815,6 +815,8 @@ class StockAnalysisPipeline:
                         'advice_empty':       _trend_result_obj.trade_advice_empty,
                         'advice_holding':     _trend_result_obj.trade_advice_holding,
                         'position_pct':       _trend_result_obj.trade_advice_position_pct,
+                        'turnover_percentile_confidence': getattr(_trend_result_obj, 'turnover_percentile_confidence', ''),
+                        'turnover_percentile': getattr(_trend_result_obj, 'turnover_percentile', 0.5),
                     }
 
                 # === 防守模式判定（复合条件） ===

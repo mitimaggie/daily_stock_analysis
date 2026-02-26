@@ -354,16 +354,18 @@ class StockTrendAnalyzer:
             elif result.ma_spread_rate < -1.0:
                 result.ma_spread_signal = "收敛"
 
-            # 换手率分位数：仅收盘后（15:00后）才计算历史百分位
-            # 盘中换手率是当日累计值，任何折算都不准确，可能导致"异常活跃"误报
-            # 盘中改用量比×价格联动检测主力行为（见 score_intraday_volume_signal）
+            # 换手率分位数
+            # 收盘后（>=15:00）：用今日完整换手率与历史60日对比，结果可靠 → "收盘确认"
+            # 盘中（<15:00）：当日换手率是累计值，calc_turnover_percentile内置时间折算曲线，
+            #   折算后的结果仅供参考，精度低于收盘 → "盘中折算估算"
             turnover = getattr(quote_extra, 'turnover_rate', 0) or 0 if quote_extra else 0
             from datetime import datetime as _dt_tr
             _is_after_close = _dt_tr.now().hour >= 15
-            if turnover > 0 and _is_after_close:
+            if turnover > 0:
                 result.turnover_percentile = TechnicalIndicators.calc_turnover_percentile(df, turnover)
+                result.turnover_percentile_confidence = "收盘确认" if _is_after_close else "盘中折算估算"
 
-            self._analyze_volume(result, df, latest, prev)
+            self._analyze_volume(result, df, latest, prev, quote_extra=quote_extra)
             self._analyze_macd(result, prev)
             self._analyze_rsi(result, df, prev)
             self._analyze_kdj(result, df, prev)
@@ -443,9 +445,16 @@ class StockTrendAnalyzer:
             logger.error(f"[{code}] 分析异常: {e}")
             return result
     
-    def _analyze_volume(self, result: TrendAnalysisResult, df: pd.DataFrame, latest: pd.Series, prev: pd.Series):
+    def _analyze_volume(self, result: TrendAnalysisResult, df: pd.DataFrame, latest: pd.Series, prev: pd.Series, quote_extra=None):
         """量能分析（含涨跌停特殊处理 + z-score自适应阈值）"""
-        if 'volume_ratio' in latest and not pd.isna(latest['volume_ratio']) and latest['volume_ratio'] > 0:
+        from datetime import datetime as _dt_vol
+        _is_intraday = _dt_vol.now().hour < 15
+
+        # 盘中优先用行情接口提供的实时量比（已按同期归一化）
+        _qe_vr = getattr(quote_extra, 'volume_ratio', None) if quote_extra else None
+        if _is_intraday and isinstance(_qe_vr, (int, float)) and _qe_vr > 0:
+            result.volume_ratio = float(_qe_vr)
+        elif 'volume_ratio' in latest and not pd.isna(latest['volume_ratio']) and latest['volume_ratio'] > 0:
             result.volume_ratio = float(latest['volume_ratio'])
         else:
             vol_ma5 = df['volume'].iloc[-6:-1].mean()
@@ -467,8 +476,13 @@ class StockTrendAnalyzer:
                 elif vol_zscore < -1.5:
                     shrink_ratio = max(shrink_ratio, result.volume_ratio * 1.05)
         
-        prev_close_price = float(prev['close'])
-        price_change_pct = (result.current_price - prev_close_price) / prev_close_price * 100 if prev_close_price > 0 else 0
+        # 盘中改用今日实时涨跌幅（quote_extra.change_pct），避免用昨日K线对比
+        _qe_chg = getattr(quote_extra, 'change_pct', None) if quote_extra else None
+        if _is_intraday and isinstance(_qe_chg, (int, float)):
+            price_change_pct = float(_qe_chg)
+        else:
+            prev_close_price = float(prev['close'])
+            price_change_pct = (result.current_price - prev_close_price) / prev_close_price * 100 if prev_close_price > 0 else 0
         vr = result.volume_ratio
 
         # === 涨跌停特殊处理（A股特有）===

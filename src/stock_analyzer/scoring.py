@@ -1869,11 +1869,18 @@ class ScoringSystem:
             return
 
         from .types import TrendStatus, VolumeStatus
-        # 用 trend_status + volume_status 联合判断价格方向
-        is_rising = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL) or \
-                    result.volume_status in (VolumeStatus.HEAVY_VOLUME_UP,)
-        is_falling = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR) or \
-                     result.volume_status in (VolumeStatus.HEAVY_VOLUME_DOWN,)
+        # 优先用今日实时涨跌幅判断方向（来自 volume_status，已在 _analyze_volume 中用今日 change_pct 更新）
+        # 盘中 volume_status 已基于今日涨跌方向设置，直接用其判断即可
+        today_is_up = result.volume_status == VolumeStatus.HEAVY_VOLUME_UP or \
+                      result.volume_status == VolumeStatus.SHRINK_VOLUME_UP
+        today_is_down = result.volume_status == VolumeStatus.HEAVY_VOLUME_DOWN or \
+                        result.volume_status == VolumeStatus.SHRINK_VOLUME_DOWN
+        # 回退：当 volume_status 未设置时，用昨日趋势
+        if not today_is_up and not today_is_down:
+            today_is_up = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL)
+            today_is_down = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR)
+        is_rising = today_is_up
+        is_falling = today_is_down
 
         adj = 0
         if vr >= 3.0:

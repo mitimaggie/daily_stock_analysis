@@ -243,6 +243,7 @@ class TrendAnalysisResult:
     
     # === 换手率分位数 ===
     turnover_percentile: float = 0.5       # 换手率在历史中的分位数(0-1)
+    turnover_percentile_confidence: str = ""  # "收盘确认" / "盘中折算估算" / ""
     
     # === 缺口检测 ===
     gap_type: str = ""                     # "向上跳空" / "向下跳空" / ""
