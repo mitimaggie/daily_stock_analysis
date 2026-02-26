@@ -89,11 +89,15 @@ class PatternRecognition:
         else:
             net = "中性"
 
-        # 评分调整：最强形态贡献 ±3，次强 ±1，上限 ±5
+        # 评分调整：只有 bullish/bearish 才贡献分值，neutral 不影响评分
         adj = 0
         if patterns:
             top = patterns[0]
-            adj = top.strength if top.direction == "bullish" else -top.strength
+            if top.direction == "bullish":
+                adj = top.strength
+            elif top.direction == "bearish":
+                adj = -top.strength
+            # neutral: adj = 0
             adj = max(-5, min(5, adj))
 
         top_name = patterns[0].name if patterns else ""
@@ -150,10 +154,10 @@ class PatternRecognition:
         if bar['body_ratio'] < cls.DOJI_BODY_RATIO and bar['range'] > 0:
             # 判断类型
             if bar['lower'] > bar['upper'] * 2:
-                # 蜻蜓十字（下影线长）= 底部反转
+                # 蜻蜓十字（下影线长）= 多空平衡，回测5d均-0.09%，改中性
                 results.append(CandlePattern(
-                    name="蜻蜓十字星", direction="bullish", strength=3,
-                    description="实体极小+长下影线，底部反转信号，多方尝试抄底"
+                    name="蜻蜓十字星", direction="neutral", strength=1,
+                    description="实体极小+长下影线，多空博弈，需结合趋势判断"
                 ))
             elif bar['upper'] > bar['lower'] * 2:
                 # 墓碑十字 = 顶部反转
@@ -164,7 +168,7 @@ class PatternRecognition:
             else:
                 # 普通十字星
                 results.append(CandlePattern(
-                    name="十字星", direction="neutral", strength=2,
+                    name="十字星", direction="neutral", strength=1,
                     description="多空胶着，变盘前兆，需结合趋势判断方向"
                 ))
         return results
@@ -237,22 +241,22 @@ class PatternRecognition:
         if prev['body_ratio'] < cls.ENGULF_MIN_BODY or curr['body_ratio'] < cls.ENGULF_MIN_BODY:
             return results
 
-        # 看涨吞没
+        # 看涨吞没（回测显示5d均+0.05%≈基准，降权）
         if (not prev['is_bull'] and curr['is_bull'] and
                 curr['body'] > prev['body'] * 1.1 and
                 curr['c'] > prev['o'] and curr['o'] <= prev['c']):
             results.append(CandlePattern(
-                name="看涨吞没", direction="bullish", strength=4,
-                description="阳线实体完全吞没前一根阴线，多方强势反攻"
+                name="看涨吞没", direction="bullish", strength=2,
+                description="阳线实体完全吞没前一根阴线，多方反攻"
             ))
 
-        # 看跌吞没
+        # 看跌吞没（回测显示5d均+0.30%方向反，降为strength=1）
         if (prev['is_bull'] and not curr['is_bull'] and
                 curr['body'] > prev['body'] * 1.1 and
                 curr['o'] > prev['c'] and curr['c'] <= prev['o']):
             results.append(CandlePattern(
-                name="看跌吞没", direction="bearish", strength=4,
-                description="阴线实体完全吞没前一根阳线，空方强势压制"
+                name="看跌吞没", direction="bearish", strength=1,
+                description="阴线实体完全吞没前一根阳线，空方压制（需量能配合）"
             ))
 
         return results
@@ -286,14 +290,14 @@ class PatternRecognition:
                 description="经典三K线底部反转：大阴→小实体→大阳收复，强烈看涨"
             ))
 
-        # 黄昏星
+        # 黄昏星（回测显示5d均+0.25%方向反，降权）
         if (b1['is_bull'] and b1['body_ratio'] > 0.4 and
                 b2['body_ratio'] < 0.3 and
                 not b3['is_bull'] and b3['body_ratio'] > 0.4 and
                 b3['c'] < (b1['o'] + b1['c']) / 2):
             results.append(CandlePattern(
-                name="黄昏星", direction="bearish", strength=5,
-                description="经典三K线顶部反转：大阳→小实体→大阴吞回，强烈看跌"
+                name="黄昏星", direction="bearish", strength=2,
+                description="三K线顶部形态：大阳→小实体→大阴，注意量能配合"
             ))
 
         return results
@@ -424,12 +428,12 @@ class PatternRecognition:
         curr = cls._bar(df.iloc[-1])
         tol = prev['c'] * 0.003  # 0.3% 容差
 
-        # 镊子底
+        # 镊子底（回测显示5d均-0.05%，改中性）
         if (abs(curr['l'] - prev['l']) < tol and
                 not prev['is_bull'] and curr['is_bull']):
             results.append(CandlePattern(
-                name="镊子底", direction="bullish", strength=3,
-                description="两根K线低点几乎相同+前阴后阳，强支撑位确认"
+                name="镊子底", direction="neutral", strength=1,
+                description="两根K线低点相近+前阴后阳，支撑位参考（需更多确认）"
             ))
 
         # 镊子顶

@@ -770,7 +770,7 @@ def fetch_history(code: str, days: int, db) -> pd.DataFrame:
         lg = bs.login()
         rs = bs.query_history_k_data_plus(
             bs_code,
-            'date,open,high,low,close,volume,amount,pctChg',
+            'date,open,high,low,close,volume,amount,pctChg,turn',
             start_date=beg_dt.strftime('%Y-%m-%d'),
             end_date=end_dt.strftime('%Y-%m-%d'),
             frequency='d', adjustflag='2'
@@ -782,7 +782,7 @@ def fetch_history(code: str, days: int, db) -> pd.DataFrame:
         if data:
             raw = pd.DataFrame(data, columns=rs.fields)
             raw['date'] = pd.to_datetime(raw['date'])
-            for col in ['open', 'high', 'low', 'close', 'volume', 'amount']:
+            for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'turn']:
                 if col in raw.columns:
                     raw[col] = pd.to_numeric(raw[col], errors='coerce')
             raw = raw.set_index('date').sort_index()

@@ -508,7 +508,7 @@ class StockTrendAnalyzer:
                 result.volume_trend = "缩量上涨，上攻动能不足"
             else:
                 result.volume_status = VolumeStatus.SHRINK_VOLUME_DOWN
-                result.volume_trend = "缩量回调，洗盘特征明显"
+                result.volume_trend = "缩量调整，短期仍有压力"
         else:
             result.volume_status = VolumeStatus.NORMAL
             result.volume_trend = "量能正常"
@@ -524,13 +524,13 @@ class StockTrendAnalyzer:
         
         if is_golden_cross and dif > 0:
             result.macd_status = MACDStatus.GOLDEN_CROSS_ZERO
-            result.macd_signal = "零轴上金叉，强烈买入信号"
+            result.macd_signal = "零轴上金叉，短中期买入信号"
         elif is_crossing_up:
             result.macd_status = MACDStatus.CROSSING_UP
             result.macd_signal = "DIF上穿零轴，趋势转强"
         elif is_golden_cross:
             result.macd_status = MACDStatus.GOLDEN_CROSS
-            result.macd_signal = "金叉，趋势向上"
+            result.macd_signal = "金叉，短期动能转强，中长期收益优秀（20日均+1.9%）"
         elif is_death_cross:
             result.macd_status = MACDStatus.DEATH_CROSS
             result.macd_signal = "死叉，趋势向下"
@@ -599,16 +599,16 @@ class StockTrendAnalyzer:
             result.rsi_signal = f"RSI顶背离{mid_tag}(价格新高但RSI未新高)，回调风险"
         elif is_rsi_golden and rsi_mid < 30:
             result.rsi_status = RSIStatus.GOLDEN_CROSS_OVERSOLD
-            result.rsi_signal = f"RSI超卖区金叉(RSI6={rsi_short:.1f}上穿RSI12={rsi_mid:.1f})，强买入"
+            result.rsi_signal = f"RSI超卖区金叉(RSI6={rsi_short:.1f}上空RSI12={rsi_mid:.1f})，中长期强信号（20日收益优秀）、短期需量能确认"
         elif is_rsi_golden:
             result.rsi_status = RSIStatus.GOLDEN_CROSS
             result.rsi_signal = f"RSI金叉(RSI6={rsi_short:.1f}上穿RSI12={rsi_mid:.1f})，动能转强"
         elif is_rsi_death:
             result.rsi_status = RSIStatus.DEATH_CROSS
-            result.rsi_signal = f"RSI死叉(RSI6={rsi_short:.1f}下穿RSI12={rsi_mid:.1f})，动能转弱"
+            result.rsi_signal = f"RSI死叉(RSI6={rsi_short:.1f}下穿RSI12={rsi_mid:.1f})，短期风险增加，但中长期均值回归"
         elif rsi_mid > 70:
             result.rsi_status = RSIStatus.OVERBOUGHT
-            result.rsi_signal = f"RSI超买({rsi_mid:.1f}>70)，短期回调风险高"
+            result.rsi_signal = f"RSI超买({rsi_mid:.1f}>70)，短期动量延续，中长期调整风险增加"
         elif rsi_mid > 60:
             result.rsi_status = RSIStatus.STRONG_BUY
             result.rsi_signal = f"RSI强势({rsi_mid:.1f})，多头力量充足"
@@ -620,7 +620,7 @@ class StockTrendAnalyzer:
             result.rsi_signal = f"RSI弱势({rsi_mid:.1f})，关注反弹"
         else:
             result.rsi_status = RSIStatus.OVERSOLD
-            result.rsi_signal = f"RSI超卖({rsi_mid:.1f}<30)，反弹机会大"
+            result.rsi_signal = f"RSI超卖({rsi_mid:.1f}<30)，关注企稳，超卖可能持续"
     
     def _analyze_kdj(self, result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
         """KDJ分析（含背离检测、连续极端、钝化识别）"""
@@ -651,10 +651,10 @@ class StockTrendAnalyzer:
         elif result.kdj_consecutive_extreme:
             if "超买" in result.kdj_consecutive_extreme:
                 result.kdj_status = KDJStatus.OVERBOUGHT
-                result.kdj_signal = f"{result.kdj_consecutive_extreme}，短期严重超买，回调概率极高"
+                result.kdj_signal = f"{result.kdj_consecutive_extreme}，动量极强，注意高位量能"
             else:
                 result.kdj_status = KDJStatus.OVERSOLD
-                result.kdj_signal = f"{result.kdj_consecutive_extreme}，短期严重超卖，反弹概率极高"
+                result.kdj_signal = f"{result.kdj_consecutive_extreme}，超卖可能持续，关注企稳信号"
         # === 钝化状态：降低超买/超卖信号权重 ===
         elif result.kdj_passivation:
             if j_val > 100 or k_val > 80:
@@ -675,13 +675,13 @@ class StockTrendAnalyzer:
         # === 常规 KDJ 分析 ===
         elif is_kdj_golden and j_val < 20:
             result.kdj_status = KDJStatus.GOLDEN_CROSS_OVERSOLD
-            result.kdj_signal = f"超卖区金叉(J={j_val:.1f}<20)，强买入信号"
+            result.kdj_signal = f"超卖区金叉(J={j_val:.1f}<20)，短期5日偏弱、中长期20日收益优秀，需量能确认"
         elif j_val > 100:
             result.kdj_status = KDJStatus.OVERBOUGHT
-            result.kdj_signal = f"J值超买({j_val:.1f}>100)，短期回调风险"
+            result.kdj_signal = f"J值超买({j_val:.1f}>100)，短期+中期动量强势，趋势延续信号"
         elif j_val < 0:
             result.kdj_status = KDJStatus.OVERSOLD
-            result.kdj_signal = f"J值超卖({j_val:.1f}<0)，反弹机会"
+            result.kdj_signal = f"J值超卖({j_val:.1f}<0)，关注企稳，注意超卖可能持续"
         elif is_kdj_golden:
             result.kdj_status = KDJStatus.GOLDEN_CROSS
             result.kdj_signal = f"金叉(K={k_val:.1f}>D={d_val:.1f})，趋势向上"

@@ -788,6 +788,31 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             </div>
           )}
 
+          {/* 信号明细（带时间维度徽章） */}
+          {(qe.signal_reasons ?? qe.signalReasons)?.length > 0 && (
+            <div>
+              <h4 className="text-xs font-medium text-white/40 mb-2">信号明细</h4>
+              <div className="space-y-1">
+                {(qe.signal_reasons ?? qe.signalReasons)?.map((r: string, i: number) => {
+                  const isMidLong = r.includes('中长期') || r.includes('20日') || r.includes('中期');
+                  const isShort = r.includes('短期') && !isMidLong;
+                  return (
+                    <div key={i} className="text-[11px] text-white/60 flex items-start gap-1.5">
+                      <span className="text-success mt-0.5 shrink-0">✓</span>
+                      <span className="flex-1">{r}</span>
+                      {isMidLong && (
+                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-400 font-semibold">中线</span>
+                      )}
+                      {isShort && (
+                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-yellow-500/15 text-yellow-400 font-semibold">短线</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* 风险因子 */}
           {(qe.risk_factors ?? qe.riskFactors)?.length > 0 && (
             <div>

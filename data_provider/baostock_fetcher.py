@@ -89,7 +89,7 @@ class BaostockFetcher(BaseFetcher):
             # 尝试获取数据
             rs = bs.query_history_k_data_plus(
                 code=bs_code,
-                fields="date,open,high,low,close,volume,amount,pctChg",
+                fields="date,open,high,low,close,volume,amount,pctChg,turn",
                 start_date=start_date,
                 end_date=end_date,
                 frequency="d",
@@ -119,13 +119,14 @@ class BaostockFetcher(BaseFetcher):
         if df.empty: return df
         df = df.copy()
         df = df.rename(columns={'pctChg': 'pct_chg'})
-        for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']:
+        for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg', 'turn']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df['code'] = stock_code
+        extra_cols = [c for c in ['turn'] if c in df.columns]
         for col in STANDARD_COLUMNS:
             if col not in df.columns: df[col] = 0
-        return df[STANDARD_COLUMNS + ['code']]
+        return df[STANDARD_COLUMNS + ['code'] + extra_cols]
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
         try:
