@@ -669,18 +669,14 @@ class ScoringSystem:
                 p4_adj += 1
             elif trend == "持续流出" and consecutive <= -3:
                 p4_adj -= 3
-            elif trend == "持续流出":
-                p4_adj -= 2
-            elif trend == "资金离场":
-                p4_adj -= 1
+            # 轻度流出/资金离场不给负分（回测显示是洗盘信号，给负分反向误导）
+            # elif trend == "持续流出": p4_adj -= 2
+            # elif trend == "资金离场": p4_adj -= 1
 
             if result.capital_smart_money == "超大单持续买入":
                 p4_adj += 2
             elif result.capital_smart_money == "超大单持续卖出":
                 p4_adj -= 2
-
-            if intensity == "大幅":
-                p4_adj = int(p4_adj * 1.3)
 
             p4_adj = max(-5, min(5, p4_adj))
             if p4_adj != 0:
