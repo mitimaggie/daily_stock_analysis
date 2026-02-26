@@ -221,6 +221,34 @@ class StockTrendAnalyzer:
             result.bb_lower = round(float(latest.get('BB_LOWER', 0) or 0), 2)
             result.bb_width = round(float(latest.get('BB_WIDTH', 0) or 0), 4)
             result.bb_pct_b = round(float(latest.get('BB_PCT_B', 0.5) or 0.5), 4)
+
+            # P5-B: VWAP 机构成本线
+            _vwap10 = float(latest.get('VWAP10', 0) or 0)
+            _vwap20 = float(latest.get('VWAP20', 0) or 0)
+            _vwap10_slope = float(latest.get('VWAP10_SLOPE', 0) or 0)
+            _vwap20_slope = float(latest.get('VWAP20_SLOPE', 0) or 0)
+            if _vwap10 > 0:
+                result.vwap10 = round(_vwap10, 2)
+                result.vwap10_slope = round(_vwap10_slope, 4)
+            if _vwap20 > 0:
+                result.vwap20 = round(_vwap20, 2)
+                result.vwap20_slope = round(_vwap20_slope, 4)
+            # 判断机构成本趋势（用10日VWAP斜率，更灵敏）
+            _vwap_ref = _vwap10 if _vwap10 > 0 else _vwap20
+            _slope_ref = _vwap10_slope if _vwap10 > 0 else _vwap20_slope
+            if _vwap_ref > 0:
+                _slope_pct = _slope_ref / _vwap_ref * 100 if _vwap_ref > 0 else 0
+                if _slope_pct > 0.05:
+                    result.vwap_trend = "机构成本上移"
+                elif _slope_pct < -0.05:
+                    result.vwap_trend = "机构成本下移"
+                else:
+                    result.vwap_trend = "机构成本横盘"
+                # 价格相对 VWAP 位置
+                if result.current_price > _vwap_ref:
+                    result.vwap_position = "价格在VWAP上方"
+                else:
+                    result.vwap_position = "价格在VWAP下方"
             
             if len(df) >= 21:
                 daily_ret = df['close'].pct_change().dropna().tail(20)
@@ -376,6 +404,10 @@ class StockTrendAnalyzer:
             ScoringSystem.detect_sequential_behavior(result, df)
             ScoringSystem.score_multi_signal_resonance(result, df)
             ScoringSystem.forecast_next_days(result, df)
+            ScoringSystem.score_capital_flow_history(result, code)
+            ScoringSystem.score_gap_analysis(result, df)
+            ScoringSystem.score_vwap_trend(result)
+            ScoringSystem.score_dzjy_and_holder(result, code)
             ScoringSystem.score_intraday_volume_signal(result)
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
@@ -398,6 +430,7 @@ class StockTrendAnalyzer:
             RiskManager.detect_volume_extreme(result, df)
             RiskManager.check_no_trade_filter(result, df, market_snapshot=market_snapshot)
             RiskManager.check_stop_loss_breach(result, df)
+            RiskManager.check_stop_loss_distance(result)
             
             # === P1 盘中关键价位 ===
             RiskManager.generate_intraday_watchlist(result, df)

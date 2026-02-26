@@ -42,6 +42,23 @@ class RiskManager:
         else:
             atr_multiplier_short = 1.0
             atr_multiplier_mid = 1.5
+
+        # P5-A: Beta 叠加修正 — 高 Beta 股波动更大，止损空间需相应放宽
+        beta = getattr(result, 'beta_vs_index', 1.0) or 1.0
+        if beta > 1.5:
+            atr_multiplier_short *= 1.2
+            atr_multiplier_mid *= 1.2
+        elif beta < 0.6:
+            atr_multiplier_short *= 0.9
+            atr_multiplier_mid *= 0.9
+
+        # P5-A: VWAP 位置修正 — 价格在机构成本下方时，止损空间收紧（已跌破成本，止损更严格）
+        vwap_pos = getattr(result, 'vwap_position', '')
+        vwap_trend = getattr(result, 'vwap_trend', '')
+        if vwap_pos == "价格在VWAP下方" and vwap_trend == "机构成本下移":
+            # 跌破下行VWAP，空头格局明确，收紧止损避免越扛越深
+            atr_multiplier_short *= 0.85
+            atr_multiplier_mid *= 0.85
         
         # A股涨跌停限制：止损价不应低于跌停价（无法执行）
         limit_pct = getattr(result, 'limit_pct', 10.0) or 10.0
@@ -842,3 +859,35 @@ class RiskManager:
             parts.append(f"止损{rec_stop:.2f}")
 
         return "，".join(parts)
+
+    @staticmethod
+    def check_stop_loss_distance(result: TrendAnalysisResult, atr_multiplier: float = 2.0):
+        """
+        P0 止损硬约束：当前价距短线止损位超过 atr_multiplier × ATR14 时，警告空仓者不宜追入。
+
+        使用 ATR 倍数而非固定百分比，因为不同股票波动幅度差异巨大：
+        - 小盘妖股 ATR 可达 5-10%，固定阈值会失真
+        - 蓝筹白马 ATR 仅 1-2%，固定阈值过宽
+        - 2×ATR = 追入后若止损，实际亏损已超该股两个正常波动单位
+        - 仅影响空仓建议（advice_for_empty）和评分，不干预持仓逻辑
+        """
+        price = result.current_price
+        sl = result.stop_loss_short
+        atr = result.atr14
+        if price <= 0 or sl <= 0 or atr <= 0:
+            return
+
+        dist = price - sl
+        threshold = atr_multiplier * atr
+        if dist > threshold:
+            dist_pct = dist / price * 100
+            warning = (
+                f"⚠️ 当前价距止损位{dist_pct:.1f}%（>{atr_multiplier:.0f}×ATR={threshold:.2f}元），"
+                f"追入风险过大，等待回踩再入场"
+            )
+            result.risk_factors.append(warning)
+            result.score_breakdown['stop_dist_risk'] = -5
+            if result.advice_for_empty:
+                result.advice_for_empty = warning + "\n" + result.advice_for_empty
+            else:
+                result.advice_for_empty = warning

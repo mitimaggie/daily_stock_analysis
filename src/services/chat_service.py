@@ -355,6 +355,97 @@ class ChatService:
                 if forecast_note and forecast_note != forecast_scenario:
                     parts.append(f"预判说明: {forecast_note}")
 
+            # ---- P4: 主力资金追踪 ----
+            cf_trend = qe.get("capital_flow_trend")
+            cf_days = qe.get("capital_flow_days", 0)
+            cf_5d = qe.get("capital_flow_5d_total", 0)
+            cf_intensity = qe.get("capital_flow_intensity", "")
+            cf_accel = qe.get("capital_flow_acceleration", "")
+            cf_smart = qe.get("capital_smart_money", "")
+            if cf_trend or cf_days:
+                parts.append(f"\n## 主力资金追踪")
+                line = cf_trend or "未知趋势"
+                if cf_intensity:
+                    line += f"（{cf_intensity}）"
+                if cf_days:
+                    line += f"，连续{'净流入' if cf_days > 0 else '净流出'}{abs(cf_days)}天"
+                parts.append(line)
+                if cf_5d:
+                    total_str = f"{cf_5d/10000:.1f}亿" if abs(cf_5d) >= 10000 else f"{cf_5d:.0f}万"
+                    parts.append(f"近5日主力净流入: {'+' if cf_5d > 0 else ''}{total_str}")
+                if cf_accel:
+                    parts.append(f"资金动向: {cf_accel}")
+                if cf_smart:
+                    parts.append(f"聪明钱信号: {cf_smart}")
+
+            # ---- P5-B: VWAP 机构成本线 ----
+            vwap_trend = qe.get("vwap_trend")
+            vwap_pos = qe.get("vwap_position")
+            vwap10 = qe.get("vwap10", 0)
+            vwap20 = qe.get("vwap20", 0)
+            if vwap_trend:
+                parts.append(f"\n## 机构成本线（VWAP）")
+                line = vwap_trend
+                if vwap_pos:
+                    line += f"，{vwap_pos}"
+                parts.append(line)
+                if vwap10:
+                    parts.append(f"10日VWAP={vwap10:.2f}，20日VWAP={vwap20:.2f}" if vwap20 else f"10日VWAP={vwap10:.2f}")
+
+            # ---- P5-D: 黄金分割回撤位 ----
+            fib_signal = qe.get("fib_signal")
+            fib_zone = qe.get("fib_current_zone")
+            fib_validity = qe.get("fib_validity")
+            fib_test_count = qe.get("fib_test_count", 0)
+            fib_window = qe.get("fib_window", 0)
+            fib_note = qe.get("fib_note")
+            if fib_signal and fib_signal != "中性":
+                parts.append(f"\n## 黄金分割回撤位")
+                line = fib_zone or fib_signal
+                if fib_window:
+                    line += f"（{fib_window}日窗口）"
+                parts.append(line)
+                if fib_validity:
+                    parts.append(f"历史有效性：{fib_validity}（历史测试{fib_test_count}次）")
+                if fib_note:
+                    parts.append(fib_note)
+
+            # ---- P2a: 缺口分析 ----
+            gap_signal = qe.get("gap_signal")
+            gap_type = qe.get("gap_type")
+            gap_upper = qe.get("gap_upper", 0)
+            gap_lower = qe.get("gap_lower", 0)
+            if gap_signal:
+                parts.append(f"\n## 缺口分析")
+                line = gap_signal
+                if gap_upper and gap_lower:
+                    line += f"（{gap_lower:.2f}～{gap_upper:.2f}）"
+                parts.append(line)
+
+            # ---- P5-C补充: 股东人数 ----
+            holder_signal = qe.get("holder_signal")
+            holder_chg = qe.get("holder_change_pct", 0)
+            if holder_signal:
+                parts.append(f"\n## 微观结构")
+                line = holder_signal
+                if holder_chg:
+                    line += f"，股东人数变化{holder_chg:+.2f}%"
+                parts.append(line)
+
+            # ---- P5-C: 龙虎榜情绪 ----
+            lhb_signal = qe.get("lhb_signal")
+            lhb_times = qe.get("lhb_times", 0)
+            lhb_inst = qe.get("lhb_institution_net", 0)
+            if lhb_signal or lhb_times:
+                parts.append(f"\n## 龙虎榜情绪（近一月）")
+                if lhb_signal:
+                    parts.append(lhb_signal)
+                if lhb_times:
+                    parts.append(f"近一月上榜{lhb_times}次")
+                if lhb_inst:
+                    inst_str = f"{lhb_inst/1e8:.2f}亿" if abs(lhb_inst) >= 1e8 else f"{lhb_inst/1e4:.0f}万"
+                    parts.append(f"机构净买额: {'+' if lhb_inst > 0 else ''}{inst_str}")
+
         # ---- 情报面 ----
         intel = dashboard.get("intelligence") or {}
         if intel.get("sentiment_summary"):

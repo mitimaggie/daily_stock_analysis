@@ -492,6 +492,52 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             </div>
           )}
 
+          {/* P5-D: 黄金分割回撤位 */}
+          {(qe.fib_signal && qe.fib_signal !== '中性') && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">黄金分割回撤位（P5-D）</h4>
+              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                    (qe.fib_signal as string).includes('支撑') ? 'bg-success/15 text-success' :
+                    (qe.fib_signal as string).includes('阻力') || (qe.fib_signal as string).includes('结构破坏') ? 'bg-danger/15 text-danger' :
+                    'bg-white/10 text-white/50'
+                  }`}>{qe.fib_current_zone || qe.fib_signal}</span>
+                  {qe.fib_validity && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                      (qe.fib_validity as string).includes('高') ? 'bg-success/10 text-success/70' :
+                      (qe.fib_validity as string).includes('中') ? 'bg-warning/10 text-warning/70' :
+                      'bg-white/[0.05] text-white/35'
+                    }`}>{qe.fib_validity}（{qe.fib_test_count}次测试）</span>
+                  )}
+                  {(qe.fib_window as number) > 0 && (
+                    <span className="text-[10px] text-white/30 font-mono">{qe.fib_window}日窗口</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 text-center">
+                  {(qe.fib_level_382 as number) > 0 && (
+                    <div className="p-1.5 rounded bg-white/[0.04]">
+                      <div className="text-[12px] font-mono text-white/60">{(qe.fib_level_382 as number).toFixed(2)}</div>
+                      <div className="text-[9px] text-white/30">0.382</div>
+                    </div>
+                  )}
+                  {(qe.fib_level_500 as number) > 0 && (
+                    <div className="p-1.5 rounded bg-white/[0.04]">
+                      <div className="text-[12px] font-mono text-white/60">{(qe.fib_level_500 as number).toFixed(2)}</div>
+                      <div className="text-[9px] text-white/30">0.500</div>
+                    </div>
+                  )}
+                  {(qe.fib_level_618 as number) > 0 && (
+                    <div className="p-1.5 rounded bg-white/[0.04]">
+                      <div className="text-[12px] font-mono text-white/60">{(qe.fib_level_618 as number).toFixed(2)}</div>
+                      <div className="text-[9px] text-white/30">0.618</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* P3: 行情预判 */}
           {(qe.forecast_scenario || qe.resonance_level) && (
             <div>
@@ -562,6 +608,180 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 {qe.resonance_detail && (
                   <div className="text-[10px] text-white/30 font-mono leading-relaxed">
                     {qe.resonance_detail}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* P4: 主力资金追踪 */}
+          {(qe.capital_flow_trend || (qe.capital_flow_days as number) !== 0) && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">主力资金追踪</h4>
+              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+                {/* 趋势 + 强度 + 加速 */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {qe.capital_flow_trend && (
+                    <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                      (qe.capital_flow_trend as string).includes('流入') ? 'bg-success/15 text-success' :
+                      (qe.capital_flow_trend as string).includes('流出') ? 'bg-danger/15 text-danger' :
+                      'bg-white/10 text-white/50'
+                    }`}>{qe.capital_flow_trend}</span>
+                  )}
+                  {qe.capital_flow_intensity && (
+                    <span className="text-[11px] text-white/50 font-mono">{qe.capital_flow_intensity}</span>
+                  )}
+                  {qe.capital_flow_acceleration && (
+                    <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded ${
+                      (qe.capital_flow_acceleration as string).includes('流入') ? 'text-success/70 bg-success/10' :
+                      (qe.capital_flow_acceleration as string).includes('流出') ? 'text-danger/70 bg-danger/10' :
+                      'text-white/40 bg-white/[0.05]'
+                    }`}>{qe.capital_flow_acceleration}</span>
+                  )}
+                </div>
+                {/* 连续天数 + 近5日累计 */}
+                <div className="grid grid-cols-2 gap-2">
+                  {(qe.capital_flow_days as number) !== 0 && (
+                    <div className="text-center p-2 rounded bg-white/[0.04]">
+                      <div className={`text-[16px] font-bold font-mono ${
+                        (qe.capital_flow_days as number) > 0 ? 'text-success' : 'text-danger'
+                      }`}>
+                        {(qe.capital_flow_days as number) > 0 ? '+' : ''}{qe.capital_flow_days}天
+                      </div>
+                      <div className="text-[9px] text-white/30 mt-0.5">连续{(qe.capital_flow_days as number) > 0 ? '净流入' : '净流出'}</div>
+                    </div>
+                  )}
+                  {(qe.capital_flow_5d_total as number) !== 0 && (
+                    <div className="text-center p-2 rounded bg-white/[0.04]">
+                      <div className={`text-[14px] font-bold font-mono ${
+                        (qe.capital_flow_5d_total as number) > 0 ? 'text-success' : 'text-danger'
+                      }`}>
+                        {(qe.capital_flow_5d_total as number) > 0 ? '+' : ''}
+                        {Math.abs(qe.capital_flow_5d_total as number) >= 10000
+                          ? `${((qe.capital_flow_5d_total as number)/10000).toFixed(1)}亿`
+                          : `${(qe.capital_flow_5d_total as number).toFixed(0)}万`}
+                      </div>
+                      <div className="text-[9px] text-white/30 mt-0.5">近5日累计</div>
+                    </div>
+                  )}
+                </div>
+                {/* 聪明钱信号 */}
+                {qe.capital_smart_money && (
+                  <div className={`text-[11px] font-mono px-2 py-1 rounded ${
+                    (qe.capital_smart_money as string).includes('买入') ? 'bg-success/10 text-success/80' : 'bg-danger/10 text-danger/80'
+                  }`}>
+                    🔍 {qe.capital_smart_money}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* P5-B: VWAP 机构成本线 */}
+          {qe.vwap_trend && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">机构成本线（VWAP）</h4>
+              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                    (qe.vwap_trend as string).includes('上移') ? 'bg-success/15 text-success' :
+                    (qe.vwap_trend as string).includes('下移') ? 'bg-danger/15 text-danger' :
+                    'bg-white/10 text-white/50'
+                  }`}>{qe.vwap_trend}</span>
+                  {qe.vwap_position && (
+                    <span className={`text-[11px] font-mono ${
+                      (qe.vwap_position as string).includes('上方') ? 'text-success/70' : 'text-danger/70'
+                    }`}>{qe.vwap_position}</span>
+                  )}
+                </div>
+                {((qe.vwap10 as number) > 0 || (qe.vwap20 as number) > 0) && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {(qe.vwap10 as number) > 0 && (
+                      <div className="text-center p-1.5 rounded bg-white/[0.04]">
+                        <div className="text-[13px] font-mono text-white/70">{(qe.vwap10 as number).toFixed(2)}</div>
+                        <div className="text-[9px] text-white/30">10日VWAP</div>
+                      </div>
+                    )}
+                    {(qe.vwap20 as number) > 0 && (
+                      <div className="text-center p-1.5 rounded bg-white/[0.04]">
+                        <div className="text-[13px] font-mono text-white/70">{(qe.vwap20 as number).toFixed(2)}</div>
+                        <div className="text-[9px] text-white/30">20日VWAP</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* P5-C: 龙虎榜情绪 */}
+          {(qe.lhb_signal || (qe.lhb_times as number) > 0) && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">龙虎榜情绪（近一月）</h4>
+              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {qe.lhb_signal && (
+                    <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                      (qe.lhb_signal as string).includes('买入') ? 'bg-success/15 text-success' :
+                      (qe.lhb_signal as string).includes('卖出') ? 'bg-danger/15 text-danger' :
+                      'bg-warning/15 text-warning'
+                    }`}>{qe.lhb_signal}</span>
+                  )}
+                  {(qe.lhb_times as number) > 0 && (
+                    <span className="text-[11px] text-white/40 font-mono">上榜{qe.lhb_times}次</span>
+                  )}
+                </div>
+                {((qe.lhb_institution_net as number) !== 0) && (
+                  <div className="text-center p-2 rounded bg-white/[0.04]">
+                    <div className={`text-[14px] font-bold font-mono ${
+                      (qe.lhb_institution_net as number) > 0 ? 'text-success' : 'text-danger'
+                    }`}>
+                      {(qe.lhb_institution_net as number) > 0 ? '+' : ''}
+                      {Math.abs(qe.lhb_institution_net as number) >= 1e8
+                        ? `${((qe.lhb_institution_net as number)/1e8).toFixed(2)}亿`
+                        : `${((qe.lhb_institution_net as number)/1e4).toFixed(0)}万`}
+                    </div>
+                    <div className="text-[9px] text-white/30 mt-0.5">机构净买额</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* P5-C补充: 大宗交易折溢价 + 股东人数 */}
+          {(qe.dzjy_signal || qe.holder_signal) && (
+            <div>
+              <h4 className="text-[11px] font-medium text-white/40 mb-2">微观结构（大宗/股东）</h4>
+              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+                {qe.dzjy_signal && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                      (qe.dzjy_signal as string).includes('溢价') ? 'bg-success/15 text-success' :
+                      'bg-danger/15 text-danger'
+                    }`}>{qe.dzjy_signal}</span>
+                    {(qe.dzjy_times as number) > 0 && (
+                      <span className="text-[10px] text-white/40 font-mono">
+                        近30日{qe.dzjy_times}笔
+                        {(qe.dzjy_avg_premium as number) !== 0 && (
+                          ` · 均折溢率${((qe.dzjy_avg_premium as number)*100).toFixed(2)}%`
+                        )}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {qe.holder_signal && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
+                      (qe.holder_signal as string).includes('集中') ? 'bg-success/15 text-success' :
+                      'bg-danger/15 text-danger'
+                    }`}>{qe.holder_signal}</span>
+                    {(qe.holder_change_pct as number) !== 0 && (
+                      <span className={`text-[11px] font-mono ${
+                        (qe.holder_change_pct as number) < 0 ? 'text-success/70' : 'text-danger/70'
+                      }`}>
+                        {(qe.holder_change_pct as number) > 0 ? '+' : ''}{(qe.holder_change_pct as number).toFixed(2)}%
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

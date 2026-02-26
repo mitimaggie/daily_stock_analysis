@@ -246,6 +246,10 @@ class TrendAnalysisResult:
     
     # === 缺口检测 ===
     gap_type: str = ""                     # "向上跳空" / "向下跳空" / ""
+    gap_upper: float = 0.0                 # 缺口上沿价格
+    gap_lower: float = 0.0                 # 缺口下沿价格
+    gap_filled: bool = False               # 缺口是否已回补
+    gap_signal: str = ""                   # "未回补压力缺口" / "未回补支撑缺口" / "缺口回补完成" / ""
     
     # === OBV 量能趋势 ===
     obv_trend: str = ""                    # "OBV多头" / "OBV空头" / "OBV中性"
@@ -325,7 +329,7 @@ class TrendAnalysisResult:
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)
     
-    # === 黄金分割回撤位（P1）===
+    # === 黄金分割回撤位（P1/P5-D）===
     fib_swing_high: float = 0.0            # 近期波段高点
     fib_swing_low: float = 0.0             # 近期波段低点
     fib_level_382: float = 0.0             # 0.382 回撤位
@@ -335,6 +339,9 @@ class TrendAnalysisResult:
     fib_signal: str = ""                   # "接近支撑买入区"/"接近阻力卖出区"/"中性"/""
     fib_adj: int = 0                       # 黄金分割对评分的调整(-5 ~ +5)
     fib_note: str = ""                     # 说明文字
+    fib_window: int = 60                   # P5-D: 实际采用的有效时间窗口（20/60/120）
+    fib_validity: str = ""                 # P5-D: "高历史有效性" / "中历史有效性" / "低历史有效性" / ""
+    fib_test_count: int = 0               # P5-D: Fib位在历史上被测试的次数（多次=更可靠）
     
     # === 量价结构（P1: 放量突破/缩量回踩）===
     vol_price_structure: str = ""          # "放量突破"/"缩量回踩"/"放量下跌"/"缩量反弹"/""
@@ -367,6 +374,14 @@ class TrendAnalysisResult:
     forecast_trigger: str = ""           # 确认信号："放量突破XX即确认拉升" / "跌破XX则判断回调" / ""
     forecast_note: str = ""              # 预判说明
 
+    # === VWAP 机构成本线（P5-B）===
+    vwap10: float = 0.0               # 10日成交量加权均价
+    vwap20: float = 0.0               # 20日成交量加权均价
+    vwap10_slope: float = 0.0         # 10日VWAP斜率（正=机构成本上移）
+    vwap20_slope: float = 0.0         # 20日VWAP斜率
+    vwap_trend: str = ""              # "机构成本上移" / "机构成本下移" / "机构成本横盘" / ""
+    vwap_position: str = ""           # "价格在VWAP上方" / "价格在VWAP下方" / ""
+
     # === 主力资金追踪（P4）===
     capital_flow_days: int = 0               # 连续净流入/流出天数（正=流入，负=流出）
     capital_flow_trend: str = ""             # "持续流入" / "持续流出" / "间歇流入" / "资金离场" / ""
@@ -374,6 +389,14 @@ class TrendAnalysisResult:
     capital_flow_5d_total: float = 0.0       # 近5日主力净流入累计（万元）
     capital_flow_acceleration: str = ""      # "加速流入" / "加速流出" / "趋缓" / ""
     capital_smart_money: str = ""            # 聪明钱信号："超大单持续买入" / "超大单持续卖出" / ""
+
+    # === 量化情绪指标（P5-C）===
+    lhb_net_buy: float = 0.0           # 近一月龙虎榜净买额（元）；正=机构净买，负=净卖
+    lhb_institution_net: float = 0.0   # 龙虎榜机构净买额（元）
+    lhb_times: int = 0                 # 近一月上榜次数
+    lhb_signal: str = ""               # "机构持续买入" / "机构持续卖出" / "龙虎榜活跃" / ""
+    holder_change_pct: float = 0.0     # 最新股东人数变化率（负=筹码集中，正=筹码分散）
+    holder_signal: str = ""            # "筹码集中（缩股）" / "筹码分散（增股）" / ""
 
     # === 结构化评分明细 ===
     score_breakdown: Dict[str, int] = field(default_factory=dict)

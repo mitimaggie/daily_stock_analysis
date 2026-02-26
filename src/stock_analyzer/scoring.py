@@ -218,7 +218,14 @@ class ScoringSystem:
             MACDStatus.DEATH_CROSS: 0,
         }
         score = base_scores.get(result.macd_status, 5)
-        
+
+        # P1b 均线死叉屏蔽：均线空头排列时，零轴上方金叉大概率是熊市反弹出货机会
+        # 水下金叉（macd_dif < 0）保留加分，属于超卖反弹信号，不屏蔽
+        is_bear_trend = result.trend_status in (TrendStatus.BEAR, TrendStatus.WEAK_BEAR)
+        is_above_zero_cross = result.macd_status in (MACDStatus.GOLDEN_CROSS_ZERO, MACDStatus.GOLDEN_CROSS)
+        if is_bear_trend and is_above_zero_cross and result.macd_dif > 0:
+            score = score // 2
+
         # MACD柱状图动量修正：加速=加分，减速=减分
         momentum = getattr(result, 'macd_momentum', '')
         if momentum == "动能加速":
@@ -509,6 +516,181 @@ class ScoringSystem:
             result.score_breakdown['capital_flow_adj'] = cf_adj
     
     @staticmethod
+    def score_capital_flow_history(result: TrendAnalysisResult, stock_code: str):
+        """P4: 主力资金追踪 - 大单净流入连续性检测
+
+        通过 akshare 历史资金流数据（最近120日）分析：
+        1. 连续净流入/流出天数
+        2. 近5日主力净流入累计
+        3. 资金流入趋势：持续流入 / 持续流出 / 间歇流入 / 资金离场
+        4. 流入强度：大幅 / 温和 / 轻微
+        5. 加速/减速信号
+        6. 聪明钱（超大单）持续行为
+        """
+        try:
+            import akshare as ak
+            import time
+            import random
+
+            market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
+
+            # 使用项目内全局限流器
+            try:
+                from data_provider.rate_limiter import get_global_limiter
+                limiter = get_global_limiter()
+                limiter.acquire('akshare', blocking=True, timeout=10.0)
+            except Exception:
+                time.sleep(random.uniform(1.0, 2.0))
+
+            df_flow = ak.stock_individual_fund_flow(stock=stock_code, market=market)
+            if df_flow is None or len(df_flow) < 5:
+                return
+
+            # 标准化列名
+            col_map = {
+                '日期': 'date',
+                '主力净流入-净额': 'main_net',
+                '超大单净流入-净额': 'super_large_net',
+                '大单净流入-净额': 'large_net',
+                '主力净流入-净占比': 'main_pct',
+            }
+            df_flow = df_flow.rename(columns={k: v for k, v in col_map.items() if k in df_flow.columns})
+
+            for col in ['main_net', 'super_large_net', 'large_net', 'main_pct']:
+                if col in df_flow.columns:
+                    df_flow[col] = pd.to_numeric(df_flow[col], errors='coerce').fillna(0)
+
+            # 取最近 20 天用于分析
+            recent = df_flow.tail(20).reset_index(drop=True)
+            if len(recent) < 5:
+                return
+
+            main_net_series = recent['main_net'].values  # 单位：元
+            sl_net_series = recent.get('super_large_net', pd.Series([0]*len(recent))).values if 'super_large_net' in recent.columns else [0]*len(recent)
+
+            # === 1. 连续净流入/流出天数 ===
+            last_net = main_net_series[-1]
+            consecutive = 0
+            if last_net >= 0:
+                for v in reversed(main_net_series):
+                    if v >= 0:
+                        consecutive += 1
+                    else:
+                        break
+            else:
+                for v in reversed(main_net_series):
+                    if v < 0:
+                        consecutive -= 1
+                    else:
+                        break
+            result.capital_flow_days = consecutive
+
+            # === 2. 近5日主力净流入累计（万元）===
+            last5 = main_net_series[-5:]
+            total_5d = float(sum(last5)) / 10000
+            result.capital_flow_5d_total = round(total_5d, 2)
+
+            # === 3. 趋势分类 ===
+            positive_count = sum(1 for v in last5 if v > 0)
+            if positive_count >= 4:
+                trend = "持续流入"
+            elif positive_count >= 3:
+                trend = "间歇流入"
+            elif positive_count <= 1:
+                trend = "持续流出"
+            else:
+                trend = "资金离场"
+            result.capital_flow_trend = trend
+
+            # === 4. 流入强度（基于近5日日均额 vs 主力净流入比例）===
+            # 用 abs(主力净流入/日均成交额) 衡量强度
+            avg_daily_amount = getattr(result, 'daily_avg_amount', None) or 0
+            if avg_daily_amount <= 0:
+                # 估算：用近5日高低中值
+                try:
+                    avg_daily_amount = abs(total_5d) / 5 * 20  # 粗估：净流入占5%成交额
+                except Exception:
+                    avg_daily_amount = 10000
+            abs_5d = abs(total_5d)
+            if avg_daily_amount > 0:
+                intensity_ratio = abs_5d / (avg_daily_amount * 5) * 100
+            else:
+                intensity_ratio = 0
+
+            if abs_5d > 50000:  # 超过5亿
+                intensity = "大幅"
+            elif abs_5d > 10000:  # 超过1亿
+                intensity = "温和"
+            elif abs_5d > 1000:
+                intensity = "轻微"
+            else:
+                intensity = ""
+            result.capital_flow_intensity = intensity
+
+            # === 5. 加速/减速检测 ===
+            if len(main_net_series) >= 10:
+                prev5 = main_net_series[-10:-5]
+                curr5 = main_net_series[-5:]
+                prev_avg = sum(prev5) / 5
+                curr_avg = sum(curr5) / 5
+                if curr_avg > 0 and prev_avg > 0:
+                    if curr_avg > prev_avg * 1.5:
+                        result.capital_flow_acceleration = "加速流入"
+                    elif curr_avg < prev_avg * 0.5:
+                        result.capital_flow_acceleration = "趋缓"
+                    else:
+                        result.capital_flow_acceleration = ""
+                elif curr_avg < 0 and prev_avg < 0:
+                    if curr_avg < prev_avg * 1.5:
+                        result.capital_flow_acceleration = "加速流出"
+                    elif curr_avg > prev_avg * 0.5:
+                        result.capital_flow_acceleration = "趋缓"
+                    else:
+                        result.capital_flow_acceleration = ""
+
+            # === 6. 聪明钱（超大单）信号 ===
+            sl_last5 = [float(v) for v in sl_net_series[-5:]]
+            sl_positive = sum(1 for v in sl_last5 if v > 0)
+            sl_total = sum(sl_last5) / 10000
+            if sl_positive >= 4 and sl_total > 5000:
+                result.capital_smart_money = "超大单持续买入"
+            elif sl_positive <= 1 and sl_total < -5000:
+                result.capital_smart_money = "超大单持续卖出"
+            else:
+                result.capital_smart_money = ""
+
+            # === 7. 对 score_breakdown 做调整 ===
+            p4_adj = 0
+            if trend == "持续流入" and consecutive >= 3:
+                p4_adj += 3
+            elif trend == "持续流入":
+                p4_adj += 2
+            elif trend == "间歇流入":
+                p4_adj += 1
+            elif trend == "持续流出" and consecutive <= -3:
+                p4_adj -= 3
+            elif trend == "持续流出":
+                p4_adj -= 2
+            elif trend == "资金离场":
+                p4_adj -= 1
+
+            if result.capital_smart_money == "超大单持续买入":
+                p4_adj += 2
+            elif result.capital_smart_money == "超大单持续卖出":
+                p4_adj -= 2
+
+            if intensity == "大幅":
+                p4_adj = int(p4_adj * 1.3)
+
+            p4_adj = max(-5, min(5, p4_adj))
+            if p4_adj != 0:
+                result.score_breakdown['p4_capital_flow'] = p4_adj
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[P4] {stock_code} 主力资金追踪失败: {e}", exc_info=True)
+
+    @staticmethod
     def score_capital_flow_trend(result: TrendAnalysisResult, df: pd.DataFrame):
         """资金面连续性检测：近3日量价关系判断持续性资金流向"""
         if df is None or len(df) < 5:
@@ -547,6 +729,131 @@ class ScoringSystem:
             result.score_breakdown['cf_trend'] = -2
         
     
+    @staticmethod
+    def score_lhb_sentiment(result: TrendAnalysisResult, stock_code: str):
+        """P5-C: 量化情绪指标 - 龙虎榜机构净买额分析
+
+        通过个股龙虎榜历史记录过滤近30天，统计机构买卖行为：
+        - 机构净买额为正且上榜次数多：机构持续买入信号（+2~+3）
+        - 机构净买额为负且上榜次数多：机构持续卖出信号（-2~-3）
+        - 上榜但机构净买额接近零：博弈激烈，中性（0）
+        - 未上榜：不处理
+
+        使用 LHBCache 每日缓存，避免重复拉全量数据。
+        """
+        try:
+            from .lhb_cache import LHBCache
+            lhb_data = LHBCache.query(stock_code)
+            if lhb_data is None:
+                return
+
+            lhb_net = lhb_data.get('lhb_net_buy', 0.0)
+            inst_net = lhb_data.get('lhb_institution_net', 0.0)
+            times = lhb_data.get('lhb_times', 0)
+
+            result.lhb_net_buy = round(lhb_net, 2)
+            result.lhb_institution_net = round(inst_net, 2)
+            result.lhb_times = times
+
+            p5c_adj = 0
+            inst_net_wan = inst_net / 10000
+
+            if inst_net_wan > 5000:
+                p5c_adj += 3
+                result.lhb_signal = "机构持续买入"
+            elif inst_net_wan > 1000:
+                p5c_adj += 2
+                result.lhb_signal = "机构净买入"
+            elif inst_net_wan < -5000:
+                p5c_adj -= 3
+                result.lhb_signal = "机构持续卖出"
+            elif inst_net_wan < -1000:
+                p5c_adj -= 2
+                result.lhb_signal = "机构净卖出"
+            elif times >= 3:
+                result.lhb_signal = "龙虎榜活跃"
+
+            p5c_adj = max(-3, min(3, p5c_adj))
+            if p5c_adj != 0:
+                result.score_breakdown['p5c_lhb'] = p5c_adj
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
+
+    @staticmethod
+    def score_dzjy_and_holder(result: TrendAnalysisResult, stock_code: str):
+        """P5-C补充: 股东人数变化率（带超时保护）"""
+        import threading
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # ---- 股东人数变化率（线程+超时5秒）----
+        def _fetch_holder():
+            try:
+                import akshare as ak
+                df_holder = ak.stock_zh_a_gdhs(symbol=stock_code)
+                if df_holder is None or df_holder.empty or len(df_holder) < 2:
+                    return
+                cols = df_holder.columns.tolist()
+                holder_col = next((c for c in cols if '股东' in c or '持股人数' in c), None)
+                if not holder_col:
+                    return
+                latest = float(df_holder.iloc[-1][holder_col])
+                prev = float(df_holder.iloc[-2][holder_col])
+                if prev <= 0:
+                    return
+                change_pct = (latest - prev) / prev * 100
+                result.holder_change_pct = round(change_pct, 2)
+                adj_holder = 0
+                if change_pct < -5:
+                    result.holder_signal = "筹码集中（缩股）"
+                    adj_holder = 2
+                elif change_pct < -2:
+                    result.holder_signal = "筹码小幅集中"
+                    adj_holder = 1
+                elif change_pct > 5:
+                    result.holder_signal = "筹码分散（增股）"
+                    adj_holder = -1
+                if adj_holder != 0:
+                    result.score_breakdown['p5c_holder'] = adj_holder
+            except Exception as e:
+                logger.debug(f"[P5-C] {stock_code} 股东人数查询失败: {e}")
+
+        t_holder = threading.Thread(target=_fetch_holder, daemon=True)
+        t_holder.start()
+        t_holder.join(timeout=5)
+        if t_holder.is_alive():
+            logger.debug(f"[P5-C] {stock_code} 股东人数查询超时，已跳过")
+
+    @staticmethod
+    def score_vwap_trend(result: TrendAnalysisResult):
+        """P5-B: VWAP 机构成本线评分
+
+        逻辑：
+        - 机构成本上移 + 价格在VWAP上方 → 机构持续增持，+2
+        - 机构成本下移 + 价格在VWAP下方 → 机构持续离场，-2
+        - 机构成本上移 + 价格在VWAP下方 → 短期回调（未跌破成本），+1（支撑）
+        - 机构成本下移 + 价格在VWAP上方 → 反弹但成本仍在下移，-1（阻力）
+        """
+        vwap_trend = result.vwap_trend
+        vwap_pos = result.vwap_position
+        if not vwap_trend or not vwap_pos:
+            return
+
+        adj = 0
+        if vwap_trend == "机构成本上移" and vwap_pos == "价格在VWAP上方":
+            adj = 2
+        elif vwap_trend == "机构成本下移" and vwap_pos == "价格在VWAP下方":
+            adj = -2
+        elif vwap_trend == "机构成本上移" and vwap_pos == "价格在VWAP下方":
+            adj = 1
+        elif vwap_trend == "机构成本下移" and vwap_pos == "价格在VWAP上方":
+            adj = -1
+
+        if adj != 0:
+            result.score_breakdown['vwap_adj'] = adj
+
     @staticmethod
     def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None):
         """板块强弱评分"""
@@ -1411,13 +1718,23 @@ class ScoringSystem:
                             target = neckline + pattern_height
                             result.chart_pattern = "双底(W底)"
                             result.chart_pattern_signal = "看多"
+                            # P2b 突破量能确认
+                            _last_vol = float(df.iloc[-1].get('volume', 0) or 0)
+                            _avg_vol20 = float(df['volume'].tail(21).iloc[:-1].mean()) if len(df) >= 21 else 0
+                            vol_ratio = _last_vol / _avg_vol20 if _avg_vol20 > 0 else 1.0
+                            if vol_ratio >= 1.5:
+                                adj_pattern = 6
+                                vol_note = f"放量突破（量比{vol_ratio:.1f}x），强势确认"
+                            else:
+                                adj_pattern = 0
+                                vol_note = f"量能不足（量比{vol_ratio:.1f}x），需量能配合再介入"
                             result.chart_pattern_note = (
                                 f"双底形态：两谷约{min(t1_val, t2_val):.2f}，颈线{neckline:.2f}，"
-                                f"理论目标位{target:.2f}"
+                                f"理论目标位{target:.2f}，{vol_note}"
                             )
-                            result.chart_pattern_adj = 5
-                            result.signal_reasons.append(f"✅ 识别到双底(W底)形态，颈线{neckline:.2f}，看多信号，目标{target:.2f}")
-                            result.score_breakdown['chart_pattern_adj'] = 5
+                            result.chart_pattern_adj = adj_pattern
+                            result.signal_reasons.append(f"✅ 识别到双底(W底)形态，颈线{neckline:.2f}，看多信号，目标{target:.2f}，{vol_note}")
+                            result.score_breakdown['chart_pattern_adj'] = adj_pattern
                             return
 
             # === 头肩顶 检测 ===
@@ -1466,13 +1783,26 @@ class ScoringSystem:
                             target = neckline + pattern_height
                             result.chart_pattern = "头肩底"
                             result.chart_pattern_signal = "看多"
+                            # P2b 突破量能确认
+                            _last_vol = float(df.iloc[-1].get('volume', 0) or 0)
+                            _avg_vol20 = float(df['volume'].tail(21).iloc[:-1].mean()) if len(df) >= 21 else 0
+                            vol_ratio = _last_vol / _avg_vol20 if _avg_vol20 > 0 else 1.0
+                            if vol_ratio >= 1.5:
+                                adj_pattern = 8
+                                vol_note = f"放量突破（量比{vol_ratio:.1f}x），强势确认"
+                            elif vol_ratio >= 1.3:
+                                adj_pattern = 5
+                                vol_note = f"量能确认（量比{vol_ratio:.1f}x）"
+                            else:
+                                adj_pattern = 0
+                                vol_note = f"量能不足（量比{vol_ratio:.1f}x），需量能配合再介入"
                             result.chart_pattern_note = (
                                 f"头肩底：底部{hd_val:.2f}，颈线{neckline:.2f}，"
-                                f"理论涨幅目标{target:.2f}"
+                                f"理论涨幅目标{target:.2f}，{vol_note}"
                             )
-                            result.chart_pattern_adj = 7
-                            result.signal_reasons.append(f"✅ 识别到头肩底形态，颈线{neckline:.2f}，经典底部反转，强烈看多，目标{target:.2f}")
-                            result.score_breakdown['chart_pattern_adj'] = 7
+                            result.chart_pattern_adj = adj_pattern
+                            result.signal_reasons.append(f"✅ 识别到头肩底形态，颈线{neckline:.2f}，经典底部反转，强烈看多，目标{target:.2f}，{vol_note}")
+                            result.score_breakdown['chart_pattern_adj'] = adj_pattern
                             return
 
         except Exception as e:
@@ -1565,7 +1895,7 @@ class ScoringSystem:
                     continue
                 amp = (high[i] - low[i]) / close[i - 1] if close[i - 1] > 0 else 0
                 shadow_down = (high[i] - close[i]) / (high[i] - low[i] + 1e-6)
-                if amp > 0.025 and shadow_down > 0.55:
+                if amp > 0.035 and shadow_down > 0.65:
                     behaviors.append("冲高回落")
                     behavior_days["冲高回落"] = abs(i)
                     notes.append(f"近{abs(i)}日冲高回落（振幅{amp*100:.1f}%，上影线占比{shadow_down*100:.0f}%）")
@@ -1729,9 +2059,14 @@ class ScoringSystem:
                 intent_parts.append("主力试盘")
                 detail_parts.append("冲高回落试盘（谨慎）")
             if "连续" in " ".join(behaviors) and "放量下跌" in " ".join(behaviors):
-                bear_signals += 3
-                intent_parts.append("持续出货")
-                detail_parts.append("连续放量下跌（出货信号）")
+                if is_bear:
+                    # 熊市中连续放量下跌往往是超卖反弹前兆，降权处理
+                    bull_signals += 1
+                    detail_parts.append("连续放量下跌（熊市超卖，关注反弹）")
+                else:
+                    bear_signals += 3
+                    intent_parts.append("持续出货")
+                    detail_parts.append("连续放量下跌（出货信号）")
             if "冲高回落" in behaviors and "主力试盘" not in behaviors:
                 bear_signals += 1
                 detail_parts.append("冲高回落（压力显现）")
@@ -2152,61 +2487,87 @@ class ScoringSystem:
             pass
 
     @staticmethod
+    def _fib_count_tests(close_series, level: float, tol: float = 0.02) -> int:
+        """P5-D辅助: 统计历史上价格触碰某Fib位的次数（有效测试次数）"""
+        count = 0
+        in_zone = False
+        for p in close_series:
+            if abs(p - level) / level <= tol if level > 0 else False:
+                if not in_zone:
+                    count += 1
+                    in_zone = True
+            else:
+                in_zone = False
+        return count
+
+    @staticmethod
     def score_fibonacci_levels(result: TrendAnalysisResult, df: pd.DataFrame):
-        """P1: 黄金分割回撤位分析
-        
-        基于近期波段高低点（过去60根K线内）计算 0.382 / 0.500 / 0.618 回撤位。
-        判断当前价格是否处于关键支撑/阻力区，给出操作信号和评分调整：
-        
-        上升段回撤：高点→低点方向
-        - 当前价在 0.382 支撑区（±2%）：+4（黄金回撤买入区）
-        - 当前价在 0.500 支撑区（±2%）：+2（中度回撤，可关注）
-        - 当前价在 0.618 支撑区（±2%）：+3（深度回撤，超跌反弹机会）
-        - 当前价已跌破 0.618：-3（结构破坏，趋势可能反转）
-        
-        下跌段反弹（阻力位）：
-        - 当前价触及 0.382 阻力（±2%）：-2（可能遇阻回落）
-        - 当前价触及 0.618 阻力（±2%）：-3（强阻力，建议减仓）
+        """P1/P5-D: 黄金分割回撤位分析（多时间窗口 + 历史有效性）
+
+        P5-D 增强：
+        1. 多时间窗口自动选择：优先选振幅>=5%且波动最大的窗口（20/60/120日）
+        2. 历史有效性验证：统计该Fib位在全段历史中被测试次数
+           - >=3次：高历史有效性，评分加成+1
+           - 2次：中历史有效性，评分不变
+           - 1次：低历史有效性，评分打折
         """
         if df is None or len(df) < 30:
             return
         try:
             close = df['close'].values
-            n = min(60, len(close))
+            current_price = float(close[-1])
+
+            # P5-D: 多窗口选择 —— 选振幅最大（信息量最丰富）且振幅>=5%的窗口
+            best_window = None
+            best_range = 0.0
+            for w in [20, 60, 120]:
+                if len(close) < w:
+                    continue
+                seg = close[-w:]
+                hi = float(seg.max())
+                lo = float(seg.min())
+                amp = (hi - lo) / hi if hi > 0 else 0
+                if amp >= 0.05 and amp > best_range:
+                    best_range = amp
+                    best_window = w
+
+            if best_window is None:
+                # 振幅均<5%，退回到最大可用窗口（至少做中性分析）
+                best_window = min(60, len(close))
+
+            n = best_window
             recent = close[-n:]
-            
             swing_high_idx = int(recent.argmax())
             swing_low_idx = int(recent.argmin())
             swing_high = float(recent[swing_high_idx])
             swing_low = float(recent[swing_low_idx])
-            
+
             if swing_high <= swing_low or (swing_high - swing_low) / swing_high < 0.03:
-                return  # 振幅太小，黄金分割无意义
-            
-            current_price = float(close[-1])
+                return
+
             diff = swing_high - swing_low
-            
-            # 判断当前是上升段（高点在后）还是下跌段（高点在前）
-            is_uptrend_context = swing_high_idx > swing_low_idx  # 先低后高：回撤分析
-            
+            is_uptrend_context = swing_high_idx > swing_low_idx
+
             f382 = round(swing_high - diff * 0.382, 2)
             f500 = round(swing_high - diff * 0.500, 2)
             f618 = round(swing_high - diff * 0.618, 2)
-            
+
             result.fib_swing_high = swing_high
             result.fib_swing_low = swing_low
             result.fib_level_382 = f382
             result.fib_level_500 = f500
             result.fib_level_618 = f618
-            
-            tol = 0.02  # ±2% 容忍带
+            result.fib_window = n
+
+            tol = 0.02
             adj = 0
-            
+
             def near(price, level, tolerance=tol):
                 return abs(price - level) / level <= tolerance if level > 0 else False
-            
+
+            # 确定当前触碰的Fib位
+            active_level = None
             if is_uptrend_context:
-                # 上升趋势回调：寻找支撑
                 if current_price < f618 * (1 - tol):
                     result.fib_current_zone = "已跌破0.618（结构破坏）"
                     result.fib_signal = "结构破坏，谨慎"
@@ -2215,44 +2576,66 @@ class ScoringSystem:
                 elif near(current_price, f618):
                     result.fib_current_zone = "0.618深度回撤支撑区"
                     result.fib_signal = "接近支撑买入区"
-                    adj = 3
+                    adj = 4
+                    active_level = f618
                     result.signal_reasons.append(f"价格触及0.618黄金分割支撑({f618:.2f})，深度回调逢低机会")
                 elif near(current_price, f500):
                     result.fib_current_zone = "0.500中度回撤支撑区"
                     result.fib_signal = "接近支撑买入区"
                     adj = 2
+                    active_level = f500
                     result.signal_reasons.append(f"价格在0.5回撤支撑附近({f500:.2f})，中度回调可关注")
                 elif near(current_price, f382):
                     result.fib_current_zone = "0.382浅度回撤支撑区"
-                    result.fib_signal = "接近支撑买入区"
-                    adj = 4
-                    result.signal_reasons.append(f"价格在0.382黄金分割支撑({f382:.2f})，浅回调强势特征")
+                    result.fib_signal = "浅回调，等待企稳确认"
+                    adj = 0
+                    active_level = f382
+                    result.signal_reasons.append(f"价格在0.382回撤支撑({f382:.2f})，浅回调中，等待企稳确认后介入")
                 else:
                     result.fib_current_zone = ""
                     result.fib_signal = "中性"
             else:
-                # 下跌趋势反弹：寻找阻力
                 if near(current_price, f382):
                     result.fib_current_zone = "0.382反弹阻力区"
                     result.fib_signal = "接近阻力卖出区"
                     adj = -2
+                    active_level = f382
                     result.risk_factors.append(f"反弹触及0.382阻力位({f382:.2f})，注意减仓")
                 elif near(current_price, f618):
                     result.fib_current_zone = "0.618强阻力区"
                     result.fib_signal = "接近阻力卖出区"
                     adj = -3
+                    active_level = f618
                     result.risk_factors.append(f"反弹触及0.618强阻力({f618:.2f})，建议减仓防回落")
                 else:
                     result.fib_current_zone = ""
                     result.fib_signal = "中性"
-            
+
+            # P5-D: 历史有效性验证
+            if active_level is not None and len(close) > n:
+                test_count = ScoringSystem._fib_count_tests(close, active_level, tol)
+                result.fib_test_count = test_count
+                if test_count >= 3:
+                    result.fib_validity = "高历史有效性"
+                    adj = adj + (1 if adj > 0 else -1)  # 加强原方向
+                elif test_count == 2:
+                    result.fib_validity = "中历史有效性"
+                else:
+                    result.fib_validity = "低历史有效性"
+                    adj = int(adj * 0.7)  # 打折：首次测试可靠性较低
+            elif active_level is not None:
+                result.fib_test_count = 1
+                result.fib_validity = "低历史有效性"
+
             result.fib_adj = adj
             if adj != 0:
                 result.score_breakdown['fib_adj'] = adj
+
+            validity_note = f" [{result.fib_validity}，历史测试{result.fib_test_count}次]" if result.fib_validity else ""
             result.fib_note = (
-                f"波段高={swing_high:.2f} 低={swing_low:.2f} | "
+                f"波段高={swing_high:.2f} 低={swing_low:.2f}（{n}日窗口） | "
                 f"0.382={f382:.2f} 0.5={f500:.2f} 0.618={f618:.2f} | "
-                f"{result.fib_current_zone or '价格在区间中部'}"
+                f"{result.fib_current_zone or '价格在区间中部'}{validity_note}"
             )
         except Exception:
             pass
@@ -2325,7 +2708,7 @@ class ScoringSystem:
                     # 放量突破刚发生
                     result.vol_price_structure = "放量突破"
                     result.vol_price_breakout_price = breakout_price
-                    adj = 5 if current_vol >= vol_ma20 * 1.5 else 4
+                    adj = 5 if current_vol >= vol_ma20 * 2.0 else 0
                     result.signal_reasons.append(
                         f"放量突破前高({breakout_price:.2f})，成交量{current_vol/vol_ma20:.1f}倍均量，趋势确认"
                     )
@@ -2336,10 +2719,17 @@ class ScoringSystem:
                     if is_near_breakout and is_light_vol:
                         result.vol_price_structure = "缩量回踩"
                         result.vol_price_breakout_price = breakout_price
-                        adj = 4
-                        result.signal_reasons.append(
-                            f"缩量回踩突破位({breakout_price:.2f})，量能萎缩健康，可关注买入机会"
-                        )
+                        _ma5_cur = float(pd.Series(close).rolling(5).mean().iloc[-1]) if n >= 5 else current_price
+                        if current_price >= _ma5_cur:
+                            adj = 2
+                            result.signal_reasons.append(
+                                f"缩量回踩突破位({breakout_price:.2f})，价格在MA5上方，量能萎缩健康，可关注买入机会"
+                            )
+                        else:
+                            adj = -1
+                            result.risk_factors.append(
+                                f"缩量回踩突破位({breakout_price:.2f})，价格跌破MA5，回踩渔度偏大，谨慎介入"
+                            )
                     elif not is_near_breakout and current_price < breakout_price * 0.97:
                         # 已跌破突破位，信号失败
                         result.vol_price_structure = "突破失败"
@@ -2403,7 +2793,7 @@ class ScoringSystem:
                    'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
                    'weekly_trend_adj', 'chart_pattern_adj',
                    'fib_adj', 'vol_price_structure', 'vol_anomaly',
-                   'p3_resonance']
+                   'p3_resonance', 'p4_capital_flow', 'vwap_adj', 'p5c_lhb', 'p5c_holder']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚
@@ -2494,3 +2884,101 @@ class ScoringSystem:
             result.buy_signal = BuySignal.REDUCE
         else:
             result.buy_signal = BuySignal.SELL
+
+    @staticmethod
+    def score_gap_analysis(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P2a: 缺口分析 - 识别近30日未回补跳空缺口，判断压力/支撑
+
+        逻辑：
+        - 向上跳空缺口（open > prev_high）：
+          - 价格在缺口上方且未回补 → 缺口支撑，+2
+          - 价格已回补缺口 → 缺口回补完成，中性 0
+          - 价格已跌入缺口 → 缺口破位，-2
+        - 向下跳空缺口（open < prev_low）：
+          - 价格在缺口下方且未回补 → 缺口压力，-2
+          - 价格已回补缺口 → 缺口回补，需谨慎（阻力位），-1
+        - 扫描最近30根K线，只取最近一个有效缺口
+        """
+        if df is None or len(df) < 5:
+            return
+
+        price = result.current_price
+        if price <= 0:
+            return
+
+        scan_df = df.tail(30).reset_index(drop=True)
+        adj = 0
+
+        for i in range(len(scan_df) - 1, 0, -1):
+            row = scan_df.iloc[i]
+            prev = scan_df.iloc[i - 1]
+            open_p = float(row.get('open', 0) or 0)
+            prev_high = float(prev.get('high', 0) or 0)
+            prev_low = float(prev.get('low', 0) or 0)
+            if open_p <= 0 or prev_high <= 0 or prev_low <= 0:
+                continue
+
+            # 向上跳空缺口：当日开盘 > 前日最高
+            if open_p > prev_high:
+                gap_lower = prev_high
+                gap_upper = open_p
+                result.gap_type = "向上跳空"
+                result.gap_upper = round(gap_upper, 2)
+                result.gap_lower = round(gap_lower, 2)
+                # 判断是否已回补（价格曾进入缺口区间）
+                filled = any(
+                    float(scan_df.iloc[j].get('low', 0) or 0) <= gap_lower
+                    for j in range(i + 1, len(scan_df))
+                )
+                result.gap_filled = filled
+                if filled:
+                    result.gap_signal = "缺口回补完成"
+                    adj = 0
+                elif price >= gap_lower:
+                    from .types import TrendStatus as _TS
+                    _bear = result.trend_status in (_TS.BEAR, _TS.STRONG_BEAR, _TS.WEAK_BEAR)
+                    # 时效性：缺口距今天数（scan_df末尾=今天，i=缺口位置）
+                    _days_ago = len(scan_df) - 1 - i
+                    _stale = _days_ago > 10
+                    # 价格历史位置：近60日分位数，高位(>60%)的向上缺口往往是顶部跳空，降级
+                    _lookback60 = df.tail(60)
+                    _p60_high = float(_lookback60['high'].max()) if len(_lookback60) > 0 else price
+                    _p60_low = float(_lookback60['low'].min()) if len(_lookback60) > 0 else price
+                    _price_pct = (price - _p60_low) / (_p60_high - _p60_low) if _p60_high > _p60_low else 0.5
+                    _high_pos = _price_pct > 0.6  # 近60日60%分位以上视为高位
+                    if _bear:
+                        result.gap_signal = "未回补支撑缺口(空头趋势降级)"
+                        adj = 1
+                    elif _stale or _high_pos:
+                        result.gap_signal = "未回补支撑缺口(高位/时效衰减)"
+                        adj = 1
+                    else:
+                        result.gap_signal = "未回补支撑缺口"
+                        adj = 2
+                else:
+                    result.gap_signal = "向上缺口已破位"
+                    adj = -2
+                break
+
+            # 向下跳空缺口：当日开盘 < 前日最低
+            if open_p < prev_low:
+                gap_upper = prev_low
+                gap_lower = open_p
+                result.gap_type = "向下跳空"
+                result.gap_upper = round(gap_upper, 2)
+                result.gap_lower = round(gap_lower, 2)
+                filled = any(
+                    float(scan_df.iloc[j].get('high', 0) or 0) >= gap_upper
+                    for j in range(i + 1, len(scan_df))
+                )
+                result.gap_filled = filled
+                if filled:
+                    result.gap_signal = "向下缺口已回补"
+                    adj = 0
+                else:
+                    result.gap_signal = "未回补压力缺口"
+                    adj = -2
+                break
+
+        if adj != 0:
+            result.score_breakdown['gap_adj'] = adj

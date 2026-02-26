@@ -41,6 +41,7 @@ class TechnicalIndicators:
         df = TechnicalIndicators._calc_adx(df)
         df = TechnicalIndicators._calc_macd_momentum(df)
         df = TechnicalIndicators._calc_ma_spread_rate(df)
+        df = TechnicalIndicators._calc_vwap(df)
         
         return df.fillna(0)
     
@@ -608,6 +609,27 @@ class TechnicalIndicators:
         except Exception:
             return 0.5
     
+    @staticmethod
+    def _calc_vwap(df: pd.DataFrame) -> pd.DataFrame:
+        """计算多日累积VWAP（10日/20日）及斜率
+
+        VWAP_N = sum(typical_price * volume, N) / sum(volume, N)
+        VWAP_slope = (VWAP_today - VWAP_N_days_ago) / N，正=机构成本上移，负=成本下移
+        """
+        try:
+            tp = (df['high'] + df['low'] + df['close']) / 3  # typical price
+            tp_vol = tp * df['volume']
+            for window in [10, 20]:
+                vol_sum = df['volume'].rolling(window=window, min_periods=window).sum()
+                tp_vol_sum = tp_vol.rolling(window=window, min_periods=window).sum()
+                vwap = tp_vol_sum / vol_sum.replace(0, np.nan)
+                df[f'VWAP{window}'] = vwap
+                # 斜率：与 window 天前的 VWAP 之差，除以 window 归一化
+                df[f'VWAP{window}_SLOPE'] = (vwap - vwap.shift(window)) / window
+        except Exception as e:
+            logger.debug(f"VWAP计算失败: {e}")
+        return df
+
     @staticmethod
     def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
         """
