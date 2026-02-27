@@ -196,14 +196,18 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         {(qe.capital_flow_signal ?? qe.capitalFlowSignal) && (qe.capital_flow_signal ?? qe.capitalFlowSignal) !== '资金面数据正常' && (
           <><span className="text-white/20">|</span><span>资金:<span className="text-white/70">{qe.capital_flow_signal ?? qe.capitalFlowSignal}</span></span></>
         )}
-        {(qe.sector_name ?? qe.sectorName) && (
-          <><span className="text-white/20">|</span>
+        {(qe.sector_name ?? qe.sectorName) && (() => {
+          const sp = qe.sector_pct ?? qe.sectorPct;
+          const s5d = qe.sector_5d_pct ?? qe.sector5dPct;
+          const sRank = qe.sector_rank ?? qe.sectorRank;
+          const sTotal = qe.sector_rank_total ?? qe.sectorRankTotal;
+          return <><span className="text-white/20">|</span>
           <span>板块:<span className="text-white/70">{qe.sector_name ?? qe.sectorName}
-            {(qe.sector_pct ?? qe.sectorPct) != null && ` ${(qe.sector_pct ?? qe.sectorPct) >= 0 ? '+' : ''}${(qe.sector_pct ?? qe.sectorPct).toFixed(2)}%`}
-            {(qe.sector_rank ?? qe.sectorRank) != null && (qe.sector_rank_total ?? qe.sectorRankTotal) != null && ` 排名${qe.sector_rank ?? qe.sectorRank}/${qe.sector_rank_total ?? qe.sectorRankTotal}`}
-            {(qe.sector_5d_pct ?? qe.sector5dPct) != null && ` 5日${(qe.sector_5d_pct ?? qe.sector5dPct) >= 0 ? '+' : ''}${(qe.sector_5d_pct ?? qe.sector5dPct).toFixed(1)}%`}
-          </span></span></>
-        )}
+            {typeof sp === 'number' && ` ${sp >= 0 ? '+' : ''}${sp.toFixed(2)}%`}
+            {typeof sRank === 'number' && typeof sTotal === 'number' && ` 排名${sRank}/${sTotal}`}
+            {typeof s5d === 'number' && ` 5日${s5d >= 0 ? '+' : ''}${s5d.toFixed(1)}%`}
+          </span></span></>;
+        })()}
         {(qe.market_regime ?? qe.marketRegime) && (() => {
           const regimeMap: Record<string, { label: string; color: string }> = {
             bull: { label: '牛市/强势', color: 'text-success' },
