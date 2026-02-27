@@ -95,20 +95,6 @@ const IndicatorCard: React.FC<{
   </div>
 );
 
-/** 核心指标卡片 */
-const CoreMetric: React.FC<{
-  label: string;
-  value: string | number | undefined;
-  color?: string;
-  sub?: string;
-}> = ({ label, value, color, sub }) => (
-  <div className="bg-white/[0.03] rounded-lg p-2.5 text-center">
-    <div className="text-[10px] text-white/30 mb-0.5">{label}</div>
-    <div className="text-[12px] font-mono text-white/40">{value ?? '--'}</div>
-    {sub && <div className={`text-[12px] font-semibold mt-0.5 truncate ${color || 'text-white/80'}`}>{sub}</div>}
-  </div>
-);
-
 /**
  * 量化分析详情组件
  * 展示技术指标、估值、资金面、筹码等量化数据
@@ -120,7 +106,6 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
   if (!qe || Object.keys(qe).length === 0) return null;
 
   const signalScore = qe.signal_score ?? qe.signalScore;
-  const trendStrength = qe.trend_strength ?? qe.trendStrength;
 
   // 提取指标值（兼容 snake_case / camelCase）
   const rsiVal = qe.rsi ?? qe.rsi12 ?? 50;
@@ -226,34 +211,6 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
 
       {expanded && (
         <div className="space-y-4">
-          {/* 核心指标（结论突出） */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <CoreMetric
-              label="综合评分"
-              value={signalScore}
-              color={getScoreColor(signalScore)}
-              sub={qe.buy_signal ?? qe.buySignal}
-            />
-            <CoreMetric
-              label="趋势强度"
-              value={trendStrength}
-              color={getScoreColor(trendStrength)}
-              sub={qe.trend_status ?? qe.trendStatus}
-            />
-            <CoreMetric
-              label="量比"
-              value={(qe.volume_ratio ?? qe.volumeRatio)?.toFixed(2)}
-              color={(qe.volume_ratio ?? qe.volumeRatio) > 2 ? 'text-warning' : 'text-white'}
-              sub={qe.volume_status ?? qe.volumeStatus}
-            />
-            <CoreMetric
-              label="风险收益比"
-              value={(qe.risk_reward_ratio ?? qe.riskRewardRatio)?.toFixed(2)}
-              color={(qe.risk_reward_ratio ?? qe.riskRewardRatio) >= 2 ? 'text-success' : 'text-warning'}
-              sub={qe.risk_reward_verdict ?? qe.riskRewardVerdict}
-            />
-          </div>
-
           {/* 技术指标（每个都带结论） */}
           <div>
             <h4 className="text-[11px] font-medium text-white/40 mb-2">技术指标</h4>
@@ -622,7 +579,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           )}
 
           {/* P4: 主力资金追踪 */}
-          {(qe.capital_flow_trend || (qe.capital_flow_days as number) !== 0) && (
+          {(qe.capital_flow_trend || (typeof qe.capital_flow_days === 'number' && qe.capital_flow_days !== 0) || (typeof qe.capital_flow_5d_total === 'number' && qe.capital_flow_5d_total !== 0)) && (
             <div>
               <h4 className="text-[11px] font-medium text-white/40 mb-2">主力资金追踪</h4>
               <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
@@ -791,31 +748,6 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                     )}
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* 信号明细（带时间维度徽章） */}
-          {(qe.signal_reasons ?? qe.signalReasons)?.length > 0 && (
-            <div>
-              <h4 className="text-xs font-medium text-white/40 mb-2">信号明细</h4>
-              <div className="space-y-1">
-                {(qe.signal_reasons ?? qe.signalReasons)?.map((r: string, i: number) => {
-                  const isMidLong = r.includes('中长期') || r.includes('20日') || r.includes('中期');
-                  const isShort = r.includes('短期') && !isMidLong;
-                  return (
-                    <div key={i} className="text-[11px] text-white/60 flex items-start gap-1.5">
-                      <span className="text-success mt-0.5 shrink-0">✓</span>
-                      <span className="flex-1">{r}</span>
-                      {isMidLong && (
-                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-400 font-semibold">中线</span>
-                      )}
-                      {isShort && (
-                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-yellow-500/15 text-yellow-400 font-semibold">短线</span>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             </div>
           )}
