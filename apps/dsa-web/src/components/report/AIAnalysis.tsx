@@ -84,7 +84,7 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
           {/* 反面论据 */}
           {counterArguments && counterArguments.length > 0 && (
             <div className="p-3 rounded-lg bg-warning/5 border border-warning/10">
-              <h4 className="text-[10px] text-warning font-medium mb-2">⚖️ 反面论据（看多理由）</h4>
+              <h4 className="text-[10px] text-warning font-medium mb-2">⚖️ 反面论证（当前判断的潜在漏洞）</h4>
               <div className="space-y-1.5">
                 {counterArguments.map((item: string, i: number) => (
                   <div key={i} className="text-[11px] text-white/80 flex items-start gap-1.5">

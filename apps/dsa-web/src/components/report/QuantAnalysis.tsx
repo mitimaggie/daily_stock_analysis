@@ -197,8 +197,23 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           <><span className="text-white/20">|</span><span>资金:<span className="text-white/70">{qe.capital_flow_signal ?? qe.capitalFlowSignal}</span></span></>
         )}
         {(qe.sector_name ?? qe.sectorName) && (
-          <><span className="text-white/20">|</span><span>板块:<span className="text-white/70">{qe.sector_name ?? qe.sectorName} {qe.sector_signal ?? qe.sectorSignal ?? ''}</span></span></>
+          <><span className="text-white/20">|</span>
+          <span>板块:<span className="text-white/70">{qe.sector_name ?? qe.sectorName}
+            {(qe.sector_pct ?? qe.sectorPct) != null && ` ${(qe.sector_pct ?? qe.sectorPct) >= 0 ? '+' : ''}${(qe.sector_pct ?? qe.sectorPct).toFixed(2)}%`}
+            {(qe.sector_rank ?? qe.sectorRank) != null && (qe.sector_rank_total ?? qe.sectorRankTotal) != null && ` 排名${qe.sector_rank ?? qe.sectorRank}/${qe.sector_rank_total ?? qe.sectorRankTotal}`}
+            {(qe.sector_5d_pct ?? qe.sector5dPct) != null && ` 5日${(qe.sector_5d_pct ?? qe.sector5dPct) >= 0 ? '+' : ''}${(qe.sector_5d_pct ?? qe.sector5dPct).toFixed(1)}%`}
+          </span></span></>
         )}
+        {(qe.market_regime ?? qe.marketRegime) && (() => {
+          const regimeMap: Record<string, { label: string; color: string }> = {
+            bull: { label: '牛市/强势', color: 'text-success' },
+            bear: { label: '熊市/弱势', color: 'text-danger' },
+            sideways: { label: '震荡市', color: 'text-warning' },
+            recovery: { label: '修复中', color: 'text-cyan-400' },
+          };
+          const r = regimeMap[qe.market_regime ?? qe.marketRegime] ?? { label: qe.market_regime ?? qe.marketRegime, color: 'text-white/50' };
+          return <><span className="text-white/20">|</span><span>大盘:<span className={r.color}>{r.label}</span></span></>;
+        })()}
       </div>
 
       {expanded && (
