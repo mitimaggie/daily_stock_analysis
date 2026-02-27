@@ -321,17 +321,35 @@ def main() -> int:
                 logger.warning(f"FastAPI 启动失败（可忽略）: {e}")
         # 2. 启动 Bot Stream 客户端
         start_bot_stream_clients(config)
-        # 3. 启动定时调度（不立即执行分析）
+        # 3. 启动定时调度
         from src.scheduler import Scheduler
         scheduler = Scheduler(schedule_time=config.schedule_time)
-        scheduler.set_daily_task(
-            lambda: run_full_analysis(config, args, stock_codes),
-            run_immediately=False   # 关键：不立即分析
-        )
-        if getattr(config, 'chip_schedule_time', None) and config.chip_schedule_time != config.schedule_time:
-            scheduler.add_daily_job(config.chip_schedule_time, lambda: run_chip_only(config))
-            logger.info(f"已注册每日筹码拉取任务，执行时间: {config.chip_schedule_time}")
-        # 4. 后台新闻抓取（每 2 小时，9:00-22:00 窗口内）
+
+        # 定时分析 + 回测：仅在 SCHEDULE_ENABLED=true 时注册
+        if config.schedule_enabled:
+            scheduler.set_daily_task(
+                lambda: run_full_analysis(config, args, stock_codes),
+                run_immediately=False
+            )
+            if getattr(config, 'chip_schedule_time', None) and config.chip_schedule_time != config.schedule_time:
+                scheduler.add_daily_job(config.chip_schedule_time, lambda: run_chip_only(config))
+                logger.info(f"已注册每日筹码拉取任务，执行时间: {config.chip_schedule_time}")
+            def run_backtest_job():
+                try:
+                    from src.backtest import BacktestRunner
+                    runner = BacktestRunner()
+                    report = runner.run(lookback_days=90)
+                    logger.info(f"[回测] 自动回填完成")
+                    logger.debug(f"[回测] {report[:200]}")
+                except Exception as e:
+                    logger.warning(f"[回测] 自动回填失败: {e}")
+            scheduler.add_daily_job("20:00", run_backtest_job)
+            logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
+            logger.info("已注册每日回测自动回填任务，执行时间: 20:00")
+        else:
+            logger.info("SCHEDULE_ENABLED=false，跳过定时分析和回测任务注册")
+
+        # 后台新闻抓取（每 2 小时，9:00-22:00 窗口内，不受 SCHEDULE_ENABLED 影响）
         try:
             from data_provider.news_fetcher import run_news_fetch_job
             scheduler.add_periodic_job(
@@ -339,25 +357,10 @@ def main() -> int:
                 task=lambda: run_news_fetch_job(config),
                 start_hour=9,
                 end_hour=22,
-                run_immediately=True,  # 启动时立即抓一次
+                run_immediately=True,
             )
         except Exception as e:
             logger.warning(f"新闻抓取任务注册失败（可忽略）: {e}")
-        # 5. 每日回测自动回填（20:00，分析完成后）
-        def run_backtest_job():
-            try:
-                from src.backtest import BacktestRunner
-                runner = BacktestRunner()
-                report = runner.run(lookback_days=90)
-                logger.info(f"[回测] 自动回填完成")
-                logger.debug(f"[回测] {report[:200]}")
-            except Exception as e:
-                logger.warning(f"[回测] 自动回填失败: {e}")
-
-        scheduler.add_daily_job("20:00", run_backtest_job)
-        logger.info("已注册每日回测自动回填任务，执行时间: 20:00")
-
-        logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
         logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
         logger.info("按 Ctrl+C 退出")
         scheduler.run()

@@ -554,13 +554,14 @@ class StockAnalysisPipeline:
             # === 1. 三层舆情获取 ===
             # 第 1 层: Akshare 免费新闻缓存 (后台定时抓取，24h 窗口，>=2 条命中)
             # 第 2 层: Perplexity 缓存 (6h 窗口)
-            # 第 3 层: Perplexity 实时搜索 (最后手段)
+            # 第 3 层: Perplexity 实时搜索 (仅量价异常时触发，不再无条件调用)
             search_content = ""
             used_news_cache = False
             news_source = ""
+            has_important_news = False   # 是否含有实质性重要公告
             fast_mode = getattr(self.config, 'fast_mode', False)
 
-            # 层 1: Akshare 免费新闻（后台已抓取入库）
+            # 层 1: Akshare 免费新闻（后台已抓取入库，含公告数据）
             akshare_news = self._get_cached_news_context(
                 code, stock_name, hours=24, limit=10, provider='akshare', min_count=2
             )
@@ -568,7 +569,12 @@ class StockAnalysisPipeline:
                 search_content = akshare_news
                 used_news_cache = True
                 news_source = "akshare"
-                logger.info(f"📰 [{stock_name}] 命中 Akshare 新闻缓存，跳过外部搜索")
+                # [fix3] 检测是否含实质性重要公告（高管增减持/业绩预告/监管函）
+                has_important_news = "【重要公告】" in akshare_news
+                if has_important_news:
+                    logger.info(f"� [{stock_name}] 命中重要公告，将使用重量级模型分析")
+                else:
+                    logger.info(f"� [{stock_name}] 命中 Akshare 新闻缓存，跳过外部搜索")
 
             # 层 2: Perplexity 缓存（之前搜索过的结果）
             if not search_content:
@@ -579,6 +585,7 @@ class StockAnalysisPipeline:
                     search_content = pplx_cache
                     used_news_cache = True
                     news_source = "perplexity_cache"
+                    has_important_news = True  # Perplexity 内容视为实质性
                     logger.info(f"♻️  [{stock_name}] 命中 Perplexity 缓存，跳过外部搜索")
 
             # 层 2.5: 不限 provider 的通用缓存（兼容旧数据）
@@ -595,8 +602,27 @@ class StockAnalysisPipeline:
                 logger.info(f"⚡ [{stock_name}] 快速模式，跳过外部搜索")
                 used_news_cache = True
 
-            # 层 3: Perplexity 实时搜索（最后手段）
-            if not search_content and not fast_mode and self.search_service:
+            # [fix5] 量价异常检测：仅在涨停/跌停/成交量>2倍均量时触发 Perplexity
+            _price_anomaly = False
+            try:
+                _today = context.get('today', {})
+                _realtime = context.get('realtime', {})
+                _pct_chg = float(_today.get('pct_chg') or _realtime.get('change_pct') or 0)
+                _vol_today = float(_today.get('volume') or 0)
+                # 用最近5日均量（从 trend_analysis 获取，降级到0）
+                _trend_d = context.get('trend_analysis', {}) or {}
+                _avg_vol_5d = float(_trend_d.get('avg_volume_5d') or _trend_d.get('volume_5d_avg') or 0)
+                _vol_ratio = _vol_today / _avg_vol_5d if _avg_vol_5d > 0 else 0
+                if abs(_pct_chg) >= 9.0 or _vol_ratio >= 2.0:
+                    _price_anomaly = True
+                    logger.info(
+                        f"⚡ [{stock_name}] 量价异常检测: 涨跌幅{_pct_chg:+.1f}%, 量比{_vol_ratio:.1f}x → 允许 Perplexity"
+                    )
+            except Exception:
+                pass
+
+            # 层 3: Perplexity 实时搜索（仅量价异常或无任何缓存时触发）
+            if not search_content and not fast_mode and self.search_service and _price_anomaly:
                 sleep_time = random.uniform(2.0, 5.0)
                 time.sleep(sleep_time)
 
@@ -676,8 +702,15 @@ class StockAnalysisPipeline:
             if delay > 0:
                 time.sleep(delay)
             self._log(f"🤖 [{stock_name}] 调用 LLM 进行分析...")
-            # 无舆情时也用轻量模型，省成本
-            use_light = used_news_cache or (not search_content or not search_content.strip())
+            # [fix3] 模型选择策略：
+            # - 有重要公告（减持/业绩预告）或量价异常 → 重量级模型，深度分析
+            # - 纯行业通稿 / 无新闻 / 普通缓存 → 轻量模型，节省成本
+            use_light = not has_important_news and (used_news_cache or not search_content or not search_content.strip())
+            if has_important_news:
+                logger.info(f"🔬 [{stock_name}] 含重要公告，使用重量级模型深度分析")
+            elif _price_anomaly:
+                use_light = False
+                logger.info(f"🔬 [{stock_name}] 量价异常，使用重量级模型深度分析")
             # === 3. 执行分析（带超时，默认 180 秒）===
             analysis_timeout = getattr(self.config, 'analysis_timeout_seconds', 180) or 180
             def _run_analyze():
