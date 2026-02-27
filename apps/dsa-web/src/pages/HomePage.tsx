@@ -226,13 +226,6 @@ const HomePage: React.FC = () => {
     setError: () => {},
   });
 
-  // 延后更新 ref（不触发 effect 重跑）
-  useEffect(() => {
-    pollCallbacksRef.current.fetchHistory = fetchHistory;
-    pollCallbacksRef.current.removeTask = removeTask;
-    pollCallbacksRef.current.setError = setStoreError;
-  });
-
   // 加载历史列表
   const fetchHistory = useCallback(async (autoSelectFirst = false, reset = true) => {
     if (reset) {
