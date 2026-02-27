@@ -674,7 +674,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                       <div className="text-[9px] text-white/30 mt-0.5">连续{(qe.capital_flow_days as number) > 0 ? '净流入' : '净流出'}</div>
                     </div>
                   )}
-                  {(qe.capital_flow_5d_total as number) !== 0 && (
+                  {typeof qe.capital_flow_5d_total === 'number' && qe.capital_flow_5d_total !== 0 && (
                     <div className="text-center p-2 rounded bg-white/[0.04]">
                       <div className={`text-[14px] font-bold font-mono ${
                         (qe.capital_flow_5d_total as number) > 0 ? 'text-success' : 'text-danger'
