@@ -9,6 +9,7 @@ interface QuantAnalysisProps {
 
 /** RSI 结论 */
 function rsiVerdict(val: number, _status: string): { text: string; color: string } {
+  if (typeof val !== 'number' || isNaN(val)) return { text: '--', color: 'text-white/40' };
   if (val > 80) return { text: `严重超买(${val.toFixed(1)})`, color: 'text-danger' };
   if (val > 70) return { text: `超买(${val.toFixed(1)})，短线回调风险`, color: 'text-danger' };
   if (val < 20) return { text: `严重超卖(${val.toFixed(1)})`, color: 'text-success' };
@@ -19,6 +20,7 @@ function rsiVerdict(val: number, _status: string): { text: string; color: string
 
 /** KDJ 结论 */
 function kdjVerdict(k: number, j: number, kdjStatus: string): { text: string; color: string } {
+  if (typeof k !== 'number' || typeof j !== 'number' || isNaN(k) || isNaN(j)) return { text: '--', color: 'text-white/40' };
   if (j > 100) return { text: `J=${j.toFixed(0)} 严重超买，回调概率大`, color: 'text-danger' };
   if (j > 80) return { text: `J=${j.toFixed(0)} 高位，注意回调`, color: 'text-[#ff8c00]' };
   if (j < 0) return { text: `J=${j.toFixed(0)} 严重超卖，反弹在即`, color: 'text-success' };
@@ -29,6 +31,7 @@ function kdjVerdict(k: number, j: number, kdjStatus: string): { text: string; co
 
 /** MACD 结论 */
 function macdVerdict(bar: number, status: string): { text: string; color: string } {
+  if (typeof bar !== 'number' || isNaN(bar)) return { text: '--', color: 'text-white/40' };
   const bullish = bar > 0;
   const statusMap: Record<string, { text: string; color: string }> = {
     '零轴上金叉': { text: '零轴上金叉，强买入信号', color: 'text-success' },
@@ -45,6 +48,7 @@ function macdVerdict(bar: number, status: string): { text: string; color: string
 
 /** 布林带%B 结论 */
 function bbVerdict(pctB: number): { text: string; color: string } {
+  if (typeof pctB !== 'number' || isNaN(pctB)) return { text: '--', color: 'text-white/40' };
   if (pctB > 1.0) return { text: `${pctB.toFixed(2)} 突破上轨，超强/超买`, color: 'text-danger' };
   if (pctB > 0.8) return { text: `${pctB.toFixed(2)} 接近上轨，注意回调`, color: 'text-[#ff8c00]' };
   if (pctB < 0) return { text: `${pctB.toFixed(2)} 跌破下轨，超弱/超卖`, color: 'text-success' };
@@ -178,7 +182,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         {macdStatus && (
           <span>MACD:<span className={macdV.color}>{macdStatus}</span></span>
         )}
-        {rsiVal != null && (
+        {typeof rsiVal === 'number' && (
           <><span className="text-white/20">|</span><span>RSI:<span className={rsiV.color}>{rsiVal.toFixed(0)}</span></span></>
         )}
         {kdjStatus && (
