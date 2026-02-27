@@ -226,22 +226,6 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
 
       {expanded && (
         <div className="space-y-4">
-          {/* 信号共振（置顶，一目了然） */}
-          {(qe.resonance_signals ?? qe.resonanceSignals)?.length > 0 && (
-            <div className="bg-surface-2 rounded-lg p-3">
-              <h4 className="text-xs font-medium text-cyan mb-2">
-                信号共振 ({qe.resonance_count ?? qe.resonanceCount ?? 0}项)
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {(qe.resonance_signals ?? qe.resonanceSignals)?.map((s: string, i: number) => (
-                  <span key={i} className="inline-block text-sm font-bold px-3 py-1 rounded-full border bg-success/15 text-success border-success/20">
-                    {s}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* 核心指标（结论突出） */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <CoreMetric
@@ -664,7 +648,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 </div>
                 {/* 连续天数 + 近5日累计 */}
                 <div className="grid grid-cols-2 gap-2">
-                  {(qe.capital_flow_days as number) !== 0 && (
+                  {typeof qe.capital_flow_days === 'number' && qe.capital_flow_days !== 0 && (
                     <div className="text-center p-2 rounded bg-white/[0.04]">
                       <div className={`text-[16px] font-bold font-mono ${
                         (qe.capital_flow_days as number) > 0 ? 'text-success' : 'text-danger'

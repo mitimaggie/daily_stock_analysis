@@ -87,8 +87,8 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
     <Card variant="bordered" padding="md">
       <div className="flex items-center justify-between mb-3">
         <div className="mb-3 flex items-baseline gap-2">
-          <span className="label-uppercase">NEWS FEED</span>
-          <h3 className="text-base font-semibold text-white">相关资讯</h3>
+          <span className="label-uppercase">F10 DISCLOSURE</span>
+          <h3 className="text-base font-semibold text-white">公告与披露</h3>
         </div>
         <div className="flex items-center gap-2">
           {isLoading && (
@@ -125,7 +125,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
       )}
 
       {!isLoading && !error && !hasContent && (
-        <div className="text-xs text-muted">暂无相关资讯</div>
+        <div className="text-xs text-muted">暂无近期公告与披露</div>
       )}
 
       {!isLoading && !error && items.length > 0 && (

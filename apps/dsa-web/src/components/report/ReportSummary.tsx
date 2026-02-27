@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import type { AnalysisResult, AnalysisReport } from '../../types/analysis';
 import { ReportOverview } from './ReportOverview';
-import { ScoreTrend } from './ScoreTrend';
 import { TradeLog } from '../trade/TradeLog';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
@@ -132,10 +131,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       {/* 8. 资讯区 */}
       <ReportNews queryId={queryId} newsContentFallback={effectiveNewsContent} />
 
-      {/* 9. 历史评分趋势 */}
-      <ScoreTrend stockCode={meta.stockCode} currentQueryId={queryId} />
-
-      {/* 10. 交易日志 */}
+      {/* 9. 交易日志 */}
       <TradeLog
         stockCode={meta.stockCode}
         stockName={meta.stockName}
