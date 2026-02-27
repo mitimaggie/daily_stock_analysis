@@ -205,7 +205,7 @@ const HomePage: React.FC = () => {
     },
     onTaskStarted: updateTask,
     onTaskCompleted: (task) => {
-      fetchHistory();
+      fetchHistory(true);
       setTimeout(() => removeTask(task.taskId), 2000);
     },
     onTaskFailed: (task) => {
@@ -220,7 +220,7 @@ const HomePage: React.FC = () => {
   });
 
   // 轮询兜底：当有活跃任务时，定期检查任务状态（防止 SSE 丢失事件）
-  const pollCallbacksRef = useRef<{ fetchHistory: () => void; removeTask: (id: string) => void; setError: (e: string) => void }>({
+  const pollCallbacksRef = useRef<{ fetchHistory: (autoSelectFirst?: boolean) => void; removeTask: (id: string) => void; setError: (e: string) => void }>({
     fetchHistory: () => {},
     removeTask: () => {},
     setError: () => {},
@@ -228,6 +228,7 @@ const HomePage: React.FC = () => {
 
   // 延后更新 ref（不触发 effect 重跑）
   useEffect(() => {
+    pollCallbacksRef.current.fetchHistory = fetchHistory;
     pollCallbacksRef.current.removeTask = removeTask;
     pollCallbacksRef.current.setError = setStoreError;
   });
@@ -261,7 +262,7 @@ const HomePage: React.FC = () => {
       setHasMore(totalLoaded < response.total);
       setCurrentPage(page);
 
-      if (autoSelectFirst && response.items.length > 0 && !selectedReport) {
+      if (autoSelectFirst && response.items.length > 0) {
         const firstItem = response.items[0];
         loadPositionForStock(firstItem.stockCode);
         setIsLoadingReport(true);
@@ -299,7 +300,7 @@ const HomePage: React.FC = () => {
         try {
           const s = await analysisApi.getStatus(task.taskId);
           if (s.status === 'completed') {
-            pollCallbacksRef.current.fetchHistory();
+            pollCallbacksRef.current.fetchHistory(true);
             setTimeout(() => pollCallbacksRef.current.removeTask(task.taskId), 1000);
           } else if (s.status === 'failed') {
             pollCallbacksRef.current.setError(s.error || '分析失败');

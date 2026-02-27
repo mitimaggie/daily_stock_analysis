@@ -86,10 +86,10 @@ def get_history_list(
             limit=limit
         )
         
-        # 转换为响应模型
+        # 转换为响应模型（跳过 query_id 为空的脏数据记录）
         items = [
             HistoryItem(
-                query_id=item.get("query_id", ""),
+                query_id=item["query_id"],
                 stock_code=item.get("stock_code", ""),
                 stock_name=item.get("stock_name"),
                 report_type=item.get("report_type"),
@@ -98,6 +98,7 @@ def get_history_list(
                 created_at=item.get("created_at")
             )
             for item in result.get("items", [])
+            if item.get("query_id")
         ]
         
         return HistoryListResponse(
