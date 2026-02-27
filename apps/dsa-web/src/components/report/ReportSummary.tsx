@@ -35,9 +35,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, newsContent, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, newsContent: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null };
 
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -47,16 +47,12 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       counterArguments: dashboard?.counter_arguments ?? dashboard?.counterArguments ?? null,
       positionInfo: dashboard?.position_info ?? dashboard?.positionInfo ?? null,
       oneSentence: cc?.one_sentence ?? cc?.oneSentence ?? null,
-      newsContent: null,
       dashboardHoldingStrategy: dashboard?.holding_strategy ?? dashboard?.holdingStrategy ?? null,
       defenseMode: !!(dashboard?.defense_mode ?? dashboard?.defenseMode),
       scoreMomentumAdj: dashboard?.score_momentum_adj ?? dashboard?.scoreMomentumAdj ?? 0,
       positionDiagnosis: dashboard?.position_diagnosis ?? dashboard?.positionDiagnosis ?? null,
     };
   }, [details?.rawResult]);
-
-  // news_content 优先从 details.newsContent（DB字段）获取
-  const effectiveNewsContent = details?.newsContent ?? newsContent;
 
   const hasPosition = !!positionInfo;
 
@@ -128,8 +124,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
-      {/* 8. 资讯区 */}
-      <ReportNews queryId={queryId} newsContentFallback={effectiveNewsContent} />
+      {/* 8. 公告与披露 */}
+      <ReportNews stockCode={meta.stockCode} />
 
       {/* 9. 交易日志 */}
       <TradeLog

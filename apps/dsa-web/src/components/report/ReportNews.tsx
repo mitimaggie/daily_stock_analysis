@@ -1,87 +1,52 @@
 import type React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import { Card } from '../common';
-import { historyApi } from '../../api/history';
-import type { NewsIntelItem } from '../../types/analysis';
+import { disclosuresApi } from '../../api/disclosures';
+import type { DisclosureItem } from '../../api/disclosures';
 
 interface ReportNewsProps {
   queryId?: string;
+  stockCode?: string;
   limit?: number;
   /** 当结构化新闻API返回空时，回退显示原始新闻文本 */
   newsContentFallback?: string | null;
 }
 
-/**
- * 资讯区组件 - 终端风格
- */
-/** 检测是否为原始数据表格（股票代码+数字堆砌） */
-function isRawDataTable(text: string): boolean {
-  if (!text) return false;
-  // 多个6位数字（股票代码）+ 大量浮点数 = 原始数据表
-  const codeCount = (text.match(/\b\d{6}\b/g) || []).length;
-  const numCount = (text.match(/\b\d+\.\d+\b/g) || []).length;
-  return codeCount >= 2 && numCount >= 4;
-}
 
-/** 解析原始新闻文本为结构化条目 */
-function parseNewsText(text: string): { title: string; time?: string }[] {
-  const lines = text.split('\n').filter(l => l.trim());
-  const results: { title: string; time?: string }[] = [];
-  for (const line of lines) {
-    // 跳过原始数据表格行
-    if (isRawDataTable(line)) continue;
-    // 匹配格式: "1. 【来源】标题 (时间)" 或 "数字. 标题"
-    const match = line.match(/^\d+\.\s*(.+?)(?:\s*\((\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\))?$/);
-    if (match) {
-      results.push({ title: match[1].trim(), time: match[2] });
-    }
-  }
-  return results;
-}
-
-export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, newsContentFallback }) => {
+export const ReportNews: React.FC<ReportNewsProps> = ({ stockCode, limit = 20 }) => {
   const [isLoading, setIsLoading] = useState(false);
-  const [items, setItems] = useState<NewsIntelItem[]>([]);
-  const [fallbackItems, setFallbackItems] = useState<{ title: string; time?: string }[]>([]);
+  const [items, setItems] = useState<DisclosureItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchNews = useCallback(async () => {
-    if (!queryId) return;
+  const fetchDisclosures = useCallback(async () => {
+    if (!stockCode) return;
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await historyApi.getNews(queryId, limit);
+      const response = await disclosuresApi.getDisclosures(stockCode, 90, limit);
       setItems(response.items || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载资讯失败');
+      setError(err instanceof Error ? err.message : '加载公告失败');
     } finally {
       setIsLoading(false);
     }
-  }, [queryId, limit]);
+  }, [stockCode, limit]);
 
   useEffect(() => {
     setItems([]);
-    setFallbackItems([]);
     setError(null);
 
-    if (queryId) {
-      fetchNews();
+    if (stockCode) {
+      fetchDisclosures();
     }
-  }, [queryId, fetchNews]);
+  }, [stockCode, fetchDisclosures]);
 
-  // 当结构化新闻为空时，解析原始新闻文本作为回退
-  useEffect(() => {
-    if (!isLoading && items.length === 0 && newsContentFallback) {
-      setFallbackItems(parseNewsText(newsContentFallback));
-    }
-  }, [isLoading, items.length, newsContentFallback]);
-
-  if (!queryId) {
+  if (!stockCode) {
     return null;
   }
 
-  const hasContent = items.length > 0 || fallbackItems.length > 0;
+  const hasContent = items.length > 0;
 
   return (
     <Card variant="bordered" padding="md">
@@ -96,7 +61,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
           )}
           <button
             type="button"
-            onClick={fetchNews}
+            onClick={fetchDisclosures}
             className="text-xs text-cyan hover:text-white transition-colors"
           >
             刷新
@@ -109,7 +74,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
           <span>{error}</span>
           <button
             type="button"
-            onClick={fetchNews}
+            onClick={fetchDisclosures}
             className="text-xs text-cyan hover:text-white transition-colors"
           >
             重试
@@ -120,7 +85,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
       {isLoading && !error && (
         <div className="flex items-center gap-2 text-xs text-secondary">
           <div className="w-4 h-4 border-2 border-cyan/20 border-t-cyan rounded-full animate-spin" />
-          加载资讯中...
+          加载公告中...
         </div>
       )}
 
@@ -130,20 +95,18 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
 
       {!isLoading && !error && items.length > 0 && (
         <div className="space-y-2 text-left">
-          {items.map((item, index) => (
+          {items.map((item: DisclosureItem, index: number) => (
             <div
               key={`${item.title}-${index}`}
               className="group p-3 rounded-lg bg-elevated/80 border border-white/5 hover:border-cyan/30 hover:bg-hover transition-colors"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0 text-left">
-                  <p className="text-sm text-white font-medium leading-snug text-left">
+                  <p className="text-sm text-white font-medium leading-snug">
                     {item.title}
                   </p>
-                  {item.snippet && !isRawDataTable(item.snippet) && (
-                    <p className="text-xs text-secondary mt-1 text-left">
-                      {item.snippet}
-                    </p>
+                  {item.pub_date && (
+                    <p className="text-[10px] text-white/30 mt-1 font-mono">{item.pub_date}</p>
                   )}
                 </div>
                 {item.url && (
@@ -153,36 +116,13 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ queryId, limit = 20, new
                     rel="noopener noreferrer"
                     className="text-xs text-cyan hover:text-white transition-colors inline-flex items-center gap-1 whitespace-nowrap"
                   >
-                    跳转
+                    查看
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M14 3h7m0 0v7m0-7L10 14"
-                      />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3h7m0 0v7m0-7L10 14" />
                     </svg>
                   </a>
                 )}
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 回退：从原始新闻文本解析的条目 */}
-      {!isLoading && !error && items.length === 0 && fallbackItems.length > 0 && (
-        <div className="space-y-2 text-left">
-          <div className="text-[10px] text-muted mb-1">来源：Akshare 免费新闻源（可能非最新）</div>
-          {fallbackItems.map((item, index) => (
-            <div
-              key={`fb-${index}`}
-              className="p-2.5 rounded-lg bg-elevated/80 border border-white/5"
-            >
-              <p className="text-sm text-white/90 leading-snug">{item.title}</p>
-              {item.time && (
-                <p className="text-[10px] text-muted mt-1">{item.time}</p>
-              )}
             </div>
           ))}
         </div>
