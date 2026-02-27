@@ -150,7 +150,7 @@ class BacktestRunner:
                 ORDER BY date ASC
                 LIMIT :limit
             """)
-            with self.db.engine.connect() as conn:
+            with self.db._engine.connect() as conn:
                 df = pd.read_sql(sql, conn, params={"code": code, "after_date": after_date, "limit": days})
             return df if not df.empty else None
         except Exception:
@@ -175,7 +175,7 @@ class BacktestRunner:
                 ORDER BY date ASC
                 LIMIT :limit
             """)
-            with self.db.engine.connect() as conn:
+            with self.db._engine.connect() as conn:
                 df = pd.read_sql(sql, conn, params={"start_date": start_date, "limit": holding_days + 2})
             
             if df.empty or len(df) < holding_days:

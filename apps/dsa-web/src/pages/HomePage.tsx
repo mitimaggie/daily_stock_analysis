@@ -17,16 +17,14 @@ import { portfolioApi } from '../api/portfolio';
 
 /** 报告页「加入持仓/关注」快捷栏 */
 const QuickAddBar: React.FC<{ report: AnalysisReport }> = ({ report }) => {
-  const code = report?.meta?.stockCode || '';
-  const name = report?.meta?.stockName || '';
+  const code = report?.meta?.stockCode ?? '';
+  const name = report?.meta?.stockName ?? '';
   const [addingP, setAddingP] = useState(false);
   const [addingW, setAddingW] = useState(false);
   const [msgP, setMsgP] = useState('');
   const [msgW, setMsgW] = useState('');
   const [showCostInput, setShowCostInput] = useState(false);
   const [costPrice, setCostPriceInput] = useState('');
-
-  if (!code) return null;
 
   const handleAddPortfolio = async () => {
     if (!costPrice) { setShowCostInput(true); return; }
@@ -54,6 +52,8 @@ const QuickAddBar: React.FC<{ report: AnalysisReport }> = ({ report }) => {
     } catch { setMsgW('❌ 添加失败'); setTimeout(() => setMsgW(''), 3000); }
     finally { setAddingW(false); }
   };
+
+  if (!code) return null;
 
   return (
     <div className="mt-3 mb-1 flex items-center gap-3 px-1">
