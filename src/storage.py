@@ -243,6 +243,79 @@ class DataCache(Base):
     )
 
 
+class Portfolio(Base):
+    """持仓列表"""
+    __tablename__ = 'portfolio'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, unique=True, index=True)
+    name = Column(String(50), default='')
+    cost_price = Column(Float, nullable=False)          # 成本价
+    shares = Column(Integer, default=0)                  # 持股数量（手*100）
+    entry_date = Column(Date, nullable=True)             # 买入日期
+    notes = Column(Text, default='')                     # 备注
+    # ATR 动态止损追踪
+    atr_stop_loss = Column(Float, nullable=True)         # 当前ATR追踪止损价
+    highest_price = Column(Float, nullable=True)         # 持仓期间最高价（用于追踪止损上移）
+    # 最近监控信号（定时更新）
+    last_signal = Column(String(20), default='')         # "hold"/"reduce"/"stop_loss"/"add"
+    last_signal_reason = Column(Text, default='')
+    last_monitored_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'code': self.code,
+            'name': self.name,
+            'cost_price': self.cost_price,
+            'shares': self.shares,
+            'entry_date': self.entry_date.isoformat() if self.entry_date else None,
+            'notes': self.notes,
+            'atr_stop_loss': self.atr_stop_loss,
+            'highest_price': self.highest_price,
+            'last_signal': self.last_signal,
+            'last_signal_reason': self.last_signal_reason,
+            'last_monitored_at': self.last_monitored_at.isoformat() if self.last_monitored_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class Watchlist(Base):
+    """关注股列表"""
+    __tablename__ = 'watchlist'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, unique=True, index=True)
+    name = Column(String(50), default='')
+    notes = Column(Text, default='')
+    # 最近一次分析快照（手动刷新时更新）
+    last_score = Column(Integer, nullable=True)          # 最近量化评分
+    last_advice = Column(String(20), default='')         # 最近操作建议
+    last_summary = Column(Text, default='')              # 最近分析摘要
+    last_analyzed_at = Column(DateTime, nullable=True)
+    # 评分对比（上上次 vs 上次，用于显示变化趋势）
+    prev_score = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'code': self.code,
+            'name': self.name,
+            'notes': self.notes,
+            'last_score': self.last_score,
+            'last_advice': self.last_advice,
+            'last_summary': self.last_summary,
+            'last_analyzed_at': self.last_analyzed_at.isoformat() if self.last_analyzed_at else None,
+            'prev_score': self.prev_score,
+            'score_change': (self.last_score - self.prev_score) if (self.last_score is not None and self.prev_score is not None) else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class DatabaseManager:
     """
     数据库管理器 - 单例模式

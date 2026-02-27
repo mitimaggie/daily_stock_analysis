@@ -3030,3 +3030,88 @@ class ScoringSystem:
 
         if adj != 0:
             result.score_breakdown['gap_adj'] = adj
+
+    @staticmethod
+    def score_intraday_pattern_signal(result: TrendAnalysisResult, code: str):
+        """P5-E: 分时形态量化信号（仅盘中触发）
+
+        基于分时K线（5min）分析以下模式，调整评分：
+
+        信号逻辑：
+        - 早盘方向看多（9:30-10:00上攻）+ VWAP上方  → +2（盘中强势确认）
+        - 早盘方向看空（9:30-10:00下跌）+ VWAP下方  → -2（盘中弱势确认）
+        - 尾盘放量拉升（14:30后放量+分时上攻）       → +2（资金尾盘积极）
+        - 尾盘放量下跌（14:30后放量+分时下跌）       → -2（尾盘砸盘，出货嫌疑）
+        - 加速上涨（momentum=加速上涨）               → +1
+        - 加速下跌（momentum=加速下跌）               → -1
+        - VWAP持续上移（价格在VWAP上方+加速上涨）    → +1（叠加）
+        - VWAP持续下移（价格在VWAP下方+加速下跌）    → -1（叠加）
+
+        上限：单次最多 ±4，不与 score_intraday_volume_signal 累加超限（由 cap_adjustments 统一控制）
+        """
+        import logging as _logging
+        from datetime import datetime as _dt_ip
+        _logger = _logging.getLogger(__name__)
+
+        now_h = _dt_ip.now().hour
+        now_m = _dt_ip.now().minute
+        if now_h >= 15:
+            return  # 收盘后不触发
+
+        try:
+            from data_provider.intraday_fetcher import analyze_intraday
+            intraday = analyze_intraday(code, period='5')
+        except Exception as e:
+            _logger.debug(f"[P5-E] {code} 分时数据获取失败: {e}")
+            return
+
+        if not intraday.get('available'):
+            return
+
+        trend = intraday.get('intraday_trend', '')
+        vwap_pos = intraday.get('vwap_position', '')
+        vol_dist = intraday.get('volume_distribution', '')
+        momentum = intraday.get('momentum', '')
+
+        adj = 0
+        reasons = []
+
+        # ── 早盘方向信号（仅10:30前参考）──
+        if now_h < 11:
+            if trend == '分时上攻' and vwap_pos == '价格在VWAP上方':
+                adj += 2
+                reasons.append(f"早盘分时上攻且价格在VWAP上方，盘中强势确认")
+            elif trend == '分时下跌' and vwap_pos == '价格在VWAP下方':
+                adj -= 2
+                reasons.append(f"早盘分时下跌且价格跌破VWAP，盘中弱势")
+
+        # ── 尾盘异动（14:30后）──
+        if now_h >= 14 and now_m >= 30:
+            if vol_dist == '尾盘放量' and trend == '分时上攻':
+                adj += 2
+                reasons.append(f"尾盘放量拉升，资金主动积累")
+            elif vol_dist == '尾盘放量' and trend == '分时下跌':
+                adj -= 2
+                reasons.append(f"尾盘放量下跌，警惕出货砸盘")
+
+        # ── 全时段动能信号 ──
+        if momentum == '加速上涨':
+            adj += 1
+            if vwap_pos == '价格在VWAP上方':
+                adj += 1  # VWAP上方加速上涨叠加 +1
+            reasons.append(f"分时加速上涨{'+VWAP上方' if vwap_pos == '价格在VWAP上方' else ''}")
+        elif momentum == '加速下跌':
+            adj -= 1
+            if vwap_pos == '价格在VWAP下方':
+                adj -= 1  # VWAP下方加速下跌叠加 -1
+            reasons.append(f"分时加速下跌{'+VWAP下方' if vwap_pos == '价格在VWAP下方' else ''}")
+
+        # ── 单次上限 ±4 ──
+        adj = max(-4, min(4, adj))
+
+        if adj != 0:
+            result.score_breakdown['intraday_pattern'] = adj
+            if adj > 0:
+                result.signal_reasons.extend(reasons)
+            else:
+                result.risk_factors.extend(reasons)

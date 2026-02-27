@@ -13,6 +13,75 @@ import { Watchlist } from '../components/watchlist';
 import { useTaskStream } from '../hooks';
 import { ChatPanel } from '../components/chat/ChatPanel';
 import { BacktestPanel } from '../components/backtest/BacktestPanel';
+import { portfolioApi } from '../api/portfolio';
+
+/** 报告页「加入持仓/关注」快捷栏 */
+const QuickAddBar: React.FC<{ report: AnalysisReport }> = ({ report }) => {
+  const code = report?.meta?.stockCode || '';
+  const name = report?.meta?.stockName || '';
+  const [addingP, setAddingP] = useState(false);
+  const [addingW, setAddingW] = useState(false);
+  const [msgP, setMsgP] = useState('');
+  const [msgW, setMsgW] = useState('');
+  const [showCostInput, setShowCostInput] = useState(false);
+  const [costPrice, setCostPriceInput] = useState('');
+
+  if (!code) return null;
+
+  const handleAddPortfolio = async () => {
+    if (!costPrice) { setShowCostInput(true); return; }
+    setAddingP(true);
+    try {
+      await portfolioApi.add({ code, name, costPrice: parseFloat(costPrice) });
+      setMsgP('✅ 已加入持仓');
+      setShowCostInput(false);
+      setCostPriceInput('');
+      setTimeout(() => setMsgP(''), 3000);
+    } catch { setMsgP('❌ 添加失败'); setTimeout(() => setMsgP(''), 3000); }
+    finally { setAddingP(false); }
+  };
+
+  const handleAddWatchlist = async () => {
+    setAddingW(true);
+    try {
+      await portfolioApi.watchlistAdd({ code, name });
+      const score = report?.summary?.sentimentScore;
+      const advice = report?.summary?.operationAdvice || '';
+      const summary = report?.summary?.analysisSummary || '';
+      if (score != null) await portfolioApi.watchlistSync(code, score, advice, summary);
+      setMsgW('✅ 已加入关注');
+      setTimeout(() => setMsgW(''), 3000);
+    } catch { setMsgW('❌ 添加失败'); setTimeout(() => setMsgW(''), 3000); }
+    finally { setAddingW(false); }
+  };
+
+  return (
+    <div className="mt-3 mb-1 flex items-center gap-3 px-1">
+      {showCostInput ? (
+        <div className="flex items-center gap-2">
+          <input value={costPrice} onChange={e => setCostPriceInput(e.target.value)}
+            placeholder="输入成本价" type="number" step="0.01" autoFocus
+            className="w-28 bg-white/5 border border-white/15 rounded px-2 py-1 text-[12px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
+          <button onClick={handleAddPortfolio} disabled={addingP}
+            className="text-[11px] px-2 py-1 rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 transition disabled:opacity-50">
+            {addingP ? '…' : '确认加入持仓'}
+          </button>
+          <button onClick={() => setShowCostInput(false)} className="text-[11px] text-white/25 hover:text-white/50">取消</button>
+        </div>
+      ) : (
+        <button onClick={handleAddPortfolio} disabled={addingP}
+          className="text-[11px] px-2.5 py-1 rounded border border-emerald-500/20 text-emerald-400/70 hover:border-emerald-500/40 hover:text-emerald-400 transition disabled:opacity-50">
+          {msgP || (addingP ? '…' : '+ 加入持仓')}
+        </button>
+      )}
+      <button onClick={handleAddWatchlist} disabled={addingW}
+        className="text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:border-white/20 hover:text-white/60 transition disabled:opacity-50">
+        {msgW || (addingW ? '…' : '+ 加入关注')}
+      </button>
+      <a href="/portfolio" className="text-[11px] text-white/20 hover:text-white/40 transition ml-auto">持仓管理 →</a>
+    </div>
+  );
+};
 
 /**
  * 首页 - 重新设计的布局
@@ -653,6 +722,8 @@ const HomePage: React.FC = () => {
               <>
                 <div className="max-w-4xl mx-auto animate-fade-in">
                   <ReportSummary data={selectedReport} isHistory onRefresh={handleRefreshReport} isRefreshing={isAnalyzing} />
+                  {/* 加入持仓/关注 快捷操作 */}
+                  <QuickAddBar report={selectedReport} />
                 </div>
 
                 {/* AI 对话浮动按钮 */}

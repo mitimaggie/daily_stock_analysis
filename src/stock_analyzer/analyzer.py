@@ -411,6 +411,7 @@ class StockTrendAnalyzer:
             ScoringSystem.score_vwap_trend(result)
             ScoringSystem.score_dzjy_and_holder(result, code)
             ScoringSystem.score_intraday_volume_signal(result)
+            ScoringSystem.score_intraday_pattern_signal(result, code)
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)

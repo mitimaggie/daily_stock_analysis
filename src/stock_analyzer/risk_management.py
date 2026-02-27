@@ -1172,3 +1172,97 @@ class RiskManager:
                 result.advice_for_empty = warning + "\n" + result.advice_for_empty
             else:
                 result.advice_for_empty = warning
+
+    @staticmethod
+    def calc_atr_trailing_stop(
+        df: pd.DataFrame,
+        cost_price: float,
+        current_price: float,
+        prev_atr_stop: Optional[float] = None,
+        prev_highest: Optional[float] = None,
+        atr_multiplier: float = 2.0,
+        atr_period: int = 14,
+    ) -> Dict[str, Any]:
+        """
+        计算 ATR 动态追踪止损线（只上移不下移）
+
+        逻辑：
+        1. 计算 ATR(14)
+        2. 新止损候选 = 当前最高价 - atr_multiplier × ATR
+        3. 取 max(prev_atr_stop, 新止损候选)：只上移
+        4. 若 current_price <= atr_stop → 触发止损信号
+
+        Args:
+            df: 历史日线K线（需要至少 atr_period+1 行）
+            cost_price: 买入成本价
+            current_price: 当前价
+            prev_atr_stop: 上次记录的ATR止损价（None表示首次计算）
+            prev_highest: 上次记录的最高价（None表示首次计算）
+            atr_multiplier: ATR倍数，默认2.0
+            atr_period: ATR计算周期，默认14
+
+        Returns:
+            {
+                'atr': float,                 # 当前ATR值
+                'atr_stop': float,            # 新的ATR追踪止损价
+                'highest_price': float,       # 更新后的最高价
+                'stop_triggered': bool,       # 是否触发止损
+                'pnl_pct': float,             # 当前浮盈%
+                'stop_pnl_pct': float,        # 止损位对应浮盈%（可能为负）
+            }
+        """
+        result: Dict[str, Any] = {
+            'atr': 0.0,
+            'atr_stop': 0.0,
+            'highest_price': current_price,
+            'stop_triggered': False,
+            'pnl_pct': 0.0,
+            'stop_pnl_pct': 0.0,
+        }
+
+        if df is None or len(df) < atr_period + 1 or current_price <= 0:
+            return result
+
+        # 计算 ATR
+        try:
+            high = df['high'].values
+            low = df['low'].values
+            close = df['close'].values
+            tr_list = []
+            for i in range(1, len(high)):
+                tr = max(high[i] - low[i], abs(high[i] - close[i-1]), abs(low[i] - close[i-1]))
+                tr_list.append(tr)
+            if len(tr_list) < atr_period:
+                return result
+            atr = float(sum(tr_list[-atr_period:]) / atr_period)
+        except Exception:
+            return result
+
+        result['atr'] = round(atr, 4)
+
+        # 更新最高价
+        new_highest = max(current_price, prev_highest or cost_price, current_price)
+        result['highest_price'] = round(new_highest, 2)
+
+        # 计算新止损候选（基于最高价）
+        candidate_stop = new_highest - atr_multiplier * atr
+
+        # 只上移：取 max(上次止损, 新候选)
+        if prev_atr_stop and prev_atr_stop > 0:
+            atr_stop = max(prev_atr_stop, candidate_stop)
+        else:
+            # 首次计算：从成本价下方开始（不高于当前候选）
+            initial_stop = cost_price - atr_multiplier * atr
+            atr_stop = max(initial_stop, candidate_stop)
+
+        result['atr_stop'] = round(atr_stop, 2)
+
+        # 触发判断
+        result['stop_triggered'] = current_price <= atr_stop
+
+        # 浮盈计算
+        if cost_price > 0:
+            result['pnl_pct'] = round((current_price - cost_price) / cost_price * 100, 2)
+            result['stop_pnl_pct'] = round((atr_stop - cost_price) / cost_price * 100, 2)
+
+        return result
