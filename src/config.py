@@ -427,22 +427,40 @@ class Config:
 
     def refresh_stock_list(self) -> None:
         """
-        热读取 STOCK_LIST 环境变量并更新配置中的自选股列表
+        更新自选股列表：优先合并 DB 的 portfolio（持仓）+ watchlist（关注），
+        .env 的 STOCK_LIST 作为兜底（DB 为空时才使用）。
         
-        支持两种配置方式：
-        1. .env 文件（本地开发、定时任务模式） - 修改后下次执行自动生效
-        2. 系统环境变量（GitHub Actions、Docker） - 启动时固定，运行中不变
+        数据源优先级：
+        1. DB portfolio（持仓）∪ watchlist（关注）— 主动维护的股票，优先
+        2. .env / 系统环境变量 STOCK_LIST — 兜底（DB 里没数据时启用）
         """
-        # 优先从 .env 文件读取最新配置，这样即使在容器环境中修改了 .env 文件，
-        # 也能获取到最新的股票列表配置
+        db_codes: List[str] = []
+        try:
+            from src.storage import DatabaseManager
+            from sqlalchemy import text as _text
+            _db = DatabaseManager()
+            with _db.get_session() as _s:
+                pf_codes = [r[0] for r in _s.execute(_text('SELECT code FROM portfolio')).fetchall()]
+                wl_codes = [r[0] for r in _s.execute(_text('SELECT code FROM watchlist')).fetchall()]
+            # 去重并保序：持仓优先
+            seen: set = set()
+            for c in pf_codes + wl_codes:
+                if c and c not in seen:
+                    db_codes.append(c)
+                    seen.add(c)
+        except Exception:
+            pass
+
+        if db_codes:
+            self.stock_list = db_codes
+            return
+
+        # DB 为空时，退回到 .env / 环境变量
         env_path = Path(__file__).parent.parent / '.env'
         stock_list_str = ''
         if env_path.exists():
-            # 直接从 .env 文件读取最新的配置
             env_values = dotenv_values(env_path)
             stock_list_str = (env_values.get('STOCK_LIST') or '').strip()
-
-        # 如果 .env 文件不存在或未配置，才尝试从系统环境变量读取
         if not stock_list_str:
             stock_list_str = os.getenv('STOCK_LIST', '')
 
@@ -452,7 +470,7 @@ class Config:
             if code.strip()
         ]
 
-        if not stock_list:        
+        if not stock_list:
             stock_list = ['000001']
 
         self.stock_list = stock_list

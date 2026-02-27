@@ -327,6 +327,7 @@ class StockAnalysisPipeline:
                 from src.stock_analyzer import StockTrendAnalyzer as _STA, MarketRegime
                 # 检测市场环境（用于动态评分权重）
                 idx_pct = 0.0
+                snap = None
                 if self._market_monitor:
                     try:
                         snap = self._market_monitor.get_market_snapshot()
@@ -336,7 +337,24 @@ class StockAnalysisPipeline:
                                 break
                     except Exception:
                         pass
-                regime, _ = _STA.detect_market_regime(daily_df, idx_pct)
+                # 优先用真实指数K线判断大盘环境（上证+创业板综合）
+                _idx_df = None
+                try:
+                    _sh_df = self.storage.get_index_kline("上证指数", days=120)
+                    _cy_df = self.storage.get_index_kline("创业板指", days=120)
+                    if not _sh_df.empty and not _cy_df.empty and len(_sh_df) >= 20:
+                        # 合并上证+创业板的综合K线（等权平均，捕获成长股轮动）
+                        import pandas as _pd
+                        _merged = _sh_df.set_index('date').join(_cy_df.set_index('date'), how='inner', lsuffix='_sh', rsuffix='_cy')
+                        if len(_merged) >= 20:
+                            _idx_df = _pd.DataFrame({
+                                'close': (_merged['close_sh'] + _merged['close_cy'] * 0.5) / 1.5,
+                            })
+                    elif not _sh_df.empty and len(_sh_df) >= 20:
+                        _idx_df = _sh_df[['close']]
+                except Exception:
+                    pass
+                regime, _ = _STA.detect_market_regime(daily_df, idx_pct, index_df=_idx_df)
                 # 获取指数收益率序列（供 Beta 计算）
                 idx_ret = None
                 try:

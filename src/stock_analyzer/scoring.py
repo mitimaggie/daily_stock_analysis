@@ -543,6 +543,9 @@ class ScoringSystem:
         if cf_adj != 0:
             result.score_breakdown['capital_flow_adj'] = cf_adj
     
+    # 历史资金流进程级缓存：{code: {'df': DataFrame, 'ts': float}}，TTL 30分钟
+    _flow_history_cache: dict = {}
+
     @staticmethod
     def score_capital_flow_history(result: TrendAnalysisResult, stock_code: str):
         """P4: 主力资金追踪 - 大单净流入连续性检测
@@ -562,15 +565,25 @@ class ScoringSystem:
 
             market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
 
-            # 使用项目内全局限流器
-            try:
-                from data_provider.rate_limiter import get_global_limiter
-                limiter = get_global_limiter()
-                limiter.acquire('akshare', blocking=True, timeout=10.0)
-            except Exception:
-                time.sleep(random.uniform(1.0, 2.0))
+            # 进程级缓存（TTL 30分钟），避免批量分析重复打接口
+            _cache = ScoreCalculator._flow_history_cache
+            _now = time.time()
+            _cached = _cache.get(stock_code)
+            if _cached and _now - _cached['ts'] < 1800:
+                df_flow = _cached['df']
+            else:
+                # 使用项目内全局限流器
+                try:
+                    from data_provider.rate_limiter import get_global_limiter
+                    limiter = get_global_limiter()
+                    limiter.acquire('akshare', blocking=True, timeout=10.0)
+                except Exception:
+                    time.sleep(random.uniform(1.0, 2.0))
+                df_flow = ak.stock_individual_fund_flow(stock=stock_code, market=market)
+                if df_flow is not None and len(df_flow) >= 5:
+                    _cache[stock_code] = {'df': df_flow, 'ts': _now}
 
-            df_flow = ak.stock_individual_fund_flow(stock=stock_code, market=market)
+            df_flow = df_flow
             if df_flow is None or len(df_flow) < 5:
                 return
 
@@ -754,101 +767,78 @@ class ScoringSystem:
         
     
     @staticmethod
-    def score_lhb_sentiment(result: TrendAnalysisResult, stock_code: str):
-        """P5-C: 量化情绪指标 - 龙虎榜机构净买额分析
-
-        通过个股龙虎榜历史记录过滤近30天，统计机构买卖行为：
-        - 机构净买额为正且上榜次数多：机构持续买入信号（+2~+3）
-        - 机构净买额为负且上榜次数多：机构持续卖出信号（-2~-3）
-        - 上榜但机构净买额接近零：博弈激烈，中性（0）
-        - 未上榜：不处理
-
-        使用 LHBCache 每日缓存，避免重复拉全量数据。
-        """
-        try:
-            from .lhb_cache import LHBCache
-            lhb_data = LHBCache.query(stock_code)
-            if lhb_data is None:
-                return
-
-            lhb_net = lhb_data.get('lhb_net_buy', 0.0)
-            inst_net = lhb_data.get('lhb_institution_net', 0.0)
-            times = lhb_data.get('lhb_times', 0)
-
-            result.lhb_net_buy = round(lhb_net, 2)
-            result.lhb_institution_net = round(inst_net, 2)
-            result.lhb_times = times
-
-            p5c_adj = 0
-            inst_net_wan = inst_net / 10000
-
-            if inst_net_wan > 5000:
-                p5c_adj += 3
-                result.lhb_signal = "机构持续买入"
-            elif inst_net_wan > 1000:
-                p5c_adj += 2
-                result.lhb_signal = "机构净买入"
-            elif inst_net_wan < -5000:
-                p5c_adj -= 3
-                result.lhb_signal = "机构持续卖出"
-            elif inst_net_wan < -1000:
-                p5c_adj -= 2
-                result.lhb_signal = "机构净卖出"
-            elif times >= 3:
-                result.lhb_signal = "龙虎榜活跃"
-
-            p5c_adj = max(-3, min(3, p5c_adj))
-            if p5c_adj != 0:
-                result.score_breakdown['p5c_lhb'] = p5c_adj
-
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
-
-    @staticmethod
     def score_dzjy_and_holder(result: TrendAnalysisResult, stock_code: str):
-        """P5-C补充: 股东人数变化率（带超时保护）"""
-        import threading
+        """P5-C: 龙虎榜机构情绪 + 股东人数变化率"""
         import logging
         logger = logging.getLogger(__name__)
 
-        # ---- 股东人数变化率（线程+超时5秒）----
-        def _fetch_holder():
-            try:
-                import akshare as ak
-                df_holder = ak.stock_zh_a_gdhs(symbol=stock_code)
-                if df_holder is None or df_holder.empty or len(df_holder) < 2:
-                    return
-                cols = df_holder.columns.tolist()
-                holder_col = next((c for c in cols if '股东' in c or '持股人数' in c), None)
-                if not holder_col:
-                    return
-                latest = float(df_holder.iloc[-1][holder_col])
-                prev = float(df_holder.iloc[-2][holder_col])
-                if prev <= 0:
-                    return
-                change_pct = (latest - prev) / prev * 100
-                result.holder_change_pct = round(change_pct, 2)
-                adj_holder = 0
-                if change_pct < -5:
-                    result.holder_signal = "筹码集中（缩股）"
-                    adj_holder = 2
-                elif change_pct < -2:
-                    result.holder_signal = "筹码小幅集中"
-                    adj_holder = 1
-                elif change_pct > 5:
-                    result.holder_signal = "筹码分散（增股）"
-                    adj_holder = -1
-                if adj_holder != 0:
-                    result.score_breakdown['p5c_holder'] = adj_holder
-            except Exception as e:
-                logger.debug(f"[P5-C] {stock_code} 股东人数查询失败: {e}")
+        # ---- 股东人数变化率：优先读 DB 缓存（TTL 30天），无缓存时静默跳过 ----
+        # 全量拉取由定时任务 (run_gdhs_update) 每周执行一次，分析时不实时拉取
+        try:
+            import json as _json
+            from src.storage import DatabaseManager as _DBM
+            from sqlalchemy import text as _text
+            from datetime import datetime as _dt
+            _db = _DBM()
+            with _db.get_session() as _s:
+                _row = _s.execute(_text(
+                    "SELECT data_json, fetched_at FROM data_cache "
+                    "WHERE cache_type='gdhs' AND cache_key=:k "
+                    "ORDER BY fetched_at DESC LIMIT 1"
+                ), {'k': stock_code}).fetchone()
+            if _row:
+                _age_days = (_dt.now() - _dt.fromisoformat(str(_row[1]))).total_seconds() / 86400
+                if _age_days < 30:  # 季度数据，30天内有效
+                    _d = _json.loads(_row[0])
+                    change_pct = float(_d.get('change_pct', 0))
+                    result.holder_change_pct = round(change_pct, 2)
+                    adj_holder = 0
+                    if change_pct < -5:
+                        result.holder_signal = "筹码集中（缩股）"
+                        adj_holder = 2
+                    elif change_pct < -2:
+                        result.holder_signal = "筹码小幅集中"
+                        adj_holder = 1
+                    elif change_pct > 5:
+                        result.holder_signal = "筹码分散（增股）"
+                        adj_holder = -1
+                    if adj_holder != 0:
+                        result.score_breakdown['p5c_holder'] = adj_holder
+        except Exception as e:
+            logger.debug(f"[P5-C] {stock_code} 股东人数DB读取失败: {e}")
 
-        t_holder = threading.Thread(target=_fetch_holder, daemon=True)
-        t_holder.start()
-        t_holder.join(timeout=5)
-        if t_holder.is_alive():
-            logger.debug(f"[P5-C] {stock_code} 股东人数查询超时，已跳过")
+        # ---- 龙虎榜机构情绪（LHBCache 每日缓存，无网络请求）----
+        try:
+            from .lhb_cache import LHBCache
+            lhb_data = LHBCache.query(stock_code)
+            if lhb_data:
+                lhb_net = lhb_data.get('lhb_net_buy', 0.0)
+                inst_net = lhb_data.get('lhb_institution_net', 0.0)
+                times = lhb_data.get('lhb_times', 0)
+                result.lhb_net_buy = round(lhb_net, 2)
+                result.lhb_institution_net = round(inst_net, 2)
+                result.lhb_times = times
+                p5c_adj = 0
+                inst_net_wan = inst_net / 10000
+                if inst_net_wan > 5000:
+                    p5c_adj += 3
+                    result.lhb_signal = "机构持续买入"
+                elif inst_net_wan > 1000:
+                    p5c_adj += 2
+                    result.lhb_signal = "机构净买入"
+                elif inst_net_wan < -5000:
+                    p5c_adj -= 3
+                    result.lhb_signal = "机构持续卖出"
+                elif inst_net_wan < -1000:
+                    p5c_adj -= 2
+                    result.lhb_signal = "机构净卖出"
+                elif times >= 3:
+                    result.lhb_signal = "龙虎榜活跃"
+                p5c_adj = max(-3, min(3, p5c_adj))
+                if p5c_adj != 0:
+                    result.score_breakdown['p5c_lhb'] = p5c_adj
+        except Exception as e:
+            logger.debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
 
     @staticmethod
     def score_vwap_trend(result: TrendAnalysisResult):
@@ -879,8 +869,16 @@ class ScoringSystem:
             result.score_breakdown['vwap_adj'] = adj
 
     @staticmethod
-    def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None):
-        """板块强弱评分"""
+    def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None,
+                              market_regime=None):
+        """板块强弱评分（含行业轮动判断）
+        
+        评分维度：
+        1. 今日板块涨跌幅（当日快照）
+        2. 近5日板块累计涨跌（行业轮动趋势）
+        3. 个股相对板块强弱
+        4. 大盘联动：BEAR 时行业轮动加分上限压缩
+        """
         if sector_context is None:
             return
         # 兼容 dict 和 SectorContext
@@ -890,6 +888,9 @@ class ScoringSystem:
         sec_name = sector_context.sector_name
         sec_pct = sector_context.sector_pct
         rel = sector_context.relative
+        sec_5d = sector_context.sector_5d_pct
+        sec_rank = sector_context.sector_rank
+        sec_rank_total = sector_context.sector_rank_total
         
         if sec_name:
             result.sector_name = sec_name
@@ -897,10 +898,17 @@ class ScoringSystem:
             result.sector_pct = round(sec_pct, 2)
         if isinstance(rel, (int, float)):
             result.sector_relative = round(rel, 2)
+        if isinstance(sec_5d, (int, float)):
+            result.sector_5d_pct = round(sec_5d, 2)
+        if isinstance(sec_rank, int):
+            result.sector_rank = sec_rank
+        if isinstance(sec_rank_total, int):
+            result.sector_rank_total = sec_rank_total
         
         sec_score = 5
         signals = []
         
+        # === 1. 今日板块涨跌幅 ===
         if isinstance(sec_pct, (int, float)):
             if sec_pct > 2.0:
                 sec_score += 2
@@ -915,6 +923,45 @@ class ScoringSystem:
                 sec_score -= 1
                 signals.append(f"{sec_name}板块偏弱({sec_pct:.1f}%)")
         
+        # === 2. 行业轮动：近5日板块累计强度 ===
+        rotation_adj = 0
+        if isinstance(sec_5d, (int, float)):
+            if sec_5d > 8.0:
+                rotation_adj = 3
+                signals.append(f"🔥{sec_name}近5日累涨{sec_5d:.1f}%,行业轮动强势")
+            elif sec_5d > 4.0:
+                rotation_adj = 2
+                signals.append(f"📈{sec_name}近5日累涨{sec_5d:.1f}%,轮动进场")
+            elif sec_5d > 1.5:
+                rotation_adj = 1
+                signals.append(f"{sec_name}近5日偏强({sec_5d:+.1f}%)")
+            elif sec_5d < -8.0:
+                rotation_adj = -3
+                signals.append(f"⚠️{sec_name}近5日累跌{sec_5d:.1f}%,行业资金撤离")
+            elif sec_5d < -4.0:
+                rotation_adj = -2
+                signals.append(f"⚠️{sec_name}近5日弱势({sec_5d:.1f}%),轮动离场")
+            elif sec_5d < -1.5:
+                rotation_adj = -1
+                signals.append(f"{sec_name}近5日偏弱({sec_5d:+.1f}%)")
+            # 大盘联动：熊市时行业轮动加分上限压缩到+1
+            from .types import MarketRegime as _MR
+            if market_regime == _MR.BEAR and rotation_adj > 1:
+                rotation_adj = 1
+                signals.append("(熊市压制轮动加分)")
+            sec_score += rotation_adj
+
+        # === 3. 板块今日强度排名（前20%=强势轮动）===
+        if isinstance(sec_rank, int) and isinstance(sec_rank_total, int) and sec_rank_total > 0:
+            rank_pct = sec_rank / sec_rank_total
+            if rank_pct <= 0.2:  # 前20%
+                sec_score += 1
+                signals.append(f"{sec_name}今日排名前{rank_pct*100:.0f}%(强势)")
+            elif rank_pct >= 0.8:  # 后20%
+                sec_score -= 1
+                signals.append(f"{sec_name}今日排名后{(1-rank_pct)*100:.0f}%(弱势)")
+        
+        # === 4. 个股相对板块强弱 ===
         if isinstance(rel, (int, float)):
             if rel > 2.0:
                 sec_score += 2

@@ -66,6 +66,7 @@ def setup_logging(debug: bool = False, log_dir: str = "./logs") -> None:
     root_logger.addHandler(debug_handler)
     
     logging.getLogger('urllib3').setLevel(logging.WARNING)
+    logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
     logging.getLogger('sqlalchemy').setLevel(logging.WARNING)
     logging.getLogger('google').setLevel(logging.WARNING)
     logging.getLogger('httpx').setLevel(logging.WARNING)
@@ -141,6 +142,53 @@ def run_chip_only(config: Config) -> None:
         if i < len(codes) - 1:
             time.sleep(2)
     logger.info("筹码拉取任务结束")
+
+
+def run_gdhs_update() -> None:
+    """拉取全市场股东户数并按股票代码落 data_cache 表（每周执行一次即可）。"""
+    try:
+        import akshare as ak
+        import json as _json
+        from src.storage import DatabaseManager
+        from sqlalchemy import text as _text
+
+        logger.info("📊 开始拉取股东户数数据（全市场）...")
+        df_all = ak.stock_zh_a_gdhs(symbol='最新')
+        if df_all is None or df_all.empty:
+            logger.warning("股东户数数据为空，跳过")
+            return
+
+        code_col = next((c for c in df_all.columns if '代码' in c or 'CODE' in c.upper()), None)
+        holder_col = next((c for c in df_all.columns if '股东' in c or '持股人数' in c or 'HOLDER_NUM' in c.upper()), None)
+        if not code_col or not holder_col:
+            logger.warning(f"股东户数列名未识别，列: {list(df_all.columns)}")
+            return
+
+        db = DatabaseManager()
+        saved = 0
+        for code, grp in df_all.groupby(code_col):
+            if len(grp) < 2:
+                continue
+            try:
+                latest = float(grp.iloc[-1][holder_col])
+                prev = float(grp.iloc[-2][holder_col])
+                if prev <= 0:
+                    continue
+                change_pct = round((latest - prev) / prev * 100, 2)
+                payload = _json.dumps({'change_pct': change_pct, 'latest': latest, 'prev': prev})
+                with db.get_session() as s:
+                    s.execute(_text(
+                        "INSERT INTO data_cache (cache_type, cache_key, data_json, fetched_at) "
+                        "VALUES ('gdhs', :k, :v, datetime('now')) "
+                        "ON CONFLICT(cache_type, cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at"
+                    ), {'k': str(code), 'v': payload})
+                    s.commit()
+                saved += 1
+            except Exception:
+                continue
+        logger.info(f"📊 股东户数落库完成: {saved} 只股票")
+    except Exception as e:
+        logger.warning(f"股东户数拉取失败: {e}")
 
 
 def run_full_analysis(config: Config, args: argparse.Namespace, stock_codes: Optional[List[str]] = None):
@@ -344,8 +392,15 @@ def main() -> int:
                 except Exception as e:
                     logger.warning(f"[回测] 自动回填失败: {e}")
             scheduler.add_daily_job("20:00", run_backtest_job)
+            # 股东户数每周一更新（季度数据，每周一次足够）
+            def run_gdhs_weekly():
+                import datetime as _dt
+                if _dt.datetime.now().weekday() == 0:  # 0 = 周一
+                    run_gdhs_update()
+            scheduler.add_daily_job("16:30", run_gdhs_weekly)
             logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
             logger.info("已注册每日回测自动回填任务，执行时间: 20:00")
+            logger.info("已注册股东户数周更新任务，每周一 16:30 执行")
         else:
             logger.info("SCHEDULE_ENABLED=false，跳过定时分析和回测任务注册")
 

@@ -6,7 +6,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -214,6 +214,9 @@ class TrendAnalysisResult:
     sector_name: str = ""               # 所属板块名称
     sector_pct: float = 0.0             # 板块当日涨跌幅(%)
     sector_relative: float = 0.0        # 个股 vs 板块相对强弱(百分点)
+    sector_5d_pct: Optional[float] = None  # 板块近5日累计涨跌幅(%)，行业轮动判断
+    sector_rank: Optional[int] = None       # 板块今日强度排名
+    sector_rank_total: Optional[int] = None # 参与排名的板块总数
     sector_score: int = 5               # 板块评分 (0-10, 5=中性)
     sector_signal: str = ""             # 板块信号描述
     

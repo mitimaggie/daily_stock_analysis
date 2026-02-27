@@ -35,120 +35,155 @@ class StockTrendAnalyzer:
         pass
     
     @staticmethod
-    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0, 
-                            volume_data: pd.Series = None) -> tuple:
+    def _score_index_kline(idx_df: pd.DataFrame) -> int:
         """
-        增强版市场环境检测：多维度判断 + 强度量化
+        根据真实指数K线（close列）计算市场趋势得分。
         
+        维度：
+        1. MA排列（MA5/MA10/MA20）
+        2. MA20斜率（近3天连续方向）
+        3. 近20日累计涨跌幅
+        4. 近20日振幅（高波动→偏空）
+        
+        Returns:
+            得分（正=偏牛，负=偏熊，范围约 -10 ~ +10）
+        """
+        if idx_df is None or len(idx_df) < 20:
+            return 0
+        close = idx_df['close'].astype(float)
+        score = 0
+
+        # 1. MA排列
+        ma5 = close.rolling(5).mean()
+        ma10 = close.rolling(10).mean()
+        ma20 = close.rolling(20).mean()
+        ma60 = close.rolling(60).mean() if len(close) >= 60 else ma20
+        v5, v10, v20 = ma5.iloc[-1], ma10.iloc[-1], ma20.iloc[-1]
+        v60 = ma60.iloc[-1]
+        if v5 > v10 > v20:
+            score += 3
+        elif v5 < v10 < v20:
+            score -= 3
+        if v10 > v20 > v60:
+            score += 2
+        elif v10 < v20 < v60:
+            score -= 2
+
+        # 2. MA20斜率（连续3天）
+        bull_c = bear_c = 0
+        for off in range(3):
+            i, i10 = -(1 + off), -(11 + off)
+            if abs(i10) > len(ma20):
+                break
+            now_v, ago_v = ma20.iloc[i], ma20.iloc[i10]
+            if now_v > 0 and ago_v > 0:
+                slp = (now_v - ago_v) / ago_v * 100
+                if slp > 1.0:
+                    bull_c += 1
+                elif slp < -1.0:
+                    bear_c += 1
+        if bull_c >= 3:
+            score += 3
+        elif bear_c >= 3:
+            score -= 3
+
+        # 3. 近20日累计涨幅
+        pct_20 = (close.iloc[-1] - close.iloc[-20]) / close.iloc[-20] * 100 if close.iloc[-20] > 0 else 0
+        if pct_20 > 10:
+            score += 2
+        elif pct_20 > 3:
+            score += 1
+        elif pct_20 < -10:
+            score -= 2
+        elif pct_20 < -3:
+            score -= 1
+
+        # 4. 近20日振幅（高振幅 → 震荡/熊市）
+        hi, lo = close.tail(20).max(), close.tail(20).min()
+        amp = (hi - lo) / lo * 100 if lo > 0 else 0
+        if amp > 20:
+            score -= 1
+
+        return score
+
+    @staticmethod
+    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0,
+                             volume_data: pd.Series = None,
+                             index_df: pd.DataFrame = None) -> tuple:
+        """
+        增强版市场环境检测：优先用真实指数K线，退回到个股K线。
+
         判断维度：
-        1. MA趋势：MA5/MA10/MA20/MA60排列 + MA20斜率
-        2. 大盘环境：近20日涨跌幅 + 当日方向
-        3. 量能特征：放量/缩量趋势
-        4. 波动率：近20日波动率（高波动=震荡/熊市）
-        5. 平滑机制：连续3天方向一致才切换
-        
+        1. [主] 真实指数K线（上证/沪深300）的MA排列、斜率、近20日累计涨跌
+        2. [辅] 个股K线的MA趋势 + 波动率
+        3. 当日大盘涨跌幅（实时权重低）
+
         Returns:
             (MarketRegime, 环境强度 0-100)
         """
-        SMOOTH_DAYS = 3
-        SLOPE_THRESHOLD = 1.0
-        
         if df is None or df.empty or len(df) < 30:
             return MarketRegime.SIDEWAYS, 50
-        
+
         try:
+            # === 主信号：真实指数K线（权重 60%）===
+            index_score = 0
+            if index_df is not None and len(index_df) >= 20:
+                index_score = StockTrendAnalyzer._score_index_kline(index_df)
+            else:
+                # 无指数数据时退回到当日涨跌幅
+                if index_change_pct > 1.0:
+                    index_score = 2
+                elif index_change_pct > 0:
+                    index_score = 1
+                elif index_change_pct < -1.0:
+                    index_score = -2
+                elif index_change_pct < 0:
+                    index_score = -1
+
+            # === 辅助信号：个股K线 MA（权重 30%）===
+            stock_score = 0
             ma5 = df['close'].rolling(5).mean()
             ma10 = df['close'].rolling(10).mean()
             ma20 = df['close'].rolling(20).mean()
             ma60 = df['close'].rolling(60).mean()
-            
-            if len(ma20) < 15:
-                return MarketRegime.SIDEWAYS, 50
-            
-            latest_ma5 = ma5.iloc[-1]
-            latest_ma10 = ma10.iloc[-1]
-            latest_ma20 = ma20.iloc[-1]
-            latest_ma60 = ma60.iloc[-1] if len(ma60) >= 60 else latest_ma20
-            
-            ma_bull_score = 0
-            if latest_ma5 > latest_ma10 > latest_ma20:
-                ma_bull_score += 3
-            elif latest_ma5 < latest_ma10 < latest_ma20:
-                ma_bull_score -= 3
-            if latest_ma10 > latest_ma20 > latest_ma60:
-                ma_bull_score += 2
-            elif latest_ma10 < latest_ma20 < latest_ma60:
-                ma_bull_score -= 2
-            
-            bull_count = 0
-            bear_count = 0
-            for offset in range(SMOOTH_DAYS):
-                idx = -(1 + offset)
-                idx_10 = -(11 + offset)
-                if abs(idx_10) > len(ma20):
-                    break
-                now_val = ma20.iloc[idx]
-                ago_val = ma20.iloc[idx_10]
-                if now_val <= 0 or ago_val <= 0:
-                    break
-                slope = (now_val - ago_val) / ago_val * 100
-                if slope > SLOPE_THRESHOLD:
-                    bull_count += 1
-                elif slope < -SLOPE_THRESHOLD:
-                    bear_count += 1
-            
-            ma_slope_score = 0
-            if bull_count >= SMOOTH_DAYS:
-                ma_slope_score = 3
-            elif bear_count >= SMOOTH_DAYS:
-                ma_slope_score = -3
-            
-            index_score = 0
-            if index_change_pct > 1.0:
-                index_score = 2
-            elif index_change_pct > 0:
-                index_score = 1
-            elif index_change_pct < -1.0:
-                index_score = -2
-            elif index_change_pct < 0:
-                index_score = -1
-            
-            volume_score = 0
-            if volume_data is not None and len(volume_data) >= 20:
-                recent_vol = volume_data.tail(5).mean()
-                avg_vol = volume_data.tail(20).mean()
-                if avg_vol > 0:
-                    vol_ratio = recent_vol / avg_vol
-                    if vol_ratio > 1.3:
-                        volume_score = 1
-                    elif vol_ratio < 0.7:
-                        volume_score = -1
-            
-            volatility_score = 0
+            if len(ma20) >= 15:
+                v5, v10, v20 = ma5.iloc[-1], ma10.iloc[-1], ma20.iloc[-1]
+                v60 = ma60.iloc[-1] if len(ma60) >= 60 else v20
+                if v5 > v10 > v20:
+                    stock_score += 2
+                elif v5 < v10 < v20:
+                    stock_score -= 2
+                if v10 > v20 > v60:
+                    stock_score += 1
+                elif v10 < v20 < v60:
+                    stock_score -= 1
+
+            # === 辅助信号：波动率（高波动偏熊）===
+            vol_score = 0
             if len(df) >= 20:
-                recent_20 = df.tail(20)
-                high_20 = recent_20['high'].max()
-                low_20 = recent_20['low'].min()
-                volatility = (high_20 - low_20) / low_20 * 100 if low_20 > 0 else 0
-                if volatility > 30:
-                    volatility_score = -2
-                elif volatility < 15:
-                    volatility_score = 1
-            
-            total_score = ma_bull_score + ma_slope_score + index_score + volume_score + volatility_score
-            
-            if total_score >= 5:
+                hi20 = df['high'].tail(20).max()
+                lo20 = df['low'].tail(20).min()
+                amp = (hi20 - lo20) / lo20 * 100 if lo20 > 0 else 0
+                if amp > 30:
+                    vol_score = -1
+                elif amp < 15:
+                    vol_score = 1
+
+            # 合成总分（指数权重更高）
+            total_score = index_score * 2 + stock_score + vol_score
+
+            if total_score >= 8:
                 regime = MarketRegime.BULL
-                strength = min(100, 50 + total_score * 5)
-            elif total_score <= -5:
+                strength = min(100, 50 + total_score * 4)
+            elif total_score <= -8:
                 regime = MarketRegime.BEAR
-                strength = max(0, 50 + total_score * 5)
+                strength = max(0, 50 + total_score * 4)
             else:
                 regime = MarketRegime.SIDEWAYS
-                strength = 50 + total_score * 3
-            
+                strength = max(10, min(90, 50 + total_score * 3))
+
             return regime, int(strength)
-            
+
         except Exception:
             return MarketRegime.SIDEWAYS, 50
     
@@ -386,7 +421,7 @@ class StockTrendAnalyzer:
             ScoringSystem.check_trading_halt(result)
             ScoringSystem.score_capital_flow(result, capital_flow)
             ScoringSystem.score_capital_flow_trend(result, df)
-            ScoringSystem.score_sector_strength(result, sector_context)
+            ScoringSystem.score_sector_strength(result, sector_context, market_regime=market_regime)
             ScoringSystem.score_chip_distribution(result, chip_data)
             ScoringSystem.score_fundamental_quality(result, fundamental_data)
             ScoringSystem.score_forecast(result, fundamental_data)

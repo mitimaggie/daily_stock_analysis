@@ -296,9 +296,10 @@ class AkshareFetcher(BaseFetcher):
     def get_capital_flow(self, stock_code: str) -> Optional[CapitalFlowData]:
         """获取个股资金流向（东方财富）
 
-        数据来源: ak.stock_individual_fund_flow
-        返回最近一个交易日的主力/超大单/大单/中单/小单净流入数据。
-        带10分钟内存缓存，避免批量分析时重复请求。
+        缓存策略（三层）：
+        1. 内存缓存（盘中3分钟，盘后10分钟）
+        2. DB缓存（data_cache 表，盘后24h内复用，避免批量分析反复请求）
+        3. 实时拉取 ak.stock_individual_fund_flow，成功后落 DB
 
         Returns:
             CapitalFlowData or None on failure.
@@ -306,12 +307,42 @@ class AkshareFetcher(BaseFetcher):
         if _is_us_code(stock_code) or _is_etf_code(stock_code):
             return None
 
-        # 检查缓存（ttl 字段由写入时决定，盘中 180s，盘后 600s）
+        # 1. 内存缓存
         cached = self._capital_flow_cache.get(stock_code)
         if cached:
             _ttl = cached.get('ttl', self._CAPITAL_FLOW_TTL)
             if time.time() - cached['ts'] < _ttl:
                 return cached['data']
+
+        # 2. DB 缓存（盘后24h内直接复用，避免批量分析打爆接口）
+        try:
+            from src.storage import DatabaseManager
+            from sqlalchemy import text as _text
+            import json as _json
+            from datetime import datetime as _dt2
+            _db = DatabaseManager()
+            with _db.get_session() as _s:
+                _row = _s.execute(_text(
+                    "SELECT data_json, fetched_at FROM data_cache "
+                    "WHERE cache_type='capital_flow' AND cache_key=:k "
+                    "ORDER BY fetched_at DESC LIMIT 1"
+                ), {'k': stock_code}).fetchone()
+            if _row:
+                _age_h = (_dt2.now() - _dt2.fromisoformat(str(_row[1]))).total_seconds() / 3600
+                _max_age = 6 if self._is_market_open() else 24
+                if _age_h < _max_age:
+                    _d = _json.loads(_row[0])
+                    result = CapitalFlowData(
+                        main_net_flow=_d.get('main_net_flow', 0),
+                        main_net_flow_pct=_d.get('main_net_flow_pct', 0),
+                        super_large_net=_d.get('super_large_net', 0),
+                        large_net=_d.get('large_net', 0),
+                    )
+                    self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time(), 'ttl': 300}
+                    logger.debug(f"💰 [{stock_code}] 资金流向(DB缓存 {_age_h:.1f}h前)")
+                    return result
+        except Exception:
+            pass
 
         import akshare as ak
         from datetime import datetime as _dt, date as _date
@@ -362,12 +393,29 @@ class AkshareFetcher(BaseFetcher):
                 super_large_net=round(super_large / 10000, 2) if super_large else 0,
                 large_net=round(large / 10000, 2) if large else 0,
             )
-            # 盘中缩短缓存 TTL 到 3 分钟，让资金流数据更新更频繁
+            # 落 DB 缓存（供下次批量分析复用，避免重复打接口）
             try:
-                from src.core.pipeline import is_market_intraday
-                _intraday = is_market_intraday()
+                import json as _json
+                from src.storage import DatabaseManager
+                from sqlalchemy import text as _text
+                _db = DatabaseManager()
+                _payload = _json.dumps({
+                    'main_net_flow': result.main_net_flow,
+                    'main_net_flow_pct': result.main_net_flow_pct,
+                    'super_large_net': result.super_large_net,
+                    'large_net': result.large_net,
+                })
+                with _db.get_session() as _s:
+                    _s.execute(_text(
+                        "INSERT INTO data_cache (cache_type, cache_key, data_json, fetched_at) "
+                        "VALUES ('capital_flow', :k, :v, datetime('now')) "
+                        "ON CONFLICT(cache_type, cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at"
+                    ), {'k': stock_code, 'v': _payload})
+                    _s.commit()
             except Exception:
-                _intraday = False
+                pass
+            # 内存缓存：盘中3分钟，盘后10分钟
+            _intraday = self._is_market_open()
             ttl = 180 if _intraday else self._CAPITAL_FLOW_TTL
             self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time(), 'ttl': ttl}
             data_tag = "今日" if is_today else "昨日"
@@ -378,8 +426,24 @@ class AkshareFetcher(BaseFetcher):
             logger.debug(f"[{stock_code}] 资金流向获取失败: {e}")
             return None
 
+    @staticmethod
+    def _is_market_open() -> bool:
+        """粗略判断当前是否在交易时段（9:30-15:00 工作日）"""
+        try:
+            from datetime import datetime as _dt
+            now = _dt.now()
+            if now.weekday() >= 5:
+                return False
+            t = now.hour * 60 + now.minute
+            return 570 <= t <= 900  # 9:30=570, 15:00=900
+        except Exception:
+            return False
+
     def get_chip_distribution(self, stock_code: str, force_fetch: bool = False) -> Optional[ChipDistribution]:
-        """获取筹码分布（force_fetch 时忽略 enable_chip_distribution，用于定时 --chip-only 拉取）"""
+        """获取筹码分布（force_fetch 时忽略 enable_chip_distribution，用于定时 --chip-only 拉取）
+        
+        优先调用 ak.stock_cyq_em；若被封则自动用本地 K 线数据估算。
+        """
         import akshare as ak
 
         config = get_config()
@@ -403,6 +467,94 @@ class AkshareFetcher(BaseFetcher):
                 concentration_70=safe_float(latest.get('70集中度'))
             )
         except Exception as e:
-            # 东方财富/ak 接口易被断开(RemoteDisconnected)，降为 debug 避免刷屏；不需要筹码时可关闭 ENABLE_CHIP_DISTRIBUTION
-            logger.debug(f"筹码分布获取失败 {stock_code}: {e}")
+            logger.debug(f"筹码分布外部接口失败 {stock_code}: {e}，尝试本地K线估算")
+            return self._estimate_chip_from_daily(stock_code)
+
+    def _estimate_chip_from_daily(self, stock_code: str) -> Optional[ChipDistribution]:
+        """基于本地 stock_daily K 线数据估算筹码分布（无外部 API 依赖）
+        
+        算法：
+        - 取最近 120 日 K 线，按成交量加权估算持仓成本分布
+        - 获利盘 = 当前价高于加权成本的筹码比例
+        - 均成本 = 最近 60 日 VWAP（成交额/成交量）
+        - 筹码集中度 = 70%/90% 筹码的价格区间宽度/均价（越小越集中）
+        """
+        try:
+            from src.storage import DatabaseManager
+            from sqlalchemy import text as _text
+            import numpy as np
+
+            db = DatabaseManager()
+            with db.get_session() as s:
+                rows = s.execute(_text(
+                    "SELECT date, close, volume, amount FROM stock_daily "
+                    "WHERE code=:code AND volume>0 ORDER BY date DESC LIMIT 120"
+                ), {"code": stock_code}).fetchall()
+
+            if not rows or len(rows) < 10:
+                return None
+
+            dates = [r[0] for r in rows]
+            closes = [float(r[1]) for r in rows]
+            volumes = [float(r[2]) for r in rows]
+            amounts = [float(r[3]) for r in rows]
+
+            current_price = closes[0]
+            today_date = dates[0]
+
+            # 1. 均成本（60日成交量加权收盘价，避免 amount 单位不一致问题）
+            vol60 = sum(volumes[:60])
+            avg_cost = round(sum(c * v for c, v in zip(closes[:60], volumes[:60])) / vol60, 2) if vol60 > 0 else current_price
+
+            # 2. 获利盘比例（成交量加权）
+            total_vol = sum(volumes)
+            profit_vol = sum(v for c, v in zip(closes, volumes) if c <= current_price)
+            profit_ratio = round(profit_vol / total_vol, 4) if total_vol > 0 else 0.5
+
+            # 3. 筹码集中度（90%和70%的价格区间宽度/均价）
+            # 按收盘价排序，取覆盖90%/70%成交量的价格范围
+            sorted_pairs = sorted(zip(closes, volumes), key=lambda x: x[0])
+            sorted_closes = [p[0] for p in sorted_pairs]
+            sorted_vols = [p[1] for p in sorted_pairs]
+            cum_vols = []
+            s_cum = 0
+            for v in sorted_vols:
+                s_cum += v
+                cum_vols.append(s_cum)
+
+            def price_at_pct(pct_low, pct_high):
+                lo_vol = total_vol * pct_low
+                hi_vol = total_vol * pct_high
+                lo_price = hi_price = avg_cost
+                for i, cv in enumerate(cum_vols):
+                    if cv >= lo_vol:
+                        lo_price = sorted_closes[i]
+                        break
+                for i, cv in enumerate(cum_vols):
+                    if cv >= hi_vol:
+                        hi_price = sorted_closes[i]
+                        break
+                return lo_price, hi_price
+
+            cost_90_low, cost_90_high = price_at_pct(0.05, 0.95)
+            cost_70_low, cost_70_high = price_at_pct(0.15, 0.85)
+            concentration_90 = round((cost_90_high - cost_90_low) / avg_cost * 100, 2) if avg_cost > 0 else 50.0
+            concentration_70 = round((cost_70_high - cost_70_low) / avg_cost * 100, 2) if avg_cost > 0 else 30.0
+
+            logger.debug(f"[{stock_code}] 筹码本地估算: 获利盘={profit_ratio:.1%} 均成本={avg_cost} 集中度90={concentration_90}%")
+            return ChipDistribution(
+                code=stock_code,
+                date=str(today_date),
+                source='local_estimate',
+                profit_ratio=profit_ratio,
+                avg_cost=avg_cost,
+                cost_90_low=cost_90_low,
+                cost_90_high=cost_90_high,
+                concentration_90=concentration_90,
+                cost_70_low=cost_70_low,
+                cost_70_high=cost_70_high,
+                concentration_70=concentration_70,
+            )
+        except Exception as e:
+            logger.debug(f"[{stock_code}] 筹码本地估算失败: {e}")
             return None

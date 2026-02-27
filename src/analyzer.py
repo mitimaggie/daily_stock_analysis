@@ -222,7 +222,10 @@ class GeminiAnalyzer:
 - 强势趋势放宽 → 强势趋势股（多头排列且趋势强度高、量能配合）可适当放宽乖离率要求，可轻仓追踪，但仍需设置止损
 
 ## 输出质量要求
-- one_sentence 必须具体、有信息量，禁止模板化（如"该股基本面良好"这种废话）
+- **one_sentence**：必须引用至少一个具体数字（PE/PB/涨幅/评分/成交量等），禁止泛化表述（如"基本面良好""技术面不错""建议关注"这类废话）
+- **analysis_summary**：只写量化报告未覆盖的内容（舆情/基本面质地/行业逻辑），**不得重复**量化指标描述（MACD/KDJ/RSI等已在量化报告中，不要再写）
+- **positive_catalysts / risk_alerts**：每条必须具体，不接受行业通稿式泛化（如"行业景气度回升"这类通用句子）；若无具体催化剂，写"暂无明确催化剂，等待放量信号"
+- **counter_arguments**（反面论证）：**必填，禁止为空数组 []**。无论看多/看空/观望，必须列出2-3条"当前判断可能错误的理由"，与 one_sentence 同等重要
 - 如果信息不足以判断，写"信息不足，建议观望"而非编造理由
 """
 
@@ -244,7 +247,10 @@ class GeminiAnalyzer:
 - 数据矛盾时 → 诚实表达不确定性，偏向保守（持仓者风险更大）
 
 ## 输出质量要求
-- one_sentence 必须针对持仓者，说明"继续持有/减仓/加仓"的理由，禁止模板化
+- **one_sentence**：必须引用至少一个具体数字（PE/成本价/浮亏幅度/量化评分等），针对持仓者说明继续持有/减仓/加仓的核心理由，禁止模板化
+- **analysis_summary**：只写量化报告未覆盖的内容（舆情/基本面质地/行业逻辑），**不得重复**量化指标描述
+- **positive_catalysts / risk_alerts**：每条必须具体，不接受泛化表述
+- **counter_arguments**（反面论证）：**必填，禁止为空数组 []**。必须列出2-3条"当前持仓判断可能错误的理由"
 - 如果信息不足以判断，写"信息不足，建议维持现仓观察"而非编造理由
 """
 
@@ -472,15 +478,25 @@ class GeminiAnalyzer:
         chip_note = context.get('chip_note') or ""
         chip_line = f"\n筹码: {chip_note}" if chip_note and chip_note != "未启用" else ""
 
-        # 板块相对强弱
+        # 板块相对强弱（注入 sector_rank、sector_score）
         sec = context.get('sector_context') or {}
+        trend_analysis = context.get('trend_analysis') or {}
         sector_line = ""
         if sec.get('sector_name'):
             sp = sec.get('sector_pct')
             rel = sec.get('relative')
             sp_str = f"{sp:+.2f}%" if isinstance(sp, (int, float)) else "N/A"
             rel_str = f"{rel:+.2f}%" if isinstance(rel, (int, float)) else "N/A"
-            sector_line = f"\n板块: {sec.get('sector_name')} 今日{sp_str} | 相对板块{rel_str}"
+            s_rank = sec.get('sector_rank')
+            s_total = sec.get('sector_rank_total')
+            rank_str = f" 今日行业排名{s_rank}/{s_total}" if isinstance(s_rank, int) and isinstance(s_total, int) else ""
+            s_5d = sec.get('sector_5d_pct')
+            s5d_str = f" 近5日{s_5d:+.1f}%" if isinstance(s_5d, (int, float)) else ""
+            sector_line = f"\n板块: {sec.get('sector_name')} 今日{sp_str} | 相对板块{rel_str}{rank_str}{s5d_str}"
+        # 大盘趋势标注（market_regime）
+        market_regime = trend_analysis.get('market_regime') or context.get('market_regime') or ''
+        regime_label_map = {'bull': '牛市/强势', 'bear': '熊市/弱势', 'sideways': '震荡市', 'recovery': '修复中'}
+        regime_str = f"\n大盘形态: {regime_label_map.get(market_regime, market_regime)}" if market_regime else ""
 
         # 盘中/盘后
         is_intraday = context.get('is_intraday', False)
@@ -564,7 +580,7 @@ class GeminiAnalyzer:
 {tech_report}
 
 ## 基本面 (F10)
-{f10_str}{sector_line}{chip_line}{position_section}
+{f10_str}{sector_line}{chip_line}{regime_str}{position_section}
 
 ## 舆情
 {news_section}
@@ -574,31 +590,28 @@ class GeminiAnalyzer:
 只输出 JSON，不要 markdown 代码块包裹。字段：
 
 stock_name, trend_prediction, time_horizon({time_horizon_hint}),
-analysis_summary(解释逻辑，不要模板化), risk_warning,
+analysis_summary(只写舆情/基本面/行业逻辑，**禁止重复量化报告中的MACD/KDJ/RSI等技术指标描述**),
+risk_warning,
 sentiment_score(0-100), operation_advice("买入"/"持有"/"卖出"/"观望"),
 llm_score(同sentiment_score), llm_advice(同operation_advice),
 llm_reasoning(与量化分歧原因，无分歧写"与量化结论一致"),
 confidence_reasoning(判断置信度，如"舆情充分置信度高"或"缺少关键数据置信度低"),
 dashboard: {{
   core_conclusion: {{
-    one_sentence: "{one_sentence_hint}",
+    one_sentence: "{one_sentence_hint}（必须引用具体数字，禁止泛化表述）",
     {position_advice_protocol}
   }},
-  intelligence: {{ risk_alerts: [], positive_catalysts: [], sentiment_summary: "", earnings_outlook: "" }},
-  battle_plan: {{ sniper_points: {{ ideal_buy: 用量化锚点, stop_loss: 用量化锚点 }} }}
+  intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
+  battle_plan: {{ sniper_points: {{ ideal_buy: 用量化锚点, stop_loss: 用量化锚点 }} }},
+  counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"]
 }}
 
-### one_sentence 质量示例：
-✅ "量化78分看多+北向资金连续3日流入+Q3营收增速35%超预期，但PE=45倍处于历史高位需注意回调风险"
-✅ "技术面MACD金叉+KDJ超卖共振看多，但公司刚发盈利预警，建议等财报落地再介入"
-❌ "该股基本面良好，技术面表现不错，建议关注"（禁止这种废话）
-
-### 反面论证（必填，减少确认偏误）
-在dashboard中增加字段 counter_arguments(array[string])：
-- 如果你看多，必须列出2-3个"看多可能错误的理由"
-- 如果你看空，必须列出2-3个"看空可能错误的理由"
-- 如果你观望，列出"可能错过机会的理由"和"可能避开风险的理由"各1条
-示例：看多时 → ["若大盘系统性回调，该股Beta=1.3将放大跌幅", "Q4业绩可能不及预期"]
+### 输出质量规则（违反则重新生成）：
+1. **one_sentence** 必须含具体数字。✅"PEG=0.68+量化57分+板块+0.17%，但顶背离+缺口未回补，等78.5支撑确认" ❌"基本面良好建议关注"
+2. **analysis_summary** 禁止出现：MACD/KDJ/RSI/均线/趋势/评分等量化词汇（这些已在量化报告里）
+3. **counter_arguments** 不得为空数组，最少2条，每条引用具体数字或事件
+4. **catalysts/risk_alerts** 每条必须有具体公司名/数字/事件，禁止行业通稿泛化
+示例 counter_arguments（看多时）：["若Q4净利润增速跌破15%，PEG估值支撑失效", "家电以旧换新政策若退出，终端需求将骤降10-15%"]
 
 开始分析：
 """
@@ -689,6 +702,11 @@ dashboard: {{
                                         }
                                     }
                                 }
+                            },
+                            "counter_arguments": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "反面论证，必须列出2-3条当前判断可能错误的理由，禁止为空数组"
                             }
                         }
                     }

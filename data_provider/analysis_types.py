@@ -76,6 +76,9 @@ class SectorContext:
     sector_pct: Optional[float] = None           # 板块今日涨跌幅 (%)
     stock_pct: Optional[float] = None            # 个股今日涨跌幅 (%)
     relative: Optional[float] = None             # 个股 - 板块 (pp)
+    sector_5d_pct: Optional[float] = None        # 板块近5日累计涨跌幅（行业轮动判断）
+    sector_rank: Optional[int] = None            # 板块今日强度排名（1=最强，数字越大越弱）
+    sector_rank_total: Optional[int] = None      # 参与排名的板块总数
     
     @property
     def has_data(self) -> bool:
@@ -83,12 +86,19 @@ class SectorContext:
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为旧格式 dict"""
-        return {
+        d = {
             'sector_name': self.sector_name or '未知',
             'sector_pct': self.sector_pct,
             'stock_pct': self.stock_pct,
             'relative': self.relative,
         }
+        if self.sector_5d_pct is not None:
+            d['sector_5d_pct'] = self.sector_5d_pct
+        if self.sector_rank is not None:
+            d['sector_rank'] = self.sector_rank
+        if self.sector_rank_total is not None:
+            d['sector_rank_total'] = self.sector_rank_total
+        return d
     
     @classmethod
     def from_dict(cls, d: dict) -> 'SectorContext':
@@ -99,6 +109,9 @@ class SectorContext:
             sector_pct=d.get('sector_pct'),
             stock_pct=d.get('stock_pct'),
             relative=d.get('relative'),
+            sector_5d_pct=d.get('sector_5d_pct'),
+            sector_rank=d.get('sector_rank'),
+            sector_rank_total=d.get('sector_rank_total'),
         )
 
 

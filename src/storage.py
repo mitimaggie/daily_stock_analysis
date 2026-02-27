@@ -1063,6 +1063,24 @@ class DatabaseManager:
                 session.rollback()
                 logger.debug(f"保存指数日线失败: {e}")
 
+    def get_index_kline(self, index_name: str = "上证指数", days: int = 120) -> pd.DataFrame:
+        """获取指数K线数据（close + pct_chg），供大盘择时分析使用"""
+        try:
+            sql = text("""
+                SELECT date, close, pct_chg FROM index_daily
+                WHERE code = :code ORDER BY date DESC LIMIT :limit
+            """)
+            with self._engine.connect() as conn:
+                df = pd.read_sql(sql, conn, params={"code": index_name, "limit": days})
+            if df.empty:
+                return pd.DataFrame()
+            df = df.sort_values('date').reset_index(drop=True)
+            df['close'] = df['close'].astype(float)
+            df['pct_chg'] = df['pct_chg'].astype(float)
+            return df
+        except Exception:
+            return pd.DataFrame()
+
     def get_index_returns(self, index_name: str = "上证指数", days: int = 120) -> pd.Series:
         """获取指数收益率序列（供 Beta 计算），返回 pct_chg 的 Series"""
         try:

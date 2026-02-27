@@ -209,7 +209,7 @@ def get_intraday_kline(
             _set_cache(code, period, df)
             return df
     
-    logger.warning(f"[intraday] {code} 所有数据源均失败")
+    logger.debug(f"[intraday] {code} 所有数据源均失败（可能为非交易时段，属正常）")
     return None
 
 

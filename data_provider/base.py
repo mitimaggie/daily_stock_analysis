@@ -137,20 +137,23 @@ class DataFetcherManager:
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
+        from .tencent_fetcher import TencentFetcher
         
         akshare = AkshareFetcher()
         efinance = EfinanceFetcher()
         baostock = BaostockFetcher()
+        tencent = TencentFetcher()
         yfinance = YfinanceFetcher()
         pytdx = PytdxFetcher()
         
-        akshare.priority = 0
-        efinance.priority = 1
-        baostock.priority = 2
-        yfinance.priority = 3
-        pytdx.priority = 4
+        baostock.priority = 0   # 首选：稳定、免费、不反爬、速度快
+        akshare.priority = 1    # 备用：功能全，但批量易限流
+        tencent.priority = 2    # 备用：腾讯K线，替代被封的 efinance K线
+        efinance.priority = 3   # 备用：push2his/kline 被封，资金流接口仍可用
+        yfinance.priority = 4   # 备用：美股首选，A股延迟
+        pytdx.priority = 5      # 备用：需要TCP连接
 
-        self._fetchers = [akshare, efinance, baostock, yfinance, pytdx]
+        self._fetchers = [akshare, efinance, baostock, tencent, yfinance, pytdx]
         self._fetchers.sort(key=lambda f: f.priority)
         
         logger.debug(f"🚀 数据源加载顺序: {', '.join([f.name for f in self._fetchers])}")
@@ -533,7 +536,6 @@ class DataFetcherManager:
 
     _sector_context_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
     _SECTOR_CONTEXT_TTL = 3600  # 1小时（板块归属不会频繁变化）
-
     def get_stock_sector_context(self, stock_code: str, stock_pct_chg: Optional[float] = None) -> Optional[SectorContext]:
         """获取个股所属板块及相对强弱（板块今日涨跌 vs 个股涨跌）"""
         # 检查缓存
@@ -547,24 +549,35 @@ class DataFetcherManager:
                                  relative=round(stock_pct_chg - result.sector_pct, 2))
             return result
 
-        for f in self._fetchers:
+        # 优先用 EfinanceFetcher（唯一稳定返回板块涨幅的数据源）
+        _ordered_fetchers = sorted(
+            self._fetchers,
+            key=lambda f: 0 if f.name == 'EfinanceFetcher' else 1
+        )
+        for f in _ordered_fetchers:
             try:
                 if not hasattr(f, 'get_stock_belong_board') and not hasattr(f, 'get_belong_board'):
                     continue
-                get_board = getattr(f, 'get_stock_belong_board', None) or getattr(f, 'get_belong_board', None)
+                get_board = getattr(f, 'get_belong_board', None) or getattr(f, 'get_stock_belong_board', None)
                 if not get_board:
                     continue
                 df = get_board(stock_code)
                 if df is None or df.empty:
                     continue
+                # 优先选行业板块（BK04xx/BK12xx），避免概念板块
                 row = df.iloc[0]
+                _bk_col = next((c for c in ['板块代码', 'board_code'] if c in df.columns), None)
+                if _bk_col:
+                    _industry = df[df[_bk_col].str.startswith(('BK04', 'BK12'), na=False)]
+                    if not _industry.empty:
+                        row = _industry.iloc[0]
                 name = None
                 for col in ['板块名称', '名称', 'name', '板块']:
                     if col in row.index and pd.notna(row.get(col)):
                         name = str(row[col]).strip()
                         break
                 sector_pct = None
-                for col in ['涨跌幅', '涨跌幅度', 'change_pct', '日涨跌幅']:
+                for col in ['涨跌幅', '涨跌幅度', 'change_pct', '日涨跌幅', '板块涨幅']:
                     if col in row.index and pd.notna(row.get(col)):
                         try:
                             sector_pct = float(row[col])
@@ -574,10 +587,80 @@ class DataFetcherManager:
                 rel = None
                 if stock_pct_chg is not None and sector_pct is not None:
                     rel = round(stock_pct_chg - sector_pct, 2)
-                result = SectorContext(sector_name=name or '未知', sector_pct=sector_pct, stock_pct=stock_pct_chg, relative=rel)
+                result = SectorContext(sector_name=name or '未知', sector_pct=sector_pct, stock_pct=stock_pct_chg,
+                                       relative=rel)
                 # 写入缓存
                 self._sector_context_cache[stock_code] = {'data': result, 'ts': time.time()}
                 return result
             except Exception:
                 continue
+
+        # === DB Fallback：外部 API 不可用时，用已有缓存构建 sector_context ===
+        # 静态行业映射（兜底，覆盖常见银行/消费股）
+        _STATIC_INDUSTRY_MAP = {
+            '000001': '银行', '600000': '银行', '600016': '银行', '601166': '银行',
+            '601288': '银行', '601398': '银行', '601939': '银行', '601988': '银行',
+            '600519': '白酒Ⅱ', '000858': '白酒Ⅱ', '000596': '白酒Ⅱ',
+            '601985': '核电', '601088': '煤炭开采',
+        }
+        try:
+            from src.storage import DatabaseManager
+            from sqlalchemy import text as _text
+            _db = DatabaseManager()
+            with _db.get_session() as _s:
+                # 1. 从 industry_pe 缓存查行业归属（或静态映射兜底）
+                _row = _s.execute(_text(
+                    "SELECT data_json FROM data_cache WHERE cache_type='industry_pe' AND cache_key=:code LIMIT 1"
+                ), {"code": stock_code}).fetchone()
+                _industry_from_static = _STATIC_INDUSTRY_MAP.get(stock_code)
+                if _row or _industry_from_static:
+                    import json as _json
+                    _industry = _industry_from_static or ''
+                    if _row:
+                        _d = _json.loads(_row[0])
+                        _industry = _d.get('industry', '') or _industry
+                    if _industry:
+                        # 2. 查同行业其他股票最近一日涨跌幅均值作为板块代理
+                        _peers = _s.execute(_text(
+                            "SELECT cache_key FROM data_cache WHERE cache_type='industry_pe' AND data_json LIKE :pat"
+                        ), {"pat": f'%"industry": "{_industry}"%'}).fetchall()
+                        _peer_codes = [r[0] for r in _peers if r[0] != stock_code]
+                        _sector_pct = None
+                        _sector_5d_pct = None
+                        if _peer_codes:
+                            _placeholders = ','.join([f'"{c}"' for c in _peer_codes[:30]])
+                            # 最近一日涨跌幅均值
+                            _pct_rows = _s.execute(_text(
+                                f"SELECT AVG(pct_chg) FROM stock_daily WHERE code IN ({_placeholders}) AND date=(SELECT MAX(date) FROM stock_daily WHERE code IN ({_placeholders}))"
+                            )).fetchone()
+                            if _pct_rows and _pct_rows[0] is not None:
+                                _sector_pct = round(float(_pct_rows[0]), 2)
+                            # 近5日累计涨跌幅：用 SQLite ROW_NUMBER 取每只股票最新5条
+                            try:
+                                _5d_rows = _s.execute(_text(
+                                    f"""SELECT code, close FROM (
+                                        SELECT code, close, date,
+                                               ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) as rn
+                                        FROM stock_daily WHERE code IN ({_placeholders})
+                                    ) t WHERE rn <= 5 ORDER BY code, date DESC"""
+                                )).fetchall()
+                                if _5d_rows:
+                                    import pandas as _pd
+                                    _df5 = _pd.DataFrame(_5d_rows, columns=['code', 'close'])
+                                    _peer_pcts = []
+                                    for _pc in _peer_codes[:30]:
+                                        _sub = _df5[_df5['code'] == _pc]['close'].values
+                                        if len(_sub) >= 5:
+                                            _peer_pcts.append((_sub[0] - _sub[4]) / _sub[4] * 100)
+                                    if _peer_pcts:
+                                        _sector_5d_pct = round(sum(_peer_pcts) / len(_peer_pcts), 2)
+                            except Exception:
+                                pass
+                        _rel = round(stock_pct_chg - _sector_pct, 2) if (stock_pct_chg is not None and _sector_pct is not None) else None
+                        _result = SectorContext(sector_name=_industry, sector_pct=_sector_pct, stock_pct=stock_pct_chg, relative=_rel, sector_5d_pct=_sector_5d_pct)
+                        self._sector_context_cache[stock_code] = {'data': _result, 'ts': time.time()}
+                        return _result
+        except Exception:
+            pass
+
         return None

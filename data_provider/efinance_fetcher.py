@@ -25,6 +25,10 @@ import os
 import random
 import re
 import time
+
+# 抑制 urllib3 connectionpool 的重试 WARNING（东方财富反爬导致大量噪音日志）
+logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -215,8 +219,8 @@ class EfinanceFetcher(BaseFetcher):
         self._last_request_time = time.time()
     
     @retry(
-        stop=stop_after_attempt(5),  # 增加到5次
-        wait=wait_exponential(multiplier=1, min=4, max=60),  # 增加等待时间：4, 8, 16...
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((
             ConnectionError,
             TimeoutError,
@@ -224,7 +228,7 @@ class EfinanceFetcher(BaseFetcher):
             requests.exceptions.ConnectionError,
             requests.exceptions.ChunkedEncodingError
         )),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
+        before_sleep=before_sleep_log(logger, logging.DEBUG),
     )
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
@@ -312,10 +316,13 @@ class EfinanceFetcher(BaseFetcher):
         except Exception as e:
             error_msg = str(e).lower()
             
+            # RemoteDisconnected = 服务器主动断开，东方财富反爬，直接失败不重试
+            if 'remotedisconnected' in error_msg or 'remote end closed' in error_msg:
+                raise DataFetchError(f"efinance 服务器断开（反爬），跳过重试: {e}") from e
+            
             # 检测反爬封禁
             if any(keyword in error_msg for keyword in ['banned', 'blocked', '频率', 'rate', '限制']):
-                logger.warning(f"检测到可能被封禁: {e}")
-                raise RateLimitError(f"efinance 可能被限流: {e}") from e
+                raise DataFetchError(f"efinance 被限流: {e}") from e
             
             raise DataFetchError(f"efinance 获取数据失败: {e}") from e
     
