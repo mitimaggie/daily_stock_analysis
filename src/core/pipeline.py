@@ -840,6 +840,10 @@ class StockAnalysisPipeline:
                 # 新量化字段注入 dashboard（供 notification 渲染）
                 # trend 本身就是 TrendAnalysisResult.to_dict() 的输出，直接复用
                 dashboard['quant_extras'] = trend
+                # 补充序列化 _conflict_warnings（动态属性不在 dataclass fields 里）
+                _tr_obj = context.get('trend_result')
+                if _tr_obj is not None and hasattr(_tr_obj, '_conflict_warnings') and _tr_obj._conflict_warnings:
+                    dashboard['quant_extras']['signal_conflicts'] = _tr_obj._conflict_warnings
 
                 # 生成统一持仓者策略（供 PushPlus / Web / API 共用）
                 # trend 是 dict（来自 _prepare_stock_context 中 trend_result.to_dict()），

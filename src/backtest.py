@@ -251,6 +251,17 @@ class BacktestRunner:
         if not records:
             return "暂无可统计的回测数据（需要至少运行 7 天后才有回填数据）"
 
+        # === 去重：同股同日只保留最高评分的记录，避免重复分析污染统计 ===
+        dedup_map: dict = {}
+        for r in records:
+            if r.actual_pct_5d is None:
+                continue
+            day_key = (r.code, r.created_at.date() if r.created_at else None)
+            existing = dedup_map.get(day_key)
+            if existing is None or (r.sentiment_score or 0) > (existing.sentiment_score or 0):
+                dedup_map[day_key] = r
+        records = list(dedup_map.values())
+
         # 按评分段位分组统计
         buckets = {"85+": [], "70-84": [], "50-69": [], "<50": []}
         buy_records = []
@@ -282,7 +293,7 @@ class BacktestRunner:
         lines = [
             f"## 📊 回测统计报告（近 {lookback_days} 天，共 {total_filled} 条已回填，其中买入信号 {buy_count_total} 条）",
             "",
-            "> ⚠️ **回测口径说明**：胜率/收益以「买入/加仓」信号为统计基准，观望/减仓/卖出信号不纳入业绩计算（避免稀释）",
+            "> ⚠️ **回测口径说明**：同股同日重复分析已去重（保留最高评分），胜率/收益以「买入/加仓」信号为统计基准，观望/减仓/卖出信号不纳入业绩计算（避免稀释）",
             "",
         ]
 

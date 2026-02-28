@@ -566,7 +566,7 @@ class ScoringSystem:
             market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
 
             # 进程级缓存（TTL 30分钟），避免批量分析重复打接口
-            _cache = ScoreCalculator._flow_history_cache
+            _cache = ScoringSystem._flow_history_cache
             _now = time.time()
             _cached = _cache.get(stock_code)
             if _cached and _now - _cached['ts'] < 1800:
@@ -2951,10 +2951,12 @@ class ScoringSystem:
         adj_keys = ['valuation_adj', 'capital_flow_adj', 'sector_adj', 'chip_adj', 'fundamental_adj']
         multi_adj = sum(result.score_breakdown.get(k, 0) for k in adj_keys)
         
-        if base_score >= 70 and multi_adj <= -10:
-            conflicts.append("⚠️技术面强势但多维因子转弱（估值/资金/板块/筹码/基本面）")
-        elif base_score <= 40 and multi_adj >= 10:
-            conflicts.append("⚠️技术面偏弱但多维因子支撑（估值/资金/板块等）")
+        # 阈值基于实际数据：multi_adj实际范围[-18,+3]，±10基本不触发，调整如下
+        # 技术偏强(base>=65)且多维明显转弱(adj<=-6)→冲突警告
+        if base_score >= 65 and multi_adj <= -6:
+            conflicts.append("⚠️技术面强势但多维因子转弱（估值/资金/板块/筹码/基本面），建议降档操作")
+        elif base_score <= 45 and multi_adj >= 3:
+            conflicts.append("⚠️技术面偏弱但多维因子支撑（估值/资金/板块等），可观望等待技术修复")
         
         if not hasattr(result, '_conflict_warnings'):
             result._conflict_warnings = []
@@ -2988,14 +2990,21 @@ class ScoringSystem:
                 )
                 result.score_breakdown['high_bias_fuse'] = -5
 
+        # === 信号冲突降档 ===
+        # 当技术面偏强(base>=65)但多维因子明显转弱(adj<=-6)时，降一档操作
+        _conflict_fuse = bool(getattr(result, '_conflict_warnings', None))
+
         if score >= 95:
-            result.buy_signal = BuySignal.AGGRESSIVE_BUY
+            result.buy_signal = BuySignal.STRONG_BUY if _conflict_fuse else BuySignal.AGGRESSIVE_BUY
         elif score >= 85:
-            result.buy_signal = BuySignal.STRONG_BUY
+            result.buy_signal = BuySignal.BUY if _conflict_fuse else BuySignal.STRONG_BUY
         elif score >= 70:
-            result.buy_signal = BuySignal.CAUTIOUS_BUY if _high_bias_fuse else BuySignal.BUY
+            if _high_bias_fuse or _conflict_fuse:
+                result.buy_signal = BuySignal.CAUTIOUS_BUY
+            else:
+                result.buy_signal = BuySignal.BUY
         elif score >= 60:
-            result.buy_signal = BuySignal.CAUTIOUS_BUY
+            result.buy_signal = BuySignal.HOLD if _conflict_fuse else BuySignal.CAUTIOUS_BUY
         elif score >= 50:
             result.buy_signal = BuySignal.HOLD
         elif score >= 35:

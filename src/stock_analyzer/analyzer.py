@@ -456,8 +456,9 @@ class StockTrendAnalyzer:
                 result.score_breakdown['bear_market_cap'] = BEAR_SCORE_CAP - result.signal_score
                 result.signal_score = BEAR_SCORE_CAP
                 result.risk_factors.append(f"⚠️ 熊市环境下评分已压至上限 {BEAR_SCORE_CAP}，建议控制仓位")
-                ScoringSystem.update_buy_signal(result)
+            # 先检测信号冲突（_conflict_warnings），再更新buy_signal（冲突降档需要_conflict_warnings）
             ScoringSystem.detect_signal_conflict(result)
+            ScoringSystem.update_buy_signal(result)
             
             RiskManager.calculate_stop_loss_and_take_profit(result, df)
             RiskManager.calculate_position(result, market_regime)

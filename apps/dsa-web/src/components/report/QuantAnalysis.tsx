@@ -154,6 +154,20 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             {(qe.signal_reasons ?? qe.signalReasons).slice(0, 4).join(' · ')}
           </div>
         )}
+        {/* 信号冲突警告 */}
+        {(() => {
+          const conflicts: string[] = qe.signal_conflicts ?? qe.signalConflicts ?? [];
+          if (!conflicts.length) return null;
+          return (
+            <div className="mt-2 space-y-1">
+              {conflicts.map((c: string, i: number) => (
+                <div key={i} className="flex items-start gap-1.5 px-2 py-1.5 rounded bg-orange-500/10 border border-orange-500/20">
+                  <span className="text-orange-400 text-[11px] leading-relaxed">{c}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* 指标一行摘要 */}
