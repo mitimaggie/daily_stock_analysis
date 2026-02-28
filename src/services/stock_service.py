@@ -126,25 +126,25 @@ class StockService:
             # 获取股票名称
             stock_name = manager.get_stock_name(stock_code)
             
-            # 转换为响应格式
-            data = []
-            for _, row in df.iterrows():
-                date_val = row.get("date")
-                if hasattr(date_val, "strftime"):
-                    date_str = date_val.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(date_val)
-                
-                data.append({
-                    "date": date_str,
-                    "open": float(row.get("open", 0)),
-                    "high": float(row.get("high", 0)),
-                    "low": float(row.get("low", 0)),
-                    "close": float(row.get("close", 0)),
-                    "volume": float(row.get("volume", 0)) if row.get("volume") else None,
-                    "amount": float(row.get("amount", 0)) if row.get("amount") else None,
-                    "change_percent": float(row.get("pct_chg", 0)) if row.get("pct_chg") else None,
-                })
+            # 转换为响应格式（批量转换，比 iterrows 快10-50倍）
+            def _fmt_date(v):
+                if hasattr(v, "strftime"):
+                    return v.strftime("%Y-%m-%d")
+                return str(v) if v is not None else ""
+
+            data = [
+                {
+                    "date": _fmt_date(r.get("date")),
+                    "open": float(r["open"]) if r.get("open") is not None else 0.0,
+                    "high": float(r["high"]) if r.get("high") is not None else 0.0,
+                    "low": float(r["low"]) if r.get("low") is not None else 0.0,
+                    "close": float(r["close"]) if r.get("close") is not None else 0.0,
+                    "volume": float(r["volume"]) if r.get("volume") is not None else None,
+                    "amount": float(r["amount"]) if r.get("amount") is not None else None,
+                    "change_percent": float(r["pct_chg"]) if r.get("pct_chg") is not None else None,
+                }
+                for r in df.to_dict("records")
+            ]
             
             return {
                 "stock_code": stock_code,

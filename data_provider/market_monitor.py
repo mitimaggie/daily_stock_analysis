@@ -39,10 +39,10 @@ class MarketMonitor:
             
             indices_data = []
             total_amount_raw = 0.0
-            
-            for _, row in df_index.iterrows():
-                name = row['名称']
-                
+
+            for row in df_index.to_dict('records'):
+                name = row.get('名称', '')
+
                 # 1. 提取核心指数涨跌
                 if name in target_indices:
                     try:
@@ -53,16 +53,16 @@ class MarketMonitor:
                             'change_pct': change_pct,
                             'close': close
                         })
-                    except:
+                    except Exception:
                         continue
 
-                # 2. 累加两市总成交额 
+                # 2. 累加两市总成交额
                 # 新浪接口里：上证指数 + 深证成指 的成交额 = 两市总成交
                 if name in ['上证指数', '深证成指']:
                     try:
                         amount = float(row['成交额'])
                         total_amount_raw += amount
-                    except:
+                    except Exception:
                         pass
 
             # 单位转换：元 -> 亿
