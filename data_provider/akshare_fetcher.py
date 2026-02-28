@@ -285,8 +285,8 @@ class AkshareFetcher(BaseFetcher):
         df = df[[name_col, pct_col]].dropna()
         df[pct_col] = df[pct_col].astype(float)
         df_sorted = df.sort_values(pct_col, ascending=False)
-        top = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.head(n).iterrows()]
-        bottom = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for _, r in df_sorted.tail(n).iterrows()]
+        top = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for r in df_sorted.head(n).to_dict('records')]
+        bottom = [{"name": r[name_col], "change_pct": round(r[pct_col], 2)} for r in df_sorted.tail(n).to_dict('records')]
         return (top, bottom)
 
     # 资金流向缓存（个股级别，TTL 10分钟，避免批量分析时重复请求东财被封）

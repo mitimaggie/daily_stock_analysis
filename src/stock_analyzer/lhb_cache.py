@@ -40,7 +40,7 @@ class LHBCache:
                 return
 
             mapping: Dict[str, Dict[str, Any]] = {}
-            for _, row in df.iterrows():
+            for row in df.to_dict('records'):
                 code = str(row.get('代码', '') or '').strip()
                 if not code:
                     continue

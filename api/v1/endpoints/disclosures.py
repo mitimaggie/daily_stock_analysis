@@ -47,7 +47,7 @@ async def get_disclosures(
 
         items: List[DisclosureItem] = []
         if df is not None and not df.empty:
-            for _, row in df.head(limit).iterrows():
+            for row in df.head(limit).to_dict('records'):
                 items.append(
                     DisclosureItem(
                         title=str(row.get("公告标题", "")),

@@ -76,7 +76,7 @@ def fetch_stock_news(code: str, limit: int = 20) -> List[Dict]:
 
     results = []
     # 东方财富返回的列名：新闻标题, 新闻内容, 发布时间, 文章来源, 新闻链接
-    for _, row in df.head(limit).iterrows():
+    for row in df.head(limit).to_dict('records'):
         title = str(row.get("新闻标题", row.get("title", ""))).strip()
         snippet = str(row.get("新闻内容", row.get("content", ""))).strip()
         pub_date = str(row.get("发布时间", row.get("publish_time", "")))

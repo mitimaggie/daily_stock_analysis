@@ -410,7 +410,7 @@ def get_industry_pe_median(code: str) -> Optional[float]:
         cache_val = {'median_pe': median_pe, 'industry': industry}
         if db:
             if '代码' in cons_df.columns:
-                for _, row in cons_df.iterrows():
+                for row in cons_df.to_dict('records'):
                     peer_code = str(row['代码'])
                     _industry_pe_cache[peer_code] = median_pe
                     db.set_cache('industry_pe', peer_code, cache_val)

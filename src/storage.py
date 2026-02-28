@@ -616,7 +616,7 @@ class DatabaseManager:
         if df is None or df.empty: return 0
         now_str = datetime.now().isoformat()
         rows = []
-        for _, row in df.iterrows():
+        for row in df.to_dict('records'):
             row_date = row.get('date')
             if isinstance(row_date, str):
                 row_date = datetime.strptime(row_date, '%Y-%m-%d').date()
