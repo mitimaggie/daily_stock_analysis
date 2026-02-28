@@ -286,7 +286,7 @@ class GeminiAnalyzer:
                 from openai import OpenAI
                 self._openai_client = OpenAI(api_key=config.openai_api_key, base_url=config.openai_base_url)
                 self._use_openai = True
-            except: pass
+            except Exception: pass
 
     def is_available(self) -> bool:
         return self._model is not None or self._openai_client is not None

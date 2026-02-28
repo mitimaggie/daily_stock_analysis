@@ -298,12 +298,12 @@ def start_bot_stream_clients(config: Config):
         try:
             from bot.platforms import start_dingtalk_stream_background
             start_dingtalk_stream_background()
-        except: pass
+        except Exception: pass
     if getattr(config, 'feishu_stream_enabled', False):
         try:
             from bot.platforms import start_feishu_stream_background
             start_feishu_stream_background()
-        except: pass
+        except Exception: pass
 
 def main() -> int:
     args = parse_arguments()

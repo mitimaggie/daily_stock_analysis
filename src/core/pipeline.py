@@ -482,7 +482,7 @@ class StockAnalysisPipeline:
         try:
             history_summary = self.storage.get_last_analysis_summary(code)
         except Exception as e:
-            pass
+            logger.debug(f"[{code}] 获取历史摘要失败: {e}")
 
         # 当日/昨日 K 线（供推送中的「当日行情」快照用）
         today_row = {}

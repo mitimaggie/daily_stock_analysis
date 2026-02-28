@@ -62,14 +62,14 @@ class PytdxFetcher(BaseFetcher):
                             connected = True
                             self._current_host_idx = host_idx
                             break
-                    except: continue
+                    except Exception: continue
                 
                 if not connected: raise DataFetchError("无法连接通达信服务器")
                 yield api
                 
             finally:
                 try: api.disconnect()
-                except: pass
+                except Exception: pass
     
     def _get_market_code(self, stock_code: str) -> Tuple[int, str]:
         code = stock_code.strip()
@@ -124,5 +124,5 @@ class PytdxFetcher(BaseFetcher):
                 if name:
                     self._stock_name_cache[stock_code] = name
                     return name
-        except: pass
+        except Exception: pass
         return None

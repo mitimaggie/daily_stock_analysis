@@ -321,7 +321,7 @@ class DataFetcherManager:
         try:
             self.get_realtime_quote(stock_codes[0])
             return len(stock_codes)
-        except: return 0
+        except Exception: return 0
 
     # 数据源补充机制：主数据源缺少的字段，自动从备用源补充（借鉴上游 #275）
     # 注意：只补充真正关键的字段，避免因可选字段缺失而触发额外请求导致被封
@@ -504,7 +504,7 @@ class DataFetcherManager:
                     if name:
                         self._stock_name_cache[stock_code] = name
                         return name
-                except: continue
+                except Exception: continue
         return stock_code
         
     def batch_get_stock_names(self, stock_codes: List[str]) -> Dict[str, str]:
@@ -519,7 +519,7 @@ class DataFetcherManager:
             try:
                 res = f.get_sector_rankings(n)
                 if res: return res
-            except: continue
+            except Exception: continue
         return [], []
 
     def get_capital_flow(self, stock_code: str) -> Optional[Dict[str, Any]]:

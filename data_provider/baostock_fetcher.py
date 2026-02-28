@@ -23,7 +23,7 @@ def _cleanup_baostock():
     import baostock as bs
     try:
         bs.logout()
-    except:
+    except Exception:
         pass
 
 # 注册退出时的清理函数
@@ -102,7 +102,7 @@ class BaostockFetcher(BaseFetcher):
                 global _BS_LOGGED_IN
                 try:
                     bs.logout()
-                except: pass
+                except Exception: pass
                 _BS_LOGGED_IN = False # 标记为未登录，下次循环会自动重登
                 return pd.DataFrame()
             
@@ -136,5 +136,5 @@ class BaostockFetcher(BaseFetcher):
                 if rs.error_code == '0' and rs.next():
                     row = rs.get_row_data()
                     if len(row) > 1: return row[1]
-        except: pass
+        except Exception: pass
         return None
