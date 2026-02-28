@@ -156,6 +156,8 @@ class Config:
     enable_realtime_quote: bool = True
     # 筹码分布：开关 + 缓存策略（定时拉取后在此时间内复用，避免分析时频繁请求）
     enable_chip_distribution: bool = True
+    # 融资余额历史：开启后获取个股近N日融资余额用于情绪极端检测（已优化为批量缓存，开销可接受）
+    enable_margin_history: bool = True
     chip_cache_hours: float = 24.0  # 筹码缓存有效期（小时），此时间内用 DB 缓存，不重新请求
     chip_fetch_only_from_cache: bool = False  # True 时仅用缓存，不实时拉取（配合定时 --chip-only 使用）
     # 实时行情数据源优先级（逗号分隔）
@@ -403,6 +405,7 @@ class Config:
             # 实时行情增强数据配置
             enable_realtime_quote=os.getenv('ENABLE_REALTIME_QUOTE', 'true').lower() == 'true',
             enable_chip_distribution=os.getenv('ENABLE_CHIP_DISTRIBUTION', 'true').lower() == 'true',
+            enable_margin_history=os.getenv('ENABLE_MARGIN_HISTORY', 'true').lower() == 'true',
             chip_cache_hours=float(os.getenv('CHIP_CACHE_HOURS', '24')),
             chip_fetch_only_from_cache=os.getenv('CHIP_FETCH_ONLY_FROM_CACHE', 'false').lower() == 'true',
             # 实时行情数据源优先级：

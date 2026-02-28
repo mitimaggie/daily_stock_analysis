@@ -2812,7 +2812,7 @@ class ScoringSystem:
                    'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
                    'weekly_trend_adj', 'chart_pattern_adj',
                    'fib_adj', 'vol_price_structure', 'vol_anomaly',
-                   'p3_resonance', 'p4_capital_flow', 'vwap_adj', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder']
+                   'p3_resonance', 'p4_capital_flow', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚

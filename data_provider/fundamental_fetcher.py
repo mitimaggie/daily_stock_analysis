@@ -15,6 +15,7 @@ import time
 import random
 import threading
 from typing import Dict, Optional, Any
+import pandas as pd
 from data_provider.fundamental_types import FundamentalData, FinancialSummary, ForecastData, _parse_pct
 
 logger = logging.getLogger(__name__)
@@ -239,16 +240,43 @@ def get_pe_history(code: str, period: str = '近一年') -> Optional[list]:
 _margin_history_cache: Dict[str, list] = {}
 _MARGIN_HISTORY_TTL_HOURS = 12.0
 
-def get_margin_history(code: str, days: int = 10) -> Optional[list]:
+# 批量融资余额缓存：{date_str: DataFrame}，TTL=12小时
+# 同一批次的所有股票共享同一次全市场请求结果，避免逐股重复拉取
+_margin_batch_cache: dict = {}  # {'sh_20240101': (ts, df), 'sz_20240101': (ts, df)}
+_MARGIN_BATCH_TTL = 12 * 3600
+
+
+def _get_margin_batch(date_str: str, is_sh: bool) -> Optional[pd.DataFrame]:
+    """获取指定日期全市场融资明细（带进程级缓存，避免重复请求）"""
+    import akshare as ak
+    key = f"{'sh' if is_sh else 'sz'}_{date_str}"
+    cached = _margin_batch_cache.get(key)
+    if cached and time.time() - cached[0] < _MARGIN_BATCH_TTL:
+        return cached[1]
+    try:
+        _rate_limited_sleep()
+        if is_sh:
+            df = ak.stock_margin_detail_sse(date=date_str)
+        else:
+            df = ak.stock_margin_detail_szse(date=date_str)
+        if df is not None and not df.empty:
+            _margin_batch_cache[key] = (time.time(), df)
+            return df
+    except Exception:
+        pass
+    return None
+
+
+def get_margin_history(code: str, days: int = 7) -> Optional[list]:
     """
     获取个股近N日融资余额历史，用于检测融资连续流入/流出趋势。
     
-    数据源：上交所/深交所融资融券明细（通过 akshare），按日期获取全市场再筛选。
-    由于接口是按日期获取全市场数据，效率较低，因此使用较长缓存。
+    优化版：批量拉取全市场数据（最多 MAX_FETCH_DAYS 次请求），在本地筛选，
+    并将批次数据缓存供同日期其他股票复用，请求次数从原来 O(days) 降为 O(2-3)。
     
     返回：融资余额列表（从旧到新），或 None。
     
-    缓存策略：L1 内存 → L2 DB(12h) → L3 网络
+    缓存策略：L1 内存 → L2 DB(12h) → L3 批量网络请求
     """
     # L1: 进程内存
     if code in _margin_history_cache:
@@ -262,42 +290,47 @@ def get_margin_history(code: str, days: int = 10) -> Optional[list]:
             _margin_history_cache[code] = cached['values']
             return cached['values']
     
-    # L3: 网络请求
+    # L3: 批量网络请求（最多拉取 MAX_FETCH_DAYS 个日期，每个日期的全市场数据被缓存复用）
     try:
-        import akshare as ak
         from datetime import datetime, timedelta
         
-        # 判断交易所
         is_sh = code.startswith(('6', '5', '9'))
         
         margin_values = []
-        # 获取最近N个交易日的数据
-        for offset in range(days + 5, 0, -1):  # 多取几天以应对非交易日
-            date = (datetime.now() - timedelta(days=offset)).strftime('%Y%m%d')
+        MAX_FETCH_DAYS = days + 5  # 多取几天以覆盖非交易日
+        
+        # 确定列名（沪市/深市不同）
+        code_col = '标的证券代码' if is_sh else None
+        balance_col = '融资余额'
+        
+        for offset in range(MAX_FETCH_DAYS, 0, -1):
+            date_str = (datetime.now() - timedelta(days=offset)).strftime('%Y%m%d')
+            
+            df = _get_margin_batch(date_str, is_sh)
+            if df is None or df.empty:
+                continue
+            
+            # 深市列名动态检测
+            if not is_sh and code_col is None:
+                code_col = '证券代码' if '证券代码' in df.columns else (df.columns[1] if len(df.columns) > 1 else None)
+                balance_col = '融资余额' if '融资余额' in df.columns else (df.columns[3] if len(df.columns) > 3 else '融资余额')
+            
+            if code_col is None:
+                continue
+            
             try:
-                _rate_limited_sleep()
-                if is_sh:
-                    df = ak.stock_margin_detail_sse(date=date)
-                    code_col = '标的证券代码'
-                    balance_col = '融资余额'
-                else:
-                    df = ak.stock_margin_detail_szse(date=date)
-                    code_col = '证券代码' if '证券代码' in df.columns else df.columns[1]
-                    balance_col = '融资余额' if '融资余额' in df.columns else df.columns[3]
-                
-                if df is not None and not df.empty:
-                    row = df[df[code_col].astype(str) == code]
-                    if not row.empty:
-                        balance = float(row.iloc[0][balance_col])
-                        if balance > 0:
-                            margin_values.append(balance)
+                row = df[df[code_col].astype(str) == code]
+                if not row.empty:
+                    balance = float(row.iloc[0][balance_col])
+                    if balance > 0:
+                        margin_values.append(balance)
             except Exception:
                 continue
             
             if len(margin_values) >= days:
                 break
         
-        if len(margin_values) < 5:
+        if len(margin_values) < 3:
             return None
         
         # 回写缓存

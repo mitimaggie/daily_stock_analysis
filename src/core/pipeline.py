@@ -394,8 +394,8 @@ class StockAnalysisPipeline:
                     if hasattr(self.fetcher_manager, 'get_capital_flow'):
                         _capital_flow = self.fetcher_manager.get_capital_flow(code)
                     # P3: 融资余额历史（用于情绪极端检测）
-                    # 注意：此接口每天需N次全市场请求，效率较低，仅在显式开启时使用
-                    if _capital_flow and not fast_mode and getattr(self.config, 'enable_margin_history', False):
+                    # 已优化为批量缓存，同日期全市场数据只拉取一次，开销可接受
+                    if _capital_flow and not fast_mode and getattr(self.config, 'enable_margin_history', True):
                         try:
                             from data_provider.fundamental_fetcher import get_margin_history
                             margin_hist = get_margin_history(code)
