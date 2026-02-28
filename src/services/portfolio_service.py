@@ -368,7 +368,14 @@ def monitor_portfolio() -> List[Dict[str, Any]]:
         }
 
         # 盘中获取分时信号
-        is_intraday = 9 <= datetime.now().hour < 15
+        _now = datetime.now()
+        _h, _m = _now.hour, _now.minute
+        is_intraday = (
+            (_h == 9 and _m >= 30) or
+            (_h == 10) or
+            (_h == 11 and _m < 30) or
+            (13 <= _h < 15)
+        )
         intraday_info = _analyze_intraday_for_monitor(code) if is_intraday else {}
 
         # 生成操作信号
