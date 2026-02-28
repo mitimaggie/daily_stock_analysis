@@ -161,6 +161,12 @@ class AnalysisHistory(Base):
     hit_stop_loss = Column(Integer)      # 5日内是否触发止损 (0/1)
     hit_take_profit = Column(Integer)    # 5日内是否触发止盈 (0/1)
     backtest_filled = Column(Integer, default=0)  # 是否已回填 (0/1)
+    # P2/P3优化：独立 signal 列，避免反序列化大 context_snapshot（写入时提取，查询时直读）
+    signal_score_val = Column(Integer, nullable=True)    # 量化评分（trend_analysis.signal_score）
+    capital_flow_score_val = Column(Integer, nullable=True)  # 资金面评分（trend_analysis.capital_flow_score）
+    macd_status_val = Column(String(32), nullable=True)  # MACD 状态
+    buy_signal_val = Column(String(32), nullable=True)   # 买卖信号
+    trend_status_val = Column(String(32), nullable=True) # 趋势状态
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -359,10 +365,15 @@ class DatabaseManager:
         """自动检测并补齐旧表缺失的列（轻量级迁移）"""
         migrations = {
             'analysis_history': {
-                'actual_pct_5d':    'FLOAT',
-                'hit_stop_loss':    'INTEGER',
-                'hit_take_profit':  'INTEGER',
-                'backtest_filled':  'INTEGER DEFAULT 0',
+                'actual_pct_5d':          'FLOAT',
+                'hit_stop_loss':          'INTEGER',
+                'hit_take_profit':        'INTEGER',
+                'backtest_filled':        'INTEGER DEFAULT 0',
+                'signal_score_val':       'INTEGER',
+                'capital_flow_score_val': 'INTEGER',
+                'macd_status_val':        'VARCHAR(32)',
+                'buy_signal_val':         'VARCHAR(32)',
+                'trend_status_val':       'VARCHAR(32)',
             },
         }
         with self._engine.connect() as conn:
@@ -514,6 +525,14 @@ class DatabaseManager:
         raw_result = self._build_raw_result(result)
         context_text = self._safe_json_dumps(context_snapshot) if (save_snapshot and context_snapshot) else None
 
+        # 提取 trend_analysis signal 字段到独立列（避免查询时反序列化大 context_snapshot）
+        _trend = (context_snapshot or {}).get('trend_analysis') or {}
+        _signal_score_val = int(_trend['signal_score']) if isinstance(_trend.get('signal_score'), (int, float)) else None
+        _cf_score_val = int(_trend['capital_flow_score']) if isinstance(_trend.get('capital_flow_score'), (int, float)) else None
+        _macd_status = str(_trend['macd_status'])[:32] if _trend.get('macd_status') else None
+        _buy_signal = str(_trend['buy_signal'])[:32] if _trend.get('buy_signal') else None
+        _trend_status = str(_trend['trend_status'])[:32] if _trend.get('trend_status') else None
+
         record = AnalysisHistory(
             query_id=query_id, code=result.code, name=result.name, report_type=report_type,
             sentiment_score=result.sentiment_score, operation_advice=result.operation_advice,
@@ -521,7 +540,9 @@ class DatabaseManager:
             raw_result=self._safe_json_dumps(raw_result), news_content=news_content,
             context_snapshot=context_text, ideal_buy=sniper_points.get("ideal_buy"),
             secondary_buy=sniper_points.get("secondary_buy"), stop_loss=sniper_points.get("stop_loss"),
-            take_profit=sniper_points.get("take_profit"), created_at=datetime.now()
+            take_profit=sniper_points.get("take_profit"), created_at=datetime.now(),
+            signal_score_val=_signal_score_val, capital_flow_score_val=_cf_score_val,
+            macd_status_val=_macd_status, buy_signal_val=_buy_signal, trend_status_val=_trend_status,
         )
         with self.get_session() as session:
             try:
@@ -586,49 +607,47 @@ class DatabaseManager:
 
     def save_daily_data(self, df: pd.DataFrame, code: str, data_source: str = "Unknown") -> int:
         if df is None or df.empty: return 0
-        saved_count = 0
-        with self.get_session() as session:
-            try:
-                for _, row in df.iterrows():
-                    row_date = row.get('date')
-                    if isinstance(row_date, str):
-                        row_date = datetime.strptime(row_date, '%Y-%m-%d').date()
-                    elif hasattr(row_date, 'date'):
-                        row_date = row_date.date()
-                    
-                    existing = session.execute(select(StockDaily).where(and_(StockDaily.code == code, StockDaily.date == row_date))).scalar_one_or_none()
-                    if existing:
-                        existing.open = row.get('open')
-                        existing.high = row.get('high')
-                        existing.low = row.get('low')
-                        existing.close = row.get('close')
-                        existing.volume = row.get('volume')
-                        existing.amount = row.get('amount')
-                        existing.pct_chg = row.get('pct_chg')
-                        existing.ma5 = row.get('ma5')
-                        existing.ma10 = row.get('ma10')
-                        existing.ma20 = row.get('ma20')
-                        existing.volume_ratio = row.get('volume_ratio')
-                        existing.data_source = data_source
-                        existing.updated_at = datetime.now()
-                    else:
-                        record = StockDaily(
-                            code=code, date=row_date, open=row.get('open'), high=row.get('high'),
-                            low=row.get('low'), close=row.get('close'), volume=row.get('volume'),
-                            amount=row.get('amount'), pct_chg=row.get('pct_chg'), ma5=row.get('ma5'),
-                            ma10=row.get('ma10'), ma20=row.get('ma20'), volume_ratio=row.get('volume_ratio'),
-                            data_source=data_source
-                        )
-                        session.add(record)
-                        saved_count += 1
-                session.commit()
-                suffix = "（该日期已存在，仅更新）" if saved_count == 0 else ""
-                logger.info(f"保存 {code} 数据成功，新增 {saved_count} 条{suffix}")
-            except Exception as e:
-                session.rollback()
-                logger.error(f"保存 {code} 数据失败: {e}")
-                raise
-        return saved_count
+        now_str = datetime.now().isoformat()
+        rows = []
+        for _, row in df.iterrows():
+            row_date = row.get('date')
+            if isinstance(row_date, str):
+                row_date = datetime.strptime(row_date, '%Y-%m-%d').date()
+            elif hasattr(row_date, 'date'):
+                row_date = row_date.date()
+            if row_date is None:
+                continue
+            rows.append({
+                'code': code, 'date': row_date,
+                'open': row.get('open'), 'high': row.get('high'),
+                'low': row.get('low'), 'close': row.get('close'),
+                'volume': row.get('volume'), 'amount': row.get('amount'),
+                'pct_chg': row.get('pct_chg'), 'ma5': row.get('ma5'),
+                'ma10': row.get('ma10'), 'ma20': row.get('ma20'),
+                'volume_ratio': row.get('volume_ratio'),
+                'data_source': data_source,
+                'created_at': now_str, 'updated_at': now_str,
+            })
+        if not rows:
+            return 0
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT OR REPLACE INTO stock_daily
+                        (code, date, open, high, low, close, volume, amount,
+                         pct_chg, ma5, ma10, ma20, volume_ratio, data_source,
+                         created_at, updated_at)
+                    VALUES
+                        (:code, :date, :open, :high, :low, :close, :volume, :amount,
+                         :pct_chg, :ma5, :ma10, :ma20, :volume_ratio, :data_source,
+                         :created_at, :updated_at)
+                """), rows)
+            saved_count = len(rows)
+            logger.info(f"保存 {code} 数据成功，批量 upsert {saved_count} 条")
+            return saved_count
+        except Exception as e:
+            logger.error(f"保存 {code} 数据失败: {e}")
+            raise
 
     def save_chip_distribution(self, code: str, chip_date: str, source: str, profit_ratio: float, avg_cost: float,
                                concentration_90: float, concentration_70: float,
@@ -725,7 +744,9 @@ class DatabaseManager:
                     'sentiment_score': r.sentiment_score,
                     'capital_flow_score': 5,
                 }
-                if r.context_snapshot:
+                if r.capital_flow_score_val is not None:
+                    record['capital_flow_score'] = r.capital_flow_score_val
+                elif r.context_snapshot:
                     try:
                         ctx = json.loads(r.context_snapshot)
                         trend = ctx.get('trend_analysis', {})
@@ -872,8 +893,11 @@ class DatabaseManager:
                     'advice': r.operation_advice or '',
                     'trend': r.trend_prediction or '',
                 }
-                # 从 context_snapshot 提取更多信号
-                if r.context_snapshot:
+                if r.macd_status_val is not None or r.buy_signal_val is not None or r.trend_status_val is not None:
+                    entry['macd_status'] = r.macd_status_val or ''
+                    entry['buy_signal'] = r.buy_signal_val or ''
+                    entry['trend_status'] = r.trend_status_val or ''
+                elif r.context_snapshot:
                     try:
                         ctx = json.loads(r.context_snapshot)
                         td = ctx.get('trend_analysis', {})
