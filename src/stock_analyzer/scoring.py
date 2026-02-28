@@ -122,7 +122,7 @@ class ScoringSystem:
                 # 强势趋势中等正乖离：给中性分，普通趋势仍惩罚
                 return 12 if is_strong_bull else 5
             elif 0.5 < norm_bias <= 1.0 and is_strong_bull:
-                return 10  # 强势趋势中偏大正乖离：回测5d=-0.74%，降至中性
+                return 14  # 强势趋势中偏大正乖离：轻微惩罚
             elif 0 <= norm_bias <= 0.5 and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
                 return 18  # 多头趋势中小幅正乖离
             elif -0.5 <= norm_bias < 0:
@@ -141,7 +141,7 @@ class ScoringSystem:
         elif bias > 5:
             return 12 if is_strong_bull else 5
         elif 3 < bias <= 5 and is_strong_bull:
-            return 10  # 强势趋势中偏大正乖离：回测5d=-0.74%，降至中性
+            return 14  # 强势趋势中偏大正乖离
         elif 0 <= bias <= 3 and result.trend_status in [TrendStatus.BULL, TrendStatus.STRONG_BULL]:
             return 18
         elif -3 <= bias < 0:
@@ -176,30 +176,19 @@ class ScoringSystem:
         is_uptrend = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]
         
         if result.volume_status == VolumeStatus.SHRINK_VOLUME_DOWN:
-            # 回测显示缩量下跌在上升趋势中5d均-0.21%，短期内仍调整而非反弹，从14降至8
-            return 8 if is_uptrend else 5  # 上升趋势洗盘=中性，下跌趋势阴跌=偏低
-        
-        if result.volume_status == VolumeStatus.SHRINK_VOLUME_UP:
-            # STRONG_BULL中缩量上涨20d=-1.65%（量能不支撑），降至4；BULL/WEAK_BULL保持6
-            return 4 if result.trend_status == TrendStatus.STRONG_BULL else 6
+            return 14 if is_uptrend else 7  # 上升趋势洗盘=高分，下跌趋势阴跌=低分
         
         scores = {
             VolumeStatus.HEAVY_VOLUME_UP: 12,
             VolumeStatus.NORMAL: 10,
-            VolumeStatus.HEAVY_VOLUME_DOWN: 2,  # 回测5d均-0.10%跑输基准，放量下跌是负信号
+            VolumeStatus.SHRINK_VOLUME_UP: 6,
+            VolumeStatus.HEAVY_VOLUME_DOWN: 0,
         }
         return scores.get(result.volume_status, 8)
     
     @staticmethod
     def _calc_support_score(result: TrendAnalysisResult) -> int:
-        """计算支撑接近度评分 (0-10)
-        
-        回测结论（4680样本）:
-        - near(<2%): 20d均+0.58% 低于基准 —— 贴近支撑但未量能确认时更多是下破
-        - mid(2-5%): 20d均+1.24% 高于基准 ✅
-        - above_all:  20d均+2.57% 最强（突破所有支撑上方=强势）
-        调整：贴近支撑必须有量能放量确认才给高分，否则降至6分
-        """
+        """计算支撑接近度评分 (0-10)"""
         if not result.support_levels or result.current_price <= 0:
             return 5
         
@@ -209,11 +198,8 @@ class ScoringSystem:
             return 5
         
         dist_pct = (result.current_price - nearest) / result.current_price * 100
-        has_volume_confirm = result.volume_status == VolumeStatus.HEAVY_VOLUME_UP
-        
         if 0 <= dist_pct <= 2:
-            # 贴近支撑：有放量确认=9分（反弹有效），无量能=6分（可能下破）
-            return 9 if has_volume_confirm else 6
+            return 10
         elif dist_pct <= 5:
             return 7
         return 5
@@ -232,14 +218,7 @@ class ScoringSystem:
             MACDStatus.DEATH_CROSS: 0,
         }
         score = base_scores.get(result.macd_status, 5)
-
-        # P1b 均线死叉屏蔽：均线空头排列时，零轴上方金叉大概率是熊市反弹出货机会
-        # 水下金叉（macd_dif < 0）保留加分，属于超卖反弹信号，不屏蔽
-        is_bear_trend = result.trend_status in (TrendStatus.BEAR, TrendStatus.WEAK_BEAR)
-        is_above_zero_cross = result.macd_status in (MACDStatus.GOLDEN_CROSS_ZERO, MACDStatus.GOLDEN_CROSS)
-        if is_bear_trend and is_above_zero_cross and result.macd_dif > 0:
-            score = score // 2
-
+        
         # MACD柱状图动量修正：加速=加分，减速=减分
         momentum = getattr(result, 'macd_momentum', '')
         if momentum == "动能加速":
@@ -258,47 +237,33 @@ class ScoringSystem:
     
     @staticmethod
     def _calc_rsi_score(result: TrendAnalysisResult) -> int:
-        """计算RSI评分 (0-10)
-        
-        回测结论（9股×750日，5940样本）:
-        - OVERBOUGHT(>70): 5d均+0.22%，高于基准，绩优股超买是动量延续 → 给6分
-        - OVERSOLD(<30):  5d均-0.30%，低于基准，超卖继续跌 → 给4分
-        - GOLDEN_CROSS_OVERSOLD: 5d均+0.65%，最优信号 → 维持10分
-        - STRONG_BUY(60-70): 5d均+0.34% → 维持7分
-        """
+        """计算RSI评分 (0-10)"""
         scores = {
             RSIStatus.GOLDEN_CROSS_OVERSOLD: 10,
             RSIStatus.BULLISH_DIVERGENCE: 10,
+            RSIStatus.OVERSOLD: 9,
             RSIStatus.GOLDEN_CROSS: 8,
             RSIStatus.STRONG_BUY: 7,
-            RSIStatus.OVERBOUGHT: 6,   # 回测5d均+0.22%，动量延续，不再给0分
             RSIStatus.NEUTRAL: 5,
             RSIStatus.WEAK: 3,
             RSIStatus.DEATH_CROSS: 2,
             RSIStatus.BEARISH_DIVERGENCE: 1,
-            RSIStatus.OVERSOLD: 4,     # 回测5d均-0.30%，超卖继续跌，从9降至4
+            RSIStatus.OVERBOUGHT: 0,
         }
         return scores.get(result.rsi_status, 5)
     
     @staticmethod
     def _calc_kdj_score(result: TrendAnalysisResult) -> int:
-        """计算KDJ评分 (0-13)，含钝化/背离/连续极端修正
-        
-        回测结论（9股×750日，5940样本）:
-        - OVERBOUGHT(J>100): 5d均+0.73%，最高收益，绩优股超买是趋势延续 → 给9分
-        - OVERSOLD(J<0):     5d均-0.28%，超卖继续跌 → 从11降至4
-        - GOLDEN_CROSS_OVERSOLD: 5d均-0.21%，样本仅50次，信号不稳定 → 从13降至6
-        - GOLDEN_CROSS:      5d均+0.33% → 维持10分，效果好
-        """
+        """计算KDJ评分 (0-13)，含钝化/背离/连续极端修正"""
         base_scores = {
+            KDJStatus.GOLDEN_CROSS_OVERSOLD: 13,
+            KDJStatus.OVERSOLD: 11,
             KDJStatus.GOLDEN_CROSS: 10,
-            KDJStatus.OVERBOUGHT: 9,         # 回测5d均+0.73%，动量最强 → 从0升至9
             KDJStatus.BULLISH: 7,
             KDJStatus.NEUTRAL: 5,
             KDJStatus.BEARISH: 3,
             KDJStatus.DEATH_CROSS: 1,
-            KDJStatus.GOLDEN_CROSS_OVERSOLD: 6,  # 回测5d均-0.21%，仅50次样本，降至6
-            KDJStatus.OVERSOLD: 4,           # 回测5d均-0.28%，超卖继续跌 → 从11降至4
+            KDJStatus.OVERBOUGHT: 0,
         }
         score = base_scores.get(result.kdj_status, 5)
         
@@ -312,12 +277,12 @@ class ScoringSystem:
         elif result.kdj_divergence == "KDJ顶背离":
             score = max(0, score - 2)
         
-        # J 值连续极端额外修正（回测显示超买动量延续，超卖继续下跌）
+        # J 值连续极端额外修正
         if result.kdj_consecutive_extreme:
             if "超买" in result.kdj_consecutive_extreme:
-                score = min(13, score + 1)  # 动量延续，轻微加分
+                score = max(0, score - 2)
             elif "超卖" in result.kdj_consecutive_extreme:
-                score = max(0, score - 1)   # 超卖继续跌，轻微减分
+                score = min(13, score + 2)
         
         return score
     
@@ -543,9 +508,6 @@ class ScoringSystem:
         if cf_adj != 0:
             result.score_breakdown['capital_flow_adj'] = cf_adj
     
-    # 历史资金流进程级缓存：{code: {'df': DataFrame, 'ts': float}}，TTL 30分钟
-    _flow_history_cache: dict = {}
-
     @staticmethod
     def score_capital_flow_history(result: TrendAnalysisResult, stock_code: str):
         """P4: 主力资金追踪 - 大单净流入连续性检测
@@ -565,25 +527,15 @@ class ScoringSystem:
 
             market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
 
-            # 进程级缓存（TTL 30分钟），避免批量分析重复打接口
-            _cache = ScoringSystem._flow_history_cache
-            _now = time.time()
-            _cached = _cache.get(stock_code)
-            if _cached and _now - _cached['ts'] < 1800:
-                df_flow = _cached['df']
-            else:
-                # 使用项目内全局限流器
-                try:
-                    from data_provider.rate_limiter import get_global_limiter
-                    limiter = get_global_limiter()
-                    limiter.acquire('akshare', blocking=True, timeout=10.0)
-                except Exception:
-                    time.sleep(random.uniform(1.0, 2.0))
-                df_flow = ak.stock_individual_fund_flow(stock=stock_code, market=market)
-                if df_flow is not None and len(df_flow) >= 5:
-                    _cache[stock_code] = {'df': df_flow, 'ts': _now}
+            # 使用项目内全局限流器
+            try:
+                from data_provider.rate_limiter import get_global_limiter
+                limiter = get_global_limiter()
+                limiter.acquire('akshare', blocking=True, timeout=10.0)
+            except Exception:
+                time.sleep(random.uniform(1.0, 2.0))
 
-            df_flow = df_flow
+            df_flow = ak.stock_individual_fund_flow(stock=stock_code, market=market)
             if df_flow is None or len(df_flow) < 5:
                 return
 
@@ -710,14 +662,18 @@ class ScoringSystem:
                 p4_adj += 1
             elif trend == "持续流出" and consecutive <= -3:
                 p4_adj -= 3
-            # 轻度流出/资金离场不给负分（回测显示是洗盘信号，给负分反向误导）
-            # elif trend == "持续流出": p4_adj -= 2
-            # elif trend == "资金离场": p4_adj -= 1
+            elif trend == "持续流出":
+                p4_adj -= 2
+            elif trend == "资金离场":
+                p4_adj -= 1
 
             if result.capital_smart_money == "超大单持续买入":
                 p4_adj += 2
             elif result.capital_smart_money == "超大单持续卖出":
                 p4_adj -= 2
+
+            if intensity == "大幅":
+                p4_adj = int(p4_adj * 1.3)
 
             p4_adj = max(-5, min(5, p4_adj))
             if p4_adj != 0:
@@ -767,78 +723,162 @@ class ScoringSystem:
         
     
     @staticmethod
+    def score_lhb_sentiment(result: TrendAnalysisResult, stock_code: str):
+        """P5-C: 量化情绪指标 - 龙虎榜机构净买额分析
+
+        通过龙虎榜近一月统计判断机构行为：
+        - 机构净买额为正且上榜次数多：机构持续买入信号（+2~+3）
+        - 机构净买额为负且上榜次数多：机构持续卖出信号（-2~-3）
+        - 上榜但机构净买额接近零：博弈激烈，中性（0）
+        - 未上榜：不处理
+        """
+        try:
+            import akshare as ak
+            import time
+            import random
+
+            # 使用项目内全局限流器
+            try:
+                from data_provider.rate_limiter import get_global_limiter
+                limiter = get_global_limiter()
+                limiter.acquire('akshare', blocking=True, timeout=8.0)
+            except Exception:
+                time.sleep(random.uniform(0.5, 1.5))
+
+            df_lhb = ak.stock_lhb_stock_statistic_em(symbol='近一月')
+            if df_lhb is None or df_lhb.empty:
+                return
+
+            # 查找个股
+            row = df_lhb[df_lhb['代码'] == stock_code]
+            if row.empty:
+                return  # 近一月未上榜，不处理
+
+            row = row.iloc[0]
+            lhb_net = float(row.get('龙虎榜净买额', 0) or 0)
+            inst_net = float(row.get('机构买入净额', 0) or 0)
+            times = int(row.get('上榜次数', 0) or 0)
+
+            result.lhb_net_buy = round(lhb_net, 2)
+            result.lhb_institution_net = round(inst_net, 2)
+            result.lhb_times = times
+
+            # 评分逻辑
+            p5c_adj = 0
+            # 机构净买额判断（元 → 万元）
+            inst_net_wan = inst_net / 10000
+            lhb_net_wan = lhb_net / 10000
+
+            if inst_net_wan > 5000:  # 机构净买超5000万
+                p5c_adj += 3
+                result.lhb_signal = "机构持续买入"
+            elif inst_net_wan > 1000:  # 机构净买超1000万
+                p5c_adj += 2
+                result.lhb_signal = "机构净买入"
+            elif inst_net_wan < -5000:  # 机构净卖超5000万
+                p5c_adj -= 3
+                result.lhb_signal = "机构持续卖出"
+            elif inst_net_wan < -1000:  # 机构净卖超1000万
+                p5c_adj -= 2
+                result.lhb_signal = "机构净卖出"
+            elif times >= 3:
+                result.lhb_signal = "龙虎榜活跃"  # 频繁上榜但机构不明显
+
+            p5c_adj = max(-3, min(3, p5c_adj))
+            if p5c_adj != 0:
+                result.score_breakdown['p5c_lhb'] = p5c_adj
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
+
+    @staticmethod
     def score_dzjy_and_holder(result: TrendAnalysisResult, stock_code: str):
-        """P5-C: 龙虎榜机构情绪 + 股东人数变化率"""
+        """P5-C补充: 大宗交易折溢价率 + 股东人数变化率（带超时保护）
+
+        注意：akshare大宗交易接口为全市场拉取，耗时较长，使用线程超时5s保护。
+        超时则跳过，不阻塞主流程。
+        """
+        import threading
         import logging
         logger = logging.getLogger(__name__)
 
-        # ---- 股东人数变化率：优先读 DB 缓存（TTL 30天），无缓存时静默跳过 ----
-        # 全量拉取由定时任务 (run_gdhs_update) 每周执行一次，分析时不实时拉取
-        try:
-            import json as _json
-            from src.storage import DatabaseManager as _DBM
-            from sqlalchemy import text as _text
-            from datetime import datetime as _dt
-            _db = _DBM()
-            with _db.get_session() as _s:
-                _row = _s.execute(_text(
-                    "SELECT data_json, fetched_at FROM data_cache "
-                    "WHERE cache_type='gdhs' AND cache_key=:k "
-                    "ORDER BY fetched_at DESC LIMIT 1"
-                ), {'k': stock_code}).fetchone()
-            if _row:
-                _age_days = (_dt.now() - _dt.fromisoformat(str(_row[1]))).total_seconds() / 86400
-                if _age_days < 30:  # 季度数据，30天内有效
-                    _d = _json.loads(_row[0])
-                    change_pct = float(_d.get('change_pct', 0))
-                    result.holder_change_pct = round(change_pct, 2)
-                    adj_holder = 0
-                    if change_pct < -5:
-                        result.holder_signal = "筹码集中（缩股）"
-                        adj_holder = 2
-                    elif change_pct < -2:
-                        result.holder_signal = "筹码小幅集中"
-                        adj_holder = 1
-                    elif change_pct > 5:
-                        result.holder_signal = "筹码分散（增股）"
-                        adj_holder = -1
-                    if adj_holder != 0:
-                        result.score_breakdown['p5c_holder'] = adj_holder
-        except Exception as e:
-            logger.debug(f"[P5-C] {stock_code} 股东人数DB读取失败: {e}")
+        # ---- 大宗交易（线程+超时5秒）----
+        def _fetch_dzjy():
+            try:
+                import akshare as ak
+                from datetime import datetime, timedelta
+                today = datetime.now().strftime('%Y%m%d')
+                month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
+                df_dz = ak.stock_dzjy_mrmx(symbol='A股', start_date=month_ago, end_date=today)
+                if df_dz is None or df_dz.empty or '证券代码' not in df_dz.columns:
+                    return
+                rows = df_dz[df_dz['证券代码'] == stock_code]
+                if rows.empty:
+                    return
+                premiums = rows['折溢率'].astype(float).tolist()
+                avg_prem = sum(premiums) / len(premiums)
+                times = len(premiums)
+                result.dzjy_avg_premium = round(avg_prem, 4)
+                result.dzjy_times = times
+                adj_dz = 0
+                if avg_prem > 0.02:
+                    adj_dz = 2
+                    result.dzjy_signal = "大宗溢价成交"
+                elif avg_prem < -0.02 and times >= 3:
+                    adj_dz = -3
+                    result.dzjy_signal = "大宗持续折价出货"
+                elif avg_prem < -0.02:
+                    adj_dz = -2
+                    result.dzjy_signal = "大宗折价出货"
+                if adj_dz != 0:
+                    result.score_breakdown['p5c_dzjy'] = adj_dz
+            except Exception as e:
+                logger.debug(f"[P5-C] {stock_code} 大宗交易查询失败: {e}")
 
-        # ---- 龙虎榜机构情绪（LHBCache 每日缓存，无网络请求）----
-        try:
-            from .lhb_cache import LHBCache
-            lhb_data = LHBCache.query(stock_code)
-            if lhb_data:
-                lhb_net = lhb_data.get('lhb_net_buy', 0.0)
-                inst_net = lhb_data.get('lhb_institution_net', 0.0)
-                times = lhb_data.get('lhb_times', 0)
-                result.lhb_net_buy = round(lhb_net, 2)
-                result.lhb_institution_net = round(inst_net, 2)
-                result.lhb_times = times
-                p5c_adj = 0
-                inst_net_wan = inst_net / 10000
-                if inst_net_wan > 5000:
-                    p5c_adj += 3
-                    result.lhb_signal = "机构持续买入"
-                elif inst_net_wan > 1000:
-                    p5c_adj += 2
-                    result.lhb_signal = "机构净买入"
-                elif inst_net_wan < -5000:
-                    p5c_adj -= 3
-                    result.lhb_signal = "机构持续卖出"
-                elif inst_net_wan < -1000:
-                    p5c_adj -= 2
-                    result.lhb_signal = "机构净卖出"
-                elif times >= 3:
-                    result.lhb_signal = "龙虎榜活跃"
-                p5c_adj = max(-3, min(3, p5c_adj))
-                if p5c_adj != 0:
-                    result.score_breakdown['p5c_lhb'] = p5c_adj
-        except Exception as e:
-            logger.debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
+        t_dz = threading.Thread(target=_fetch_dzjy, daemon=True)
+        t_dz.start()
+        t_dz.join(timeout=5)
+        if t_dz.is_alive():
+            logger.debug(f"[P5-C] {stock_code} 大宗交易查询超时，已跳过")
+
+        # ---- 股东人数变化率（线程+超时5秒）----
+        def _fetch_holder():
+            try:
+                import akshare as ak
+                df_holder = ak.stock_zh_a_gdhs(symbol=stock_code)
+                if df_holder is None or df_holder.empty or len(df_holder) < 2:
+                    return
+                cols = df_holder.columns.tolist()
+                holder_col = next((c for c in cols if '股东' in c or '持股人数' in c), None)
+                if not holder_col:
+                    return
+                latest = float(df_holder.iloc[-1][holder_col])
+                prev = float(df_holder.iloc[-2][holder_col])
+                if prev <= 0:
+                    return
+                change_pct = (latest - prev) / prev * 100
+                result.holder_change_pct = round(change_pct, 2)
+                adj_holder = 0
+                if change_pct < -5:
+                    result.holder_signal = "筹码集中（缩股）"
+                    adj_holder = 2
+                elif change_pct < -2:
+                    result.holder_signal = "筹码小幅集中"
+                    adj_holder = 1
+                elif change_pct > 5:
+                    result.holder_signal = "筹码分散（增股）"
+                    adj_holder = -1
+                if adj_holder != 0:
+                    result.score_breakdown['p5c_holder'] = adj_holder
+            except Exception as e:
+                logger.debug(f"[P5-C] {stock_code} 股东人数查询失败: {e}")
+
+        t_holder = threading.Thread(target=_fetch_holder, daemon=True)
+        t_holder.start()
+        t_holder.join(timeout=5)
+        if t_holder.is_alive():
+            logger.debug(f"[P5-C] {stock_code} 股东人数查询超时，已跳过")
 
     @staticmethod
     def score_vwap_trend(result: TrendAnalysisResult):
@@ -869,16 +909,8 @@ class ScoringSystem:
             result.score_breakdown['vwap_adj'] = adj
 
     @staticmethod
-    def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None,
-                              market_regime=None):
-        """板块强弱评分（含行业轮动判断）
-        
-        评分维度：
-        1. 今日板块涨跌幅（当日快照）
-        2. 近5日板块累计涨跌（行业轮动趋势）
-        3. 个股相对板块强弱
-        4. 大盘联动：BEAR 时行业轮动加分上限压缩
-        """
+    def score_sector_strength(result: TrendAnalysisResult, sector_context: Union[SectorContext, dict, None] = None):
+        """板块强弱评分"""
         if sector_context is None:
             return
         # 兼容 dict 和 SectorContext
@@ -888,9 +920,6 @@ class ScoringSystem:
         sec_name = sector_context.sector_name
         sec_pct = sector_context.sector_pct
         rel = sector_context.relative
-        sec_5d = sector_context.sector_5d_pct
-        sec_rank = sector_context.sector_rank
-        sec_rank_total = sector_context.sector_rank_total
         
         if sec_name:
             result.sector_name = sec_name
@@ -898,17 +927,10 @@ class ScoringSystem:
             result.sector_pct = round(sec_pct, 2)
         if isinstance(rel, (int, float)):
             result.sector_relative = round(rel, 2)
-        if isinstance(sec_5d, (int, float)):
-            result.sector_5d_pct = round(sec_5d, 2)
-        if isinstance(sec_rank, int):
-            result.sector_rank = sec_rank
-        if isinstance(sec_rank_total, int):
-            result.sector_rank_total = sec_rank_total
         
         sec_score = 5
         signals = []
         
-        # === 1. 今日板块涨跌幅 ===
         if isinstance(sec_pct, (int, float)):
             if sec_pct > 2.0:
                 sec_score += 2
@@ -923,45 +945,6 @@ class ScoringSystem:
                 sec_score -= 1
                 signals.append(f"{sec_name}板块偏弱({sec_pct:.1f}%)")
         
-        # === 2. 行业轮动：近5日板块累计强度 ===
-        rotation_adj = 0
-        if isinstance(sec_5d, (int, float)):
-            if sec_5d > 8.0:
-                rotation_adj = 3
-                signals.append(f"🔥{sec_name}近5日累涨{sec_5d:.1f}%,行业轮动强势")
-            elif sec_5d > 4.0:
-                rotation_adj = 2
-                signals.append(f"📈{sec_name}近5日累涨{sec_5d:.1f}%,轮动进场")
-            elif sec_5d > 1.5:
-                rotation_adj = 1
-                signals.append(f"{sec_name}近5日偏强({sec_5d:+.1f}%)")
-            elif sec_5d < -8.0:
-                rotation_adj = -3
-                signals.append(f"⚠️{sec_name}近5日累跌{sec_5d:.1f}%,行业资金撤离")
-            elif sec_5d < -4.0:
-                rotation_adj = -2
-                signals.append(f"⚠️{sec_name}近5日弱势({sec_5d:.1f}%),轮动离场")
-            elif sec_5d < -1.5:
-                rotation_adj = -1
-                signals.append(f"{sec_name}近5日偏弱({sec_5d:+.1f}%)")
-            # 大盘联动：熊市时行业轮动加分上限压缩到+1
-            from .types import MarketRegime as _MR
-            if market_regime == _MR.BEAR and rotation_adj > 1:
-                rotation_adj = 1
-                signals.append("(熊市压制轮动加分)")
-            sec_score += rotation_adj
-
-        # === 3. 板块今日强度排名（前20%=强势轮动）===
-        if isinstance(sec_rank, int) and isinstance(sec_rank_total, int) and sec_rank_total > 0:
-            rank_pct = sec_rank / sec_rank_total
-            if rank_pct <= 0.2:  # 前20%
-                sec_score += 1
-                signals.append(f"{sec_name}今日排名前{rank_pct*100:.0f}%(强势)")
-            elif rank_pct >= 0.8:  # 后20%
-                sec_score -= 1
-                signals.append(f"{sec_name}今日排名后{(1-rank_pct)*100:.0f}%(弱势)")
-        
-        # === 4. 个股相对板块强弱 ===
         if isinstance(rel, (int, float)):
             if rel > 2.0:
                 sec_score += 2
@@ -1493,13 +1476,9 @@ class ScoringSystem:
                 result.score_breakdown['vol_trend_3d'] = -1
         elif vol_trend_3d == "连续缩量":
             if result.bias_ma5 < 0:
-                # 回测显示缩量下跌短期仍有压力；上升趋势中轻微加分（洗盘），其他情况中性
-                from .types import TrendStatus as _TS
-                _is_up = result.trend_status in (_TS.STRONG_BULL, _TS.BULL, _TS.WEAK_BULL)
-                if _is_up:
-                    adj += 1
-                    result.signal_reasons.append("连续3日缩量回调（上升趋势洗盘，短期仍有压力）")
-                    result.score_breakdown['vol_trend_3d'] = 1
+                adj += 1
+                result.signal_reasons.append("连续3日缩量回调，洗盘特征")
+                result.score_breakdown['vol_trend_3d'] = 1
 
     @staticmethod
     def score_obv_adx(result: TrendAnalysisResult):
@@ -1509,11 +1488,13 @@ class ScoringSystem:
         # === OBV 背离（比量价背离更可靠）===
         obv_div = getattr(result, 'obv_divergence', '')
         if obv_div == "OBV顶背离":
-            adj -= 2
+            adj -= 3
             result.risk_factors.append("OBV顶背离：价格新高但累积量能未跟上，上涨可能虚假")
-            result.score_breakdown['obv_divergence'] = -2
-        # OBV底背离不给正分（回测显示价格仍在下跌中，底部确认需结合更多信号）
-        # elif obv_div == "OBV底背离": adj += 3
+            result.score_breakdown['obv_divergence'] = -3
+        elif obv_div == "OBV底背离":
+            adj += 3
+            result.signal_reasons.append("OBV底背离：价格新低但累积量能企稳，底部信号")
+            result.score_breakdown['obv_divergence'] = 3
         
         # === OBV 趋势确认/否定 ===
         obv_trend = getattr(result, 'obv_trend', '')
@@ -1531,11 +1512,25 @@ class ScoringSystem:
             result.score_breakdown['obv_trend'] = 2
         
         # === ADX 趋势强度修正 ===
-        # 回测显示ADX高位时均值回归效应强（强多头ADX后均-0.07%，强空头ADX后均+0.67%）
-        # ADX仅作为展示信息，不影响评分
         adx_val = getattr(result, 'adx', 0)
-        if adx_val < 15 and adx_val > 0:
+        if adx_val >= 30:
+            # 强趋势确认：用 trend_status 判断方向（避免依赖未最终化的 signal_score）
+            plus_di = getattr(result, 'plus_di', 0)
+            minus_di = getattr(result, 'minus_di', 0)
+            is_bull_trend = result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]
+            is_bear_trend = result.trend_status in [TrendStatus.STRONG_BEAR, TrendStatus.BEAR, TrendStatus.WEAK_BEAR]
+            if plus_di > minus_di and is_bull_trend:
+                adj += 2
+                result.signal_reasons.append(f"ADX={adx_val:.0f}(强趋势)+DI领先，多头趋势确认")
+                result.score_breakdown['adx_adj'] = 2
+            elif minus_di > plus_di and is_bear_trend:
+                adj -= 2
+                result.risk_factors.append(f"ADX={adx_val:.0f}(强趋势)-DI领先，空头趋势确认")
+                result.score_breakdown['adx_adj'] = -2
+        elif adx_val < 15 and adx_val > 0:
+            # 极弱趋势 → 震荡市场，趋势指标信号不可靠
             result.risk_factors.append(f"ADX={adx_val:.0f}(极弱)，市场无方向，趋势信号可靠性低")
+            result.score_breakdown['adx_adj'] = 0
         
         # === 均线发散速率 ===
         spread_signal = getattr(result, 'ma_spread_signal', '')
@@ -1556,42 +1551,6 @@ class ScoringSystem:
             adj += 1
             result.signal_reasons.append(f"均线空头收敛({spread:.1f}%)，下跌动能减弱")
             result.score_breakdown['ma_spread'] = 1
-
-        # === 弱势多头 + MACD死叉 风险提示 ===
-        # 回测显示WEAK_BULL中MACD死叉20d=-1.59%（是卖出信号，非洗盘）
-        if result.trend_status == TrendStatus.WEAK_BULL and result.macd_status == MACDStatus.DEATH_CROSS:
-            result.risk_factors.append("弱势多头中MACD死叉，中长期风险较高（回测20日均-1.6%）")
-
-        # === 换手率分位数 adj（回测结论：高换手=强信号）===
-        # 全体: very_high 20d=+2.84%, high 20d=+1.45%, very_low 20d=+0.22%
-        # WEAK_BULL: very_high 20d=+3.07%（+放量上涨则+4.18%）
-        # STRONG_BEAR: very_high 20d=+4.54%（超跌资金抄底信号最强）
-        tp = getattr(result, 'turnover_percentile', 0.0)
-        if tp > 0:
-            if tp >= 0.9:
-                trend = result.trend_status
-                vol_up = result.volume_status == VolumeStatus.HEAVY_VOLUME_UP
-                if trend == TrendStatus.STRONG_BEAR:
-                    # 强势空头极高换手=超跌资金抄底，最强反转信号
-                    adj_val = 5
-                    result.signal_reasons.append(f"换手率极高（>90th）+强势空头，超跌资金抄底信号（回测20d均+4.54%）")
-                elif trend == TrendStatus.WEAK_BULL and vol_up:
-                    # 弱势多头极高换手+放量上涨=突破反转
-                    adj_val = 4
-                    result.signal_reasons.append(f"换手率极高（>90th）+放量上涨，弱势多头反转共振（回测20d均+4.18%）")
-                elif trend == TrendStatus.WEAK_BULL:
-                    adj_val = 4
-                    result.signal_reasons.append(f"换手率极高（>90th），弱势多头中资金异动（回测20d均+3.07%）")
-                else:
-                    adj_val = 3
-                    result.signal_reasons.append(f"换手率极高（>90th），资金活跃度强（回测20d均+2.84%）")
-                result.score_breakdown['turnover_adj'] = adj_val
-            elif tp >= 0.7:
-                result.score_breakdown['turnover_adj'] = 1
-                result.signal_reasons.append(f"换手率偏高（70-90th分位），市场关注度上升（回测20d均+1.45%）")
-            elif tp <= 0.1:
-                result.score_breakdown['turnover_adj'] = -1
-                result.risk_factors.append(f"换手率极低（<10th分位），市场活跃度不足（回测20d均+0.22%）")
         
     @staticmethod
     def score_weekly_trend(result: TrendAnalysisResult, df: pd.DataFrame):
@@ -1684,32 +1643,43 @@ class ScoringSystem:
             is_daily_bull = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL)
             is_daily_bear = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR)
 
-            # 周线趋势仅作背景信息展示，不影响评分
-            # 回测显示周线趋势对5日短期收益无正向预测力（超跌反弹效应导致空头期间反而收益高）
             if is_weekly_bull:
                 result.weekly_trend = "多头"
+                adj = 4
                 note = f"周线均线多头排列(MA5={wma5:.2f}>MA10={wma10:.2f}>MA20={wma20:.2f})，RSI{wrsi:.0f}，中长线向好"
+                result.signal_reasons.append(f"🗓️ 周线多头：{note}")
+                # 日线多头 + 周线多头 = 双共振
                 if is_daily_bull:
-                    result.signal_reasons.append(f"🗓️ 日周双多头共振（仅背景参考）")
+                    adj = 6
+                    result.signal_reasons.append("🗓️ 日周双周期多头共振，趋势强度高")
             elif is_weekly_bull_weak:
                 result.weekly_trend = "弱多头"
+                adj = 2
                 note = f"周线偏多(MA5>{wma20:.2f})，RSI{wrsi:.0f}，趋势偏正面"
             elif is_weekly_bear:
                 result.weekly_trend = "空头"
+                adj = -4
                 note = f"周线均线空头排列(MA5={wma5:.2f}<MA10={wma10:.2f}<MA20={wma20:.2f})，RSI{wrsi:.0f}，中长线向下"
-                result.risk_factors.append(f"⚠️ 周线空头背景（仅中长线参考，不影响评分）")
+                result.risk_factors.append(f"⚠️ 周线空头：{note}")
+                # 日线多头 + 周线空头 = 日内反弹，逆势危险
                 if is_daily_bull:
-                    result.risk_factors.append("⚠️ 日线多头但周线空头，可能为下降趋势中反弹（仅参考）")
+                    adj = -6
+                    result.risk_factors.append("⚠️ 日线多头但周线空头，可能仅为下降趋势中的反弹，风险极高")
             elif is_weekly_bear_weak:
                 result.weekly_trend = "弱空头"
+                adj = -2
                 note = f"周线偏空(MA5<{wma20:.2f})，RSI{wrsi:.0f}，趋势偏负面"
+                if is_daily_bull:
+                    result.risk_factors.append(f"⚠️ 周线偏空，日线上涨或为反弹，需谨慎追高")
             else:
                 result.weekly_trend = "震荡"
+                adj = 0
                 note = f"周线横盘震荡，RSI{wrsi:.0f}"
 
-            adj = 0  # 周线趋势不给分
             result.weekly_trend_adj = adj
             result.weekly_trend_note = note
+            if adj != 0:
+                result.score_breakdown['weekly_trend_adj'] = adj
 
         except Exception as e:
             logger.debug(f"[周线趋势] 计算失败: {e}")
@@ -1802,23 +1772,13 @@ class ScoringSystem:
                             target = neckline + pattern_height
                             result.chart_pattern = "双底(W底)"
                             result.chart_pattern_signal = "看多"
-                            # P2b 突破量能确认
-                            _last_vol = float(df.iloc[-1].get('volume', 0) or 0)
-                            _avg_vol20 = float(df['volume'].tail(21).iloc[:-1].mean()) if len(df) >= 21 else 0
-                            vol_ratio = _last_vol / _avg_vol20 if _avg_vol20 > 0 else 1.0
-                            if vol_ratio >= 1.5:
-                                adj_pattern = 6
-                                vol_note = f"放量突破（量比{vol_ratio:.1f}x），强势确认"
-                            else:
-                                adj_pattern = 0
-                                vol_note = f"量能不足（量比{vol_ratio:.1f}x），需量能配合再介入"
                             result.chart_pattern_note = (
                                 f"双底形态：两谷约{min(t1_val, t2_val):.2f}，颈线{neckline:.2f}，"
-                                f"理论目标位{target:.2f}，{vol_note}"
+                                f"理论目标位{target:.2f}"
                             )
-                            result.chart_pattern_adj = adj_pattern
-                            result.signal_reasons.append(f"✅ 识别到双底(W底)形态，颈线{neckline:.2f}，看多信号，目标{target:.2f}，{vol_note}")
-                            result.score_breakdown['chart_pattern_adj'] = adj_pattern
+                            result.chart_pattern_adj = 5
+                            result.signal_reasons.append(f"✅ 识别到双底(W底)形态，颈线{neckline:.2f}，看多信号，目标{target:.2f}")
+                            result.score_breakdown['chart_pattern_adj'] = 5
                             return
 
             # === 头肩顶 检测 ===
@@ -1867,26 +1827,13 @@ class ScoringSystem:
                             target = neckline + pattern_height
                             result.chart_pattern = "头肩底"
                             result.chart_pattern_signal = "看多"
-                            # P2b 突破量能确认
-                            _last_vol = float(df.iloc[-1].get('volume', 0) or 0)
-                            _avg_vol20 = float(df['volume'].tail(21).iloc[:-1].mean()) if len(df) >= 21 else 0
-                            vol_ratio = _last_vol / _avg_vol20 if _avg_vol20 > 0 else 1.0
-                            if vol_ratio >= 1.5:
-                                adj_pattern = 8
-                                vol_note = f"放量突破（量比{vol_ratio:.1f}x），强势确认"
-                            elif vol_ratio >= 1.3:
-                                adj_pattern = 5
-                                vol_note = f"量能确认（量比{vol_ratio:.1f}x）"
-                            else:
-                                adj_pattern = 0
-                                vol_note = f"量能不足（量比{vol_ratio:.1f}x），需量能配合再介入"
                             result.chart_pattern_note = (
                                 f"头肩底：底部{hd_val:.2f}，颈线{neckline:.2f}，"
-                                f"理论涨幅目标{target:.2f}，{vol_note}"
+                                f"理论涨幅目标{target:.2f}"
                             )
-                            result.chart_pattern_adj = adj_pattern
-                            result.signal_reasons.append(f"✅ 识别到头肩底形态，颈线{neckline:.2f}，经典底部反转，强烈看多，目标{target:.2f}，{vol_note}")
-                            result.score_breakdown['chart_pattern_adj'] = adj_pattern
+                            result.chart_pattern_adj = 7
+                            result.signal_reasons.append(f"✅ 识别到头肩底形态，颈线{neckline:.2f}，经典底部反转，强烈看多，目标{target:.2f}")
+                            result.score_breakdown['chart_pattern_adj'] = 7
                             return
 
         except Exception as e:
@@ -1916,18 +1863,11 @@ class ScoringSystem:
             return
 
         from .types import TrendStatus, VolumeStatus
-        # 优先用今日实时涨跌幅判断方向（来自 volume_status，已在 _analyze_volume 中用今日 change_pct 更新）
-        # 盘中 volume_status 已基于今日涨跌方向设置，直接用其判断即可
-        today_is_up = result.volume_status == VolumeStatus.HEAVY_VOLUME_UP or \
-                      result.volume_status == VolumeStatus.SHRINK_VOLUME_UP
-        today_is_down = result.volume_status == VolumeStatus.HEAVY_VOLUME_DOWN or \
-                        result.volume_status == VolumeStatus.SHRINK_VOLUME_DOWN
-        # 回退：当 volume_status 未设置时，用昨日趋势
-        if not today_is_up and not today_is_down:
-            today_is_up = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL)
-            today_is_down = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR)
-        is_rising = today_is_up
-        is_falling = today_is_down
+        # 用 trend_status + volume_status 联合判断价格方向
+        is_rising = result.trend_status in (TrendStatus.STRONG_BULL, TrendStatus.BULL) or \
+                    result.volume_status in (VolumeStatus.HEAVY_VOLUME_UP,)
+        is_falling = result.trend_status in (TrendStatus.STRONG_BEAR, TrendStatus.BEAR) or \
+                     result.volume_status in (VolumeStatus.HEAVY_VOLUME_DOWN,)
 
         adj = 0
         if vr >= 3.0:
@@ -1986,7 +1926,7 @@ class ScoringSystem:
                     continue
                 amp = (high[i] - low[i]) / close[i - 1] if close[i - 1] > 0 else 0
                 shadow_down = (high[i] - close[i]) / (high[i] - low[i] + 1e-6)
-                if amp > 0.035 and shadow_down > 0.65:
+                if amp > 0.025 and shadow_down > 0.55:
                     behaviors.append("冲高回落")
                     behavior_days["冲高回落"] = abs(i)
                     notes.append(f"近{abs(i)}日冲高回落（振幅{amp*100:.1f}%，上影线占比{shadow_down*100:.0f}%）")
@@ -2150,14 +2090,9 @@ class ScoringSystem:
                 intent_parts.append("主力试盘")
                 detail_parts.append("冲高回落试盘（谨慎）")
             if "连续" in " ".join(behaviors) and "放量下跌" in " ".join(behaviors):
-                if is_bear:
-                    # 熊市中连续放量下跌往往是超卖反弹前兆，降权处理
-                    bull_signals += 1
-                    detail_parts.append("连续放量下跌（熊市超卖，关注反弹）")
-                else:
-                    bear_signals += 3
-                    intent_parts.append("持续出货")
-                    detail_parts.append("连续放量下跌（出货信号）")
+                bear_signals += 3
+                intent_parts.append("持续出货")
+                detail_parts.append("连续放量下跌（出货信号）")
             if "冲高回落" in behaviors and "主力试盘" not in behaviors:
                 bear_signals += 1
                 detail_parts.append("冲高回落（压力显现）")
@@ -2667,25 +2602,21 @@ class ScoringSystem:
                 elif near(current_price, f618):
                     result.fib_current_zone = "0.618深度回撤支撑区"
                     result.fib_signal = "接近支撑买入区"
-                    # 回测fib_0.618: 20d=+0.66%仅略高于基准，需量能确认才有效
-                    has_vol = result.volume_status == VolumeStatus.HEAVY_VOLUME_UP
-                    adj = 2 if has_vol else 1
+                    adj = 3
                     active_level = f618
-                    result.signal_reasons.append(f"价格触及0.618支撑({f618:.2f})，需放量确认才可介入")
+                    result.signal_reasons.append(f"价格触及0.618黄金分割支撑({f618:.2f})，深度回调逢低机会")
                 elif near(current_price, f500):
                     result.fib_current_zone = "0.500中度回撤支撑区"
-                    result.fib_signal = "中度回撤区，观望"
-                    # 回测fib_0.500: 20d=-0.42%，50%回撤位无效，不加分
-                    adj = 0
+                    result.fib_signal = "接近支撑买入区"
+                    adj = 2
                     active_level = f500
-                    result.signal_reasons.append(f"价格在0.5回撤位({f500:.2f})，历史有效性低，等待方向确认")
+                    result.signal_reasons.append(f"价格在0.5回撤支撑附近({f500:.2f})，中度回调可关注")
                 elif near(current_price, f382):
                     result.fib_current_zone = "0.382浅度回撤支撑区"
-                    result.fib_signal = "浅回调，等待企稳确认"
-                    # 回测fib_0.382: 20d=+0.29%低于基准，仅展示文本，不加分
-                    adj = 0
+                    result.fib_signal = "接近支撑买入区"
+                    adj = 4
                     active_level = f382
-                    result.signal_reasons.append(f"价格在0.382回撤支撑({f382:.2f})，等待企稳确认后介入")
+                    result.signal_reasons.append(f"价格在0.382黄金分割支撑({f382:.2f})，浅回调强势特征")
                 else:
                     result.fib_current_zone = ""
                     result.fib_signal = "中性"
@@ -2803,7 +2734,7 @@ class ScoringSystem:
                     # 放量突破刚发生
                     result.vol_price_structure = "放量突破"
                     result.vol_price_breakout_price = breakout_price
-                    adj = 5 if current_vol >= vol_ma20 * 2.0 else 0
+                    adj = 5 if current_vol >= vol_ma20 * 1.5 else 4
                     result.signal_reasons.append(
                         f"放量突破前高({breakout_price:.2f})，成交量{current_vol/vol_ma20:.1f}倍均量，趋势确认"
                     )
@@ -2814,17 +2745,10 @@ class ScoringSystem:
                     if is_near_breakout and is_light_vol:
                         result.vol_price_structure = "缩量回踩"
                         result.vol_price_breakout_price = breakout_price
-                        _ma5_cur = float(pd.Series(close).rolling(5).mean().iloc[-1]) if n >= 5 else current_price
-                        if current_price >= _ma5_cur:
-                            adj = 2
-                            result.signal_reasons.append(
-                                f"缩量回踩突破位({breakout_price:.2f})，价格在MA5上方，量能萎缩健康，可关注买入机会"
-                            )
-                        else:
-                            adj = -1
-                            result.risk_factors.append(
-                                f"缩量回踩突破位({breakout_price:.2f})，价格跌破MA5，回踩渔度偏大，谨慎介入"
-                            )
+                        adj = 4
+                        result.signal_reasons.append(
+                            f"缩量回踩突破位({breakout_price:.2f})，量能萎缩健康，可关注买入机会"
+                        )
                     elif not is_near_breakout and current_price < breakout_price * 0.97:
                         # 已跌破突破位，信号失败
                         result.vol_price_structure = "突破失败"
@@ -2888,7 +2812,7 @@ class ScoringSystem:
                    'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
                    'weekly_trend_adj', 'chart_pattern_adj',
                    'fib_adj', 'vol_price_structure', 'vol_anomaly',
-                   'p3_resonance', 'p4_capital_flow', 'vwap_adj', 'p5c_lhb', 'p5c_holder']
+                   'p3_resonance', 'p4_capital_flow', 'vwap_adj', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚
@@ -2951,12 +2875,10 @@ class ScoringSystem:
         adj_keys = ['valuation_adj', 'capital_flow_adj', 'sector_adj', 'chip_adj', 'fundamental_adj']
         multi_adj = sum(result.score_breakdown.get(k, 0) for k in adj_keys)
         
-        # 阈值基于实际数据：multi_adj实际范围[-18,+3]，±10基本不触发，调整如下
-        # 技术偏强(base>=65)且多维明显转弱(adj<=-6)→冲突警告
-        if base_score >= 65 and multi_adj <= -6:
-            conflicts.append("⚠️技术面强势但多维因子转弱（估值/资金/板块/筹码/基本面），建议降档操作")
-        elif base_score <= 45 and multi_adj >= 3:
-            conflicts.append("⚠️技术面偏弱但多维因子支撑（估值/资金/板块等），可观望等待技术修复")
+        if base_score >= 70 and multi_adj <= -10:
+            conflicts.append("⚠️技术面强势但多维因子转弱（估值/资金/板块/筹码/基本面）")
+        elif base_score <= 40 and multi_adj >= 10:
+            conflicts.append("⚠️技术面偏弱但多维因子支撑（估值/资金/板块等）")
         
         if not hasattr(result, '_conflict_warnings'):
             result._conflict_warnings = []
@@ -2964,233 +2886,20 @@ class ScoringSystem:
     
     @staticmethod
     def update_buy_signal(result: TrendAnalysisResult):
-        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）
-        
-        额外熔断规则（回测验证）：
-        - 高乖离熔断：归一化乖离率 > 1.5（价格超出布林带上轨1.5倍宽度），
-          且评分在70-84分（BUY档），强制降为CAUTIOUS_BUY，并加风险警告
-          回测依据：70-79分含高乖离警告时胜率27%，无警告时胜率50%
-        """
+        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）"""
         score = result.signal_score
-
-        # === 高乖离熔断 ===
-        _high_bias_fuse = False
-        bias = getattr(result, 'bias_ma5', 0) or 0
-        bb_width = getattr(result, 'bb_width', 0) or 0
-        if bias > 0 and bb_width > 0.01:
-            half_bb_pct = bb_width * 50
-            norm_bias = bias / half_bb_pct
-            if norm_bias > 1.5 and 70 <= score < 85:
-                _high_bias_fuse = True
-                if not hasattr(result, 'risk_factors'):
-                    result.risk_factors = []
-                result.risk_factors.append(
-                    f"⚠️ 高乖离熔断：价格偏离均值 {bias:.1f}%（布林带归一化 {norm_bias:.1f}x），"
-                    f"追高风险大，建议等待回踩再介入"
-                )
-                result.score_breakdown['high_bias_fuse'] = -5
-
-        # === 信号冲突降档 ===
-        # 当技术面偏强(base>=65)但多维因子明显转弱(adj<=-6)时，降一档操作
-        _conflict_fuse = bool(getattr(result, '_conflict_warnings', None))
-
+        
         if score >= 95:
-            result.buy_signal = BuySignal.STRONG_BUY if _conflict_fuse else BuySignal.AGGRESSIVE_BUY
+            result.buy_signal = BuySignal.AGGRESSIVE_BUY
         elif score >= 85:
-            result.buy_signal = BuySignal.BUY if _conflict_fuse else BuySignal.STRONG_BUY
+            result.buy_signal = BuySignal.STRONG_BUY
         elif score >= 70:
-            if _high_bias_fuse or _conflict_fuse:
-                result.buy_signal = BuySignal.CAUTIOUS_BUY
-            else:
-                result.buy_signal = BuySignal.BUY
+            result.buy_signal = BuySignal.BUY
         elif score >= 60:
-            result.buy_signal = BuySignal.HOLD if _conflict_fuse else BuySignal.CAUTIOUS_BUY
+            result.buy_signal = BuySignal.CAUTIOUS_BUY
         elif score >= 50:
             result.buy_signal = BuySignal.HOLD
         elif score >= 35:
             result.buy_signal = BuySignal.REDUCE
         else:
             result.buy_signal = BuySignal.SELL
-
-    @staticmethod
-    def score_gap_analysis(result: TrendAnalysisResult, df: pd.DataFrame):
-        """P2a: 缺口分析 - 识别近30日未回补跳空缺口，判断压力/支撑
-
-        逻辑：
-        - 向上跳空缺口（open > prev_high）：
-          - 价格在缺口上方且未回补 → 缺口支撑，+2
-          - 价格已回补缺口 → 缺口回补完成，中性 0
-          - 价格已跌入缺口 → 缺口破位，-2
-        - 向下跳空缺口（open < prev_low）：
-          - 价格在缺口下方且未回补 → 缺口压力，-2
-          - 价格已回补缺口 → 缺口回补，需谨慎（阻力位），-1
-        - 扫描最近30根K线，只取最近一个有效缺口
-        """
-        if df is None or len(df) < 5:
-            return
-
-        price = result.current_price
-        if price <= 0:
-            return
-
-        scan_df = df.tail(30).reset_index(drop=True)
-        adj = 0
-
-        for i in range(len(scan_df) - 1, 0, -1):
-            row = scan_df.iloc[i]
-            prev = scan_df.iloc[i - 1]
-            open_p = float(row.get('open', 0) or 0)
-            prev_high = float(prev.get('high', 0) or 0)
-            prev_low = float(prev.get('low', 0) or 0)
-            if open_p <= 0 or prev_high <= 0 or prev_low <= 0:
-                continue
-
-            # 向上跳空缺口：当日开盘 > 前日最高
-            if open_p > prev_high:
-                gap_lower = prev_high
-                gap_upper = open_p
-                result.gap_type = "向上跳空"
-                result.gap_upper = round(gap_upper, 2)
-                result.gap_lower = round(gap_lower, 2)
-                # 判断是否已回补（价格曾进入缺口区间）
-                filled = any(
-                    float(scan_df.iloc[j].get('low', 0) or 0) <= gap_lower
-                    for j in range(i + 1, len(scan_df))
-                )
-                result.gap_filled = filled
-                if filled:
-                    result.gap_signal = "缺口回补完成"
-                    adj = 0
-                elif price >= gap_lower:
-                    from .types import TrendStatus as _TS
-                    _bear = result.trend_status in (_TS.BEAR, _TS.STRONG_BEAR, _TS.WEAK_BEAR)
-                    # 时效性：缺口距今天数（scan_df末尾=今天，i=缺口位置）
-                    _days_ago = len(scan_df) - 1 - i
-                    _stale = _days_ago > 10
-                    # 价格历史位置：近60日分位数，高位(>60%)的向上缺口往往是顶部跳空，降级
-                    _lookback60 = df.tail(60)
-                    _p60_high = float(_lookback60['high'].max()) if len(_lookback60) > 0 else price
-                    _p60_low = float(_lookback60['low'].min()) if len(_lookback60) > 0 else price
-                    _price_pct = (price - _p60_low) / (_p60_high - _p60_low) if _p60_high > _p60_low else 0.5
-                    _high_pos = _price_pct > 0.6  # 近60日60%分位以上视为高位
-                    if _bear:
-                        result.gap_signal = "未回补支撑缺口(空头趋势降级)"
-                        adj = 1
-                    elif _stale or _high_pos:
-                        result.gap_signal = "未回补支撑缺口(高位/时效衰减)"
-                        adj = 1
-                    else:
-                        result.gap_signal = "未回补支撑缺口"
-                        adj = 2
-                else:
-                    result.gap_signal = "向上缺口已破位"
-                    adj = -2
-                break
-
-            # 向下跳空缺口：当日开盘 < 前日最低
-            if open_p < prev_low:
-                gap_upper = prev_low
-                gap_lower = open_p
-                result.gap_type = "向下跳空"
-                result.gap_upper = round(gap_upper, 2)
-                result.gap_lower = round(gap_lower, 2)
-                filled = any(
-                    float(scan_df.iloc[j].get('high', 0) or 0) >= gap_upper
-                    for j in range(i + 1, len(scan_df))
-                )
-                result.gap_filled = filled
-                if filled:
-                    result.gap_signal = "向下缺口已回补"
-                    adj = 0
-                else:
-                    result.gap_signal = "未回补压力缺口"
-                    adj = -2
-                break
-
-        if adj != 0:
-            result.score_breakdown['gap_adj'] = adj
-
-    @staticmethod
-    def score_intraday_pattern_signal(result: TrendAnalysisResult, code: str):
-        """P5-E: 分时形态量化信号（仅盘中触发）
-
-        基于分时K线（5min）分析以下模式，调整评分：
-
-        信号逻辑：
-        - 早盘方向看多（9:30-10:00上攻）+ VWAP上方  → +2（盘中强势确认）
-        - 早盘方向看空（9:30-10:00下跌）+ VWAP下方  → -2（盘中弱势确认）
-        - 尾盘放量拉升（14:30后放量+分时上攻）       → +2（资金尾盘积极）
-        - 尾盘放量下跌（14:30后放量+分时下跌）       → -2（尾盘砸盘，出货嫌疑）
-        - 加速上涨（momentum=加速上涨）               → +1
-        - 加速下跌（momentum=加速下跌）               → -1
-        - VWAP持续上移（价格在VWAP上方+加速上涨）    → +1（叠加）
-        - VWAP持续下移（价格在VWAP下方+加速下跌）    → -1（叠加）
-
-        上限：单次最多 ±4，不与 score_intraday_volume_signal 累加超限（由 cap_adjustments 统一控制）
-        """
-        import logging as _logging
-        from datetime import datetime as _dt_ip
-        _logger = _logging.getLogger(__name__)
-
-        now_h = _dt_ip.now().hour
-        now_m = _dt_ip.now().minute
-        if now_h >= 15:
-            return  # 收盘后不触发
-
-        try:
-            from data_provider.intraday_fetcher import analyze_intraday
-            intraday = analyze_intraday(code, period='5')
-        except Exception as e:
-            _logger.debug(f"[P5-E] {code} 分时数据获取失败: {e}")
-            return
-
-        if not intraday.get('available'):
-            return
-
-        trend = intraday.get('intraday_trend', '')
-        vwap_pos = intraday.get('vwap_position', '')
-        vol_dist = intraday.get('volume_distribution', '')
-        momentum = intraday.get('momentum', '')
-
-        adj = 0
-        reasons = []
-
-        # ── 早盘方向信号（仅10:30前参考）──
-        if now_h < 11:
-            if trend == '分时上攻' and vwap_pos == '价格在VWAP上方':
-                adj += 2
-                reasons.append(f"早盘分时上攻且价格在VWAP上方，盘中强势确认")
-            elif trend == '分时下跌' and vwap_pos == '价格在VWAP下方':
-                adj -= 2
-                reasons.append(f"早盘分时下跌且价格跌破VWAP，盘中弱势")
-
-        # ── 尾盘异动（14:30后）──
-        if now_h >= 14 and now_m >= 30:
-            if vol_dist == '尾盘放量' and trend == '分时上攻':
-                adj += 2
-                reasons.append(f"尾盘放量拉升，资金主动积累")
-            elif vol_dist == '尾盘放量' and trend == '分时下跌':
-                adj -= 2
-                reasons.append(f"尾盘放量下跌，警惕出货砸盘")
-
-        # ── 全时段动能信号 ──
-        if momentum == '加速上涨':
-            adj += 1
-            if vwap_pos == '价格在VWAP上方':
-                adj += 1  # VWAP上方加速上涨叠加 +1
-            reasons.append(f"分时加速上涨{'+VWAP上方' if vwap_pos == '价格在VWAP上方' else ''}")
-        elif momentum == '加速下跌':
-            adj -= 1
-            if vwap_pos == '价格在VWAP下方':
-                adj -= 1  # VWAP下方加速下跌叠加 -1
-            reasons.append(f"分时加速下跌{'+VWAP下方' if vwap_pos == '价格在VWAP下方' else ''}")
-
-        # ── 单次上限 ±4 ──
-        adj = max(-4, min(4, adj))
-
-        if adj != 0:
-            result.score_breakdown['intraday_pattern'] = adj
-            if adj > 0:
-                result.signal_reasons.extend(reasons)
-            else:
-                result.risk_factors.extend(reasons)

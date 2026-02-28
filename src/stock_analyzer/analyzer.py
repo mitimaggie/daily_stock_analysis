@@ -35,155 +35,120 @@ class StockTrendAnalyzer:
         pass
     
     @staticmethod
-    def _score_index_kline(idx_df: pd.DataFrame) -> int:
+    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0, 
+                            volume_data: pd.Series = None) -> tuple:
         """
-        根据真实指数K线（close列）计算市场趋势得分。
+        增强版市场环境检测：多维度判断 + 强度量化
         
-        维度：
-        1. MA排列（MA5/MA10/MA20）
-        2. MA20斜率（近3天连续方向）
-        3. 近20日累计涨跌幅
-        4. 近20日振幅（高波动→偏空）
-        
-        Returns:
-            得分（正=偏牛，负=偏熊，范围约 -10 ~ +10）
-        """
-        if idx_df is None or len(idx_df) < 20:
-            return 0
-        close = idx_df['close'].astype(float)
-        score = 0
-
-        # 1. MA排列
-        ma5 = close.rolling(5).mean()
-        ma10 = close.rolling(10).mean()
-        ma20 = close.rolling(20).mean()
-        ma60 = close.rolling(60).mean() if len(close) >= 60 else ma20
-        v5, v10, v20 = ma5.iloc[-1], ma10.iloc[-1], ma20.iloc[-1]
-        v60 = ma60.iloc[-1]
-        if v5 > v10 > v20:
-            score += 3
-        elif v5 < v10 < v20:
-            score -= 3
-        if v10 > v20 > v60:
-            score += 2
-        elif v10 < v20 < v60:
-            score -= 2
-
-        # 2. MA20斜率（连续3天）
-        bull_c = bear_c = 0
-        for off in range(3):
-            i, i10 = -(1 + off), -(11 + off)
-            if abs(i10) > len(ma20):
-                break
-            now_v, ago_v = ma20.iloc[i], ma20.iloc[i10]
-            if now_v > 0 and ago_v > 0:
-                slp = (now_v - ago_v) / ago_v * 100
-                if slp > 1.0:
-                    bull_c += 1
-                elif slp < -1.0:
-                    bear_c += 1
-        if bull_c >= 3:
-            score += 3
-        elif bear_c >= 3:
-            score -= 3
-
-        # 3. 近20日累计涨幅
-        pct_20 = (close.iloc[-1] - close.iloc[-20]) / close.iloc[-20] * 100 if close.iloc[-20] > 0 else 0
-        if pct_20 > 10:
-            score += 2
-        elif pct_20 > 3:
-            score += 1
-        elif pct_20 < -10:
-            score -= 2
-        elif pct_20 < -3:
-            score -= 1
-
-        # 4. 近20日振幅（高振幅 → 震荡/熊市）
-        hi, lo = close.tail(20).max(), close.tail(20).min()
-        amp = (hi - lo) / lo * 100 if lo > 0 else 0
-        if amp > 20:
-            score -= 1
-
-        return score
-
-    @staticmethod
-    def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0,
-                             volume_data: pd.Series = None,
-                             index_df: pd.DataFrame = None) -> tuple:
-        """
-        增强版市场环境检测：优先用真实指数K线，退回到个股K线。
-
         判断维度：
-        1. [主] 真实指数K线（上证/沪深300）的MA排列、斜率、近20日累计涨跌
-        2. [辅] 个股K线的MA趋势 + 波动率
-        3. 当日大盘涨跌幅（实时权重低）
-
+        1. MA趋势：MA5/MA10/MA20/MA60排列 + MA20斜率
+        2. 大盘环境：近20日涨跌幅 + 当日方向
+        3. 量能特征：放量/缩量趋势
+        4. 波动率：近20日波动率（高波动=震荡/熊市）
+        5. 平滑机制：连续3天方向一致才切换
+        
         Returns:
             (MarketRegime, 环境强度 0-100)
         """
+        SMOOTH_DAYS = 3
+        SLOPE_THRESHOLD = 1.0
+        
         if df is None or df.empty or len(df) < 30:
             return MarketRegime.SIDEWAYS, 50
-
+        
         try:
-            # === 主信号：真实指数K线（权重 60%）===
-            index_score = 0
-            if index_df is not None and len(index_df) >= 20:
-                index_score = StockTrendAnalyzer._score_index_kline(index_df)
-            else:
-                # 无指数数据时退回到当日涨跌幅
-                if index_change_pct > 1.0:
-                    index_score = 2
-                elif index_change_pct > 0:
-                    index_score = 1
-                elif index_change_pct < -1.0:
-                    index_score = -2
-                elif index_change_pct < 0:
-                    index_score = -1
-
-            # === 辅助信号：个股K线 MA（权重 30%）===
-            stock_score = 0
             ma5 = df['close'].rolling(5).mean()
             ma10 = df['close'].rolling(10).mean()
             ma20 = df['close'].rolling(20).mean()
             ma60 = df['close'].rolling(60).mean()
-            if len(ma20) >= 15:
-                v5, v10, v20 = ma5.iloc[-1], ma10.iloc[-1], ma20.iloc[-1]
-                v60 = ma60.iloc[-1] if len(ma60) >= 60 else v20
-                if v5 > v10 > v20:
-                    stock_score += 2
-                elif v5 < v10 < v20:
-                    stock_score -= 2
-                if v10 > v20 > v60:
-                    stock_score += 1
-                elif v10 < v20 < v60:
-                    stock_score -= 1
-
-            # === 辅助信号：波动率（高波动偏熊）===
-            vol_score = 0
+            
+            if len(ma20) < 15:
+                return MarketRegime.SIDEWAYS, 50
+            
+            latest_ma5 = ma5.iloc[-1]
+            latest_ma10 = ma10.iloc[-1]
+            latest_ma20 = ma20.iloc[-1]
+            latest_ma60 = ma60.iloc[-1] if len(ma60) >= 60 else latest_ma20
+            
+            ma_bull_score = 0
+            if latest_ma5 > latest_ma10 > latest_ma20:
+                ma_bull_score += 3
+            elif latest_ma5 < latest_ma10 < latest_ma20:
+                ma_bull_score -= 3
+            if latest_ma10 > latest_ma20 > latest_ma60:
+                ma_bull_score += 2
+            elif latest_ma10 < latest_ma20 < latest_ma60:
+                ma_bull_score -= 2
+            
+            bull_count = 0
+            bear_count = 0
+            for offset in range(SMOOTH_DAYS):
+                idx = -(1 + offset)
+                idx_10 = -(11 + offset)
+                if abs(idx_10) > len(ma20):
+                    break
+                now_val = ma20.iloc[idx]
+                ago_val = ma20.iloc[idx_10]
+                if now_val <= 0 or ago_val <= 0:
+                    break
+                slope = (now_val - ago_val) / ago_val * 100
+                if slope > SLOPE_THRESHOLD:
+                    bull_count += 1
+                elif slope < -SLOPE_THRESHOLD:
+                    bear_count += 1
+            
+            ma_slope_score = 0
+            if bull_count >= SMOOTH_DAYS:
+                ma_slope_score = 3
+            elif bear_count >= SMOOTH_DAYS:
+                ma_slope_score = -3
+            
+            index_score = 0
+            if index_change_pct > 1.0:
+                index_score = 2
+            elif index_change_pct > 0:
+                index_score = 1
+            elif index_change_pct < -1.0:
+                index_score = -2
+            elif index_change_pct < 0:
+                index_score = -1
+            
+            volume_score = 0
+            if volume_data is not None and len(volume_data) >= 20:
+                recent_vol = volume_data.tail(5).mean()
+                avg_vol = volume_data.tail(20).mean()
+                if avg_vol > 0:
+                    vol_ratio = recent_vol / avg_vol
+                    if vol_ratio > 1.3:
+                        volume_score = 1
+                    elif vol_ratio < 0.7:
+                        volume_score = -1
+            
+            volatility_score = 0
             if len(df) >= 20:
-                hi20 = df['high'].tail(20).max()
-                lo20 = df['low'].tail(20).min()
-                amp = (hi20 - lo20) / lo20 * 100 if lo20 > 0 else 0
-                if amp > 30:
-                    vol_score = -1
-                elif amp < 15:
-                    vol_score = 1
-
-            # 合成总分（指数权重更高）
-            total_score = index_score * 2 + stock_score + vol_score
-
-            if total_score >= 8:
+                recent_20 = df.tail(20)
+                high_20 = recent_20['high'].max()
+                low_20 = recent_20['low'].min()
+                volatility = (high_20 - low_20) / low_20 * 100 if low_20 > 0 else 0
+                if volatility > 30:
+                    volatility_score = -2
+                elif volatility < 15:
+                    volatility_score = 1
+            
+            total_score = ma_bull_score + ma_slope_score + index_score + volume_score + volatility_score
+            
+            if total_score >= 5:
                 regime = MarketRegime.BULL
-                strength = min(100, 50 + total_score * 4)
-            elif total_score <= -8:
+                strength = min(100, 50 + total_score * 5)
+            elif total_score <= -5:
                 regime = MarketRegime.BEAR
-                strength = max(0, 50 + total_score * 4)
+                strength = max(0, 50 + total_score * 5)
             else:
                 regime = MarketRegime.SIDEWAYS
-                strength = max(10, min(90, 50 + total_score * 3))
-
+                strength = 50 + total_score * 3
+            
             return regime, int(strength)
-
+            
         except Exception:
             return MarketRegime.SIDEWAYS, 50
     
@@ -389,18 +354,16 @@ class StockTrendAnalyzer:
             elif result.ma_spread_rate < -1.0:
                 result.ma_spread_signal = "收敛"
 
-            # 换手率分位数
-            # 收盘后（>=15:00）：用今日完整换手率与历史60日对比，结果可靠 → "收盘确认"
-            # 盘中（<15:00）：当日换手率是累计值，calc_turnover_percentile内置时间折算曲线，
-            #   折算后的结果仅供参考，精度低于收盘 → "盘中折算估算"
+            # 换手率分位数：仅收盘后（15:00后）才计算历史百分位
+            # 盘中换手率是当日累计值，任何折算都不准确，可能导致"异常活跃"误报
+            # 盘中改用量比×价格联动检测主力行为（见 score_intraday_volume_signal）
             turnover = getattr(quote_extra, 'turnover_rate', 0) or 0 if quote_extra else 0
             from datetime import datetime as _dt_tr
             _is_after_close = _dt_tr.now().hour >= 15
-            if turnover > 0:
+            if turnover > 0 and _is_after_close:
                 result.turnover_percentile = TechnicalIndicators.calc_turnover_percentile(df, turnover)
-                result.turnover_percentile_confidence = "收盘确认" if _is_after_close else "盘中折算估算"
 
-            self._analyze_volume(result, df, latest, prev, quote_extra=quote_extra)
+            self._analyze_volume(result, df, latest, prev)
             self._analyze_macd(result, prev)
             self._analyze_rsi(result, df, prev)
             self._analyze_kdj(result, df, prev)
@@ -421,7 +384,7 @@ class StockTrendAnalyzer:
             ScoringSystem.check_trading_halt(result)
             ScoringSystem.score_capital_flow(result, capital_flow)
             ScoringSystem.score_capital_flow_trend(result, df)
-            ScoringSystem.score_sector_strength(result, sector_context, market_regime=market_regime)
+            ScoringSystem.score_sector_strength(result, sector_context)
             ScoringSystem.score_chip_distribution(result, chip_data)
             ScoringSystem.score_fundamental_quality(result, fundamental_data)
             ScoringSystem.score_forecast(result, fundamental_data)
@@ -442,11 +405,10 @@ class StockTrendAnalyzer:
             ScoringSystem.score_multi_signal_resonance(result, df)
             ScoringSystem.forecast_next_days(result, df)
             ScoringSystem.score_capital_flow_history(result, code)
-            ScoringSystem.score_gap_analysis(result, df)
-            ScoringSystem.score_vwap_trend(result)
+            ScoringSystem.score_lhb_sentiment(result, code)
             ScoringSystem.score_dzjy_and_holder(result, code)
+            ScoringSystem.score_vwap_trend(result)
             ScoringSystem.score_intraday_volume_signal(result)
-            ScoringSystem.score_intraday_pattern_signal(result, code)
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)
@@ -456,9 +418,8 @@ class StockTrendAnalyzer:
                 result.score_breakdown['bear_market_cap'] = BEAR_SCORE_CAP - result.signal_score
                 result.signal_score = BEAR_SCORE_CAP
                 result.risk_factors.append(f"⚠️ 熊市环境下评分已压至上限 {BEAR_SCORE_CAP}，建议控制仓位")
-            # 先检测信号冲突（_conflict_warnings），再更新buy_signal（冲突降档需要_conflict_warnings）
+                ScoringSystem.update_buy_signal(result)
             ScoringSystem.detect_signal_conflict(result)
-            ScoringSystem.update_buy_signal(result)
             
             RiskManager.calculate_stop_loss_and_take_profit(result, df)
             RiskManager.calculate_position(result, market_regime)
@@ -469,7 +430,6 @@ class StockTrendAnalyzer:
             RiskManager.detect_volume_extreme(result, df)
             RiskManager.check_no_trade_filter(result, df, market_snapshot=market_snapshot)
             RiskManager.check_stop_loss_breach(result, df)
-            RiskManager.check_stop_loss_distance(result)
             
             # === P1 盘中关键价位 ===
             RiskManager.generate_intraday_watchlist(result, df)
@@ -482,16 +442,9 @@ class StockTrendAnalyzer:
             logger.error(f"[{code}] 分析异常: {e}")
             return result
     
-    def _analyze_volume(self, result: TrendAnalysisResult, df: pd.DataFrame, latest: pd.Series, prev: pd.Series, quote_extra=None):
+    def _analyze_volume(self, result: TrendAnalysisResult, df: pd.DataFrame, latest: pd.Series, prev: pd.Series):
         """量能分析（含涨跌停特殊处理 + z-score自适应阈值）"""
-        from datetime import datetime as _dt_vol
-        _is_intraday = _dt_vol.now().hour < 15
-
-        # 盘中优先用行情接口提供的实时量比（已按同期归一化）
-        _qe_vr = getattr(quote_extra, 'volume_ratio', None) if quote_extra else None
-        if _is_intraday and isinstance(_qe_vr, (int, float)) and _qe_vr > 0:
-            result.volume_ratio = float(_qe_vr)
-        elif 'volume_ratio' in latest and not pd.isna(latest['volume_ratio']) and latest['volume_ratio'] > 0:
+        if 'volume_ratio' in latest and not pd.isna(latest['volume_ratio']) and latest['volume_ratio'] > 0:
             result.volume_ratio = float(latest['volume_ratio'])
         else:
             vol_ma5 = df['volume'].iloc[-6:-1].mean()
@@ -513,13 +466,8 @@ class StockTrendAnalyzer:
                 elif vol_zscore < -1.5:
                     shrink_ratio = max(shrink_ratio, result.volume_ratio * 1.05)
         
-        # 盘中改用今日实时涨跌幅（quote_extra.change_pct），避免用昨日K线对比
-        _qe_chg = getattr(quote_extra, 'change_pct', None) if quote_extra else None
-        if _is_intraday and isinstance(_qe_chg, (int, float)):
-            price_change_pct = float(_qe_chg)
-        else:
-            prev_close_price = float(prev['close'])
-            price_change_pct = (result.current_price - prev_close_price) / prev_close_price * 100 if prev_close_price > 0 else 0
+        prev_close_price = float(prev['close'])
+        price_change_pct = (result.current_price - prev_close_price) / prev_close_price * 100 if prev_close_price > 0 else 0
         vr = result.volume_ratio
 
         # === 涨跌停特殊处理（A股特有）===
@@ -559,7 +507,7 @@ class StockTrendAnalyzer:
                 result.volume_trend = "缩量上涨，上攻动能不足"
             else:
                 result.volume_status = VolumeStatus.SHRINK_VOLUME_DOWN
-                result.volume_trend = "缩量调整，短期仍有压力"
+                result.volume_trend = "缩量回调，洗盘特征明显"
         else:
             result.volume_status = VolumeStatus.NORMAL
             result.volume_trend = "量能正常"
@@ -575,13 +523,13 @@ class StockTrendAnalyzer:
         
         if is_golden_cross and dif > 0:
             result.macd_status = MACDStatus.GOLDEN_CROSS_ZERO
-            result.macd_signal = "零轴上金叉，短中期买入信号"
+            result.macd_signal = "零轴上金叉，强烈买入信号"
         elif is_crossing_up:
             result.macd_status = MACDStatus.CROSSING_UP
             result.macd_signal = "DIF上穿零轴，趋势转强"
         elif is_golden_cross:
             result.macd_status = MACDStatus.GOLDEN_CROSS
-            result.macd_signal = "金叉，短期动能转强，中长期收益优秀（20日均+1.9%）"
+            result.macd_signal = "金叉，趋势向上"
         elif is_death_cross:
             result.macd_status = MACDStatus.DEATH_CROSS
             result.macd_signal = "死叉，趋势向下"
@@ -650,16 +598,16 @@ class StockTrendAnalyzer:
             result.rsi_signal = f"RSI顶背离{mid_tag}(价格新高但RSI未新高)，回调风险"
         elif is_rsi_golden and rsi_mid < 30:
             result.rsi_status = RSIStatus.GOLDEN_CROSS_OVERSOLD
-            result.rsi_signal = f"RSI超卖区金叉(RSI6={rsi_short:.1f}上空RSI12={rsi_mid:.1f})，中长期强信号（20日收益优秀）、短期需量能确认"
+            result.rsi_signal = f"RSI超卖区金叉(RSI6={rsi_short:.1f}上穿RSI12={rsi_mid:.1f})，强买入"
         elif is_rsi_golden:
             result.rsi_status = RSIStatus.GOLDEN_CROSS
             result.rsi_signal = f"RSI金叉(RSI6={rsi_short:.1f}上穿RSI12={rsi_mid:.1f})，动能转强"
         elif is_rsi_death:
             result.rsi_status = RSIStatus.DEATH_CROSS
-            result.rsi_signal = f"RSI死叉(RSI6={rsi_short:.1f}下穿RSI12={rsi_mid:.1f})，短期风险增加，但中长期均值回归"
+            result.rsi_signal = f"RSI死叉(RSI6={rsi_short:.1f}下穿RSI12={rsi_mid:.1f})，动能转弱"
         elif rsi_mid > 70:
             result.rsi_status = RSIStatus.OVERBOUGHT
-            result.rsi_signal = f"RSI超买({rsi_mid:.1f}>70)，短期动量延续，中长期调整风险增加"
+            result.rsi_signal = f"RSI超买({rsi_mid:.1f}>70)，短期回调风险高"
         elif rsi_mid > 60:
             result.rsi_status = RSIStatus.STRONG_BUY
             result.rsi_signal = f"RSI强势({rsi_mid:.1f})，多头力量充足"
@@ -671,7 +619,7 @@ class StockTrendAnalyzer:
             result.rsi_signal = f"RSI弱势({rsi_mid:.1f})，关注反弹"
         else:
             result.rsi_status = RSIStatus.OVERSOLD
-            result.rsi_signal = f"RSI超卖({rsi_mid:.1f}<30)，关注企稳，超卖可能持续"
+            result.rsi_signal = f"RSI超卖({rsi_mid:.1f}<30)，反弹机会大"
     
     def _analyze_kdj(self, result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
         """KDJ分析（含背离检测、连续极端、钝化识别）"""
@@ -702,10 +650,10 @@ class StockTrendAnalyzer:
         elif result.kdj_consecutive_extreme:
             if "超买" in result.kdj_consecutive_extreme:
                 result.kdj_status = KDJStatus.OVERBOUGHT
-                result.kdj_signal = f"{result.kdj_consecutive_extreme}，动量极强，注意高位量能"
+                result.kdj_signal = f"{result.kdj_consecutive_extreme}，短期严重超买，回调概率极高"
             else:
                 result.kdj_status = KDJStatus.OVERSOLD
-                result.kdj_signal = f"{result.kdj_consecutive_extreme}，超卖可能持续，关注企稳信号"
+                result.kdj_signal = f"{result.kdj_consecutive_extreme}，短期严重超卖，反弹概率极高"
         # === 钝化状态：降低超买/超卖信号权重 ===
         elif result.kdj_passivation:
             if j_val > 100 or k_val > 80:
@@ -726,13 +674,13 @@ class StockTrendAnalyzer:
         # === 常规 KDJ 分析 ===
         elif is_kdj_golden and j_val < 20:
             result.kdj_status = KDJStatus.GOLDEN_CROSS_OVERSOLD
-            result.kdj_signal = f"超卖区金叉(J={j_val:.1f}<20)，短期5日偏弱、中长期20日收益优秀，需量能确认"
+            result.kdj_signal = f"超卖区金叉(J={j_val:.1f}<20)，强买入信号"
         elif j_val > 100:
             result.kdj_status = KDJStatus.OVERBOUGHT
-            result.kdj_signal = f"J值超买({j_val:.1f}>100)，短期+中期动量强势，趋势延续信号"
+            result.kdj_signal = f"J值超买({j_val:.1f}>100)，短期回调风险"
         elif j_val < 0:
             result.kdj_status = KDJStatus.OVERSOLD
-            result.kdj_signal = f"J值超卖({j_val:.1f}<0)，关注企稳，注意超卖可能持续"
+            result.kdj_signal = f"J值超卖({j_val:.1f}<0)，反弹机会"
         elif is_kdj_golden:
             result.kdj_status = KDJStatus.GOLDEN_CROSS
             result.kdj_signal = f"金叉(K={k_val:.1f}>D={d_val:.1f})，趋势向上"
