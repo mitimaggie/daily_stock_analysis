@@ -1320,9 +1320,16 @@ class StockAnalysisPipeline:
                 dim_labels = {'trend': '趋势', 'bias': '乖离', 'volume': '量能', 'support': '支撑', 'macd': 'MACD', 'rsi': 'RSI', 'kdj': 'KDJ'}
                 base_dims = {k: breakdown.get(k, 0) for k in dim_labels if k in breakdown}
                 if base_dims:
-                    # 用各维度的权重来计算得分率
+                    # 用各维度的权重来计算得分率（使用实际 regime 权重，与评分时一致）
                     from src.stock_analyzer.scoring import ScoringSystem
-                    default_w = ScoringSystem.REGIME_WEIGHTS.get(MarketRegime.SIDEWAYS, {})
+                    _regime_str = trend_data.get('market_regime', '')
+                    _regime_for_w = MarketRegime.SIDEWAYS
+                    try:
+                        if _regime_str:
+                            _regime_for_w = MarketRegime(_regime_str)
+                    except (ValueError, KeyError):
+                        pass
+                    default_w = ScoringSystem.REGIME_WEIGHTS.get(_regime_for_w, ScoringSystem.REGIME_WEIGHTS.get(MarketRegime.SIDEWAYS, {}))
                     dim_rates = {}
                     for k, v in base_dims.items():
                         max_w = default_w.get(k, 10)
