@@ -82,6 +82,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         defenseMode={defenseMode}
         maxDrawdown60d={quantExtras?.max_drawdown_60d ?? quantExtras?.maxDrawdown60d}
         positionDiagnosis={positionDiagnosis}
+        suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
       />
 
       {/* 3. 盘中关键价位 */}
@@ -110,6 +111,12 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         analysisSummary={summary.analysisSummary}
         intelligence={intelligence}
         counterArguments={counterArguments}
+        oneSentence={oneSentence ?? undefined}
+        positionAdvice={
+          (details?.rawResult as Record<string, any>)?.dashboard?.core_conclusion?.position_advice ??
+          (details?.rawResult as Record<string, any>)?.core_conclusion?.position_advice ??
+          undefined
+        }
       />
 
       {/* 7. 持仓诊断（有持仓信息时显示） */}

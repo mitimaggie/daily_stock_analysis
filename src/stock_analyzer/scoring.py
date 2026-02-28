@@ -2962,15 +2962,38 @@ class ScoringSystem:
     
     @staticmethod
     def update_buy_signal(result: TrendAnalysisResult):
-        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）"""
-        score = result.signal_score
+        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）
         
+        额外熔断规则（回测验证）：
+        - 高乖离熔断：归一化乖离率 > 1.5（价格超出布林带上轨1.5倍宽度），
+          且评分在70-84分（BUY档），强制降为CAUTIOUS_BUY，并加风险警告
+          回测依据：70-79分含高乖离警告时胜率27%，无警告时胜率50%
+        """
+        score = result.signal_score
+
+        # === 高乖离熔断 ===
+        _high_bias_fuse = False
+        bias = getattr(result, 'bias_ma5', 0) or 0
+        bb_width = getattr(result, 'bb_width', 0) or 0
+        if bias > 0 and bb_width > 0.01:
+            half_bb_pct = bb_width * 50
+            norm_bias = bias / half_bb_pct
+            if norm_bias > 1.5 and 70 <= score < 85:
+                _high_bias_fuse = True
+                if not hasattr(result, 'risk_factors'):
+                    result.risk_factors = []
+                result.risk_factors.append(
+                    f"⚠️ 高乖离熔断：价格偏离均值 {bias:.1f}%（布林带归一化 {norm_bias:.1f}x），"
+                    f"追高风险大，建议等待回踩再介入"
+                )
+                result.score_breakdown['high_bias_fuse'] = -5
+
         if score >= 95:
             result.buy_signal = BuySignal.AGGRESSIVE_BUY
         elif score >= 85:
             result.buy_signal = BuySignal.STRONG_BUY
         elif score >= 70:
-            result.buy_signal = BuySignal.BUY
+            result.buy_signal = BuySignal.CAUTIOUS_BUY if _high_bias_fuse else BuySignal.BUY
         elif score >= 60:
             result.buy_signal = BuySignal.CAUTIOUS_BUY
         elif score >= 50:

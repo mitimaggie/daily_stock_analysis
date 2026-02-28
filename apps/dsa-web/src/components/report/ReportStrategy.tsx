@@ -10,6 +10,7 @@ interface ReportStrategyProps {
   defenseMode?: boolean;
   maxDrawdown60d?: number;
   positionDiagnosis?: Record<string, any> | null;
+  suggestedPositionPct?: number | null;
 }
 
 const fmtPrice = (v?: string | number | null): string => {
@@ -30,6 +31,7 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
   defenseMode = false,
   maxDrawdown60d,
   positionDiagnosis,
+  suggestedPositionPct,
 }) => {
   if (!strategy) return null;
 
@@ -175,6 +177,25 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
           📋 {strategy.takeProfitPlan}
         </div>
       ) : null}
+
+      {/* 仓位-评分矩阵（A股专用） */}
+      {suggestedPositionPct != null && (
+        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] text-white/30 font-medium">仓位参考（大盘×评分矩阵）</span>
+            <span className="text-[11px] font-mono font-bold text-cyan/80">
+              建议 {suggestedPositionPct}%
+            </span>
+          </div>
+          <div className="text-[10px] text-white/20 leading-relaxed">
+            <span className="text-emerald-400/60">≥80分（胜率81%）</span>：牛市50-60% · 震荡30-40% · 弱势15-20%
+            &nbsp;·&nbsp;
+            <span className="text-yellow-400/60">70-79分（胜率约38%）</span>：≤15%试仓，等信号确认
+            &nbsp;·&nbsp;
+            <span className="text-red-400/50">&lt;70分</span>：0%，禁止新建仓
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -1,9 +1,11 @@
 import type React from 'react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ReportMeta, ReportSummary as ReportSummaryType } from '../../types/analysis';
 import { ScoreGauge } from '../common';
 import { formatDateTime } from '../../utils/format';
 import apiClient from '../../api';
+import { scoreTrendApi } from '../../api/scoreTrend';
+import type { ScoreTrend } from '../../api/scoreTrend';
 
 interface ReportOverviewProps {
   meta: ReportMeta;
@@ -37,12 +39,28 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   const [liveChangePct, setLiveChangePct] = useState<number | undefined>(meta.changePct ?? undefined);
   const [lastUpdate, setLastUpdate] = useState<string>('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [scoreTrend, setScoreTrend] = useState<ScoreTrend | null>(null);
 
   useEffect(() => {
     setLivePrice(meta.currentPrice ?? undefined);
     setLiveChangePct(meta.changePct ?? undefined);
     setLastUpdate('');
+    setScoreTrend(null);
   }, [meta.stockCode, meta.currentPrice, meta.changePct]);
+
+  const fetchScoreTrend = useCallback(async () => {
+    if (!meta.stockCode) return;
+    try {
+      const res = await scoreTrendApi.getTrend(meta.stockCode, 10);
+      if (res?.trend) setScoreTrend(res.trend);
+    } catch {
+      // 静默失败，评分趋势非关键数据
+    }
+  }, [meta.stockCode]);
+
+  useEffect(() => {
+    fetchScoreTrend();
+  }, [fetchScoreTrend]);
 
   useEffect(() => {
     const isTrading = () => {
@@ -129,7 +147,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               </svg>
             </button>
           )}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <ScoreGauge score={summary.sentimentScore} size="xs" showLabel={false} />
             {meta.scoreChange != null && meta.scoreChange !== 0 && (
               <span className={`text-[11px] font-mono font-semibold ${meta.scoreChange > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
@@ -141,6 +159,39 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                 惯性{scoreMomentumAdj > 0 ? '+' : ''}{scoreMomentumAdj}
               </span>
             )}
+            {/* 评分趋势信号 */}
+            {scoreTrend && (() => {
+              const { consecutive_up: up, consecutive_down: dn, inflection, trend_direction: dir } = scoreTrend;
+              if (inflection) {
+                const isBull = inflection.includes('看多');
+                return (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${isBull ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/15 text-red-400 border border-red-500/20'}`}>
+                    {isBull ? '↗' : '↘'} {inflection}
+                  </span>
+                );
+              }
+              if (up >= 3) {
+                return (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/15">
+                    连升{up}日
+                  </span>
+                );
+              }
+              if (dn >= 3) {
+                return (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/15">
+                    连降{dn}日
+                  </span>
+                );
+              }
+              if (dir === 'improving' && up >= 2) {
+                return <span className="text-[10px] text-emerald-400/70 font-mono">↑↑</span>;
+              }
+              if (dir === 'declining' && dn >= 2) {
+                return <span className="text-[10px] text-red-400/70 font-mono">↓↓</span>;
+              }
+              return null;
+            })()}
           </div>
         </div>
       </div>

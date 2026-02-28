@@ -174,3 +174,26 @@ def get_stock_history(
                 "message": f"获取历史行情失败: {str(e)}"
             }
         )
+
+
+@router.get(
+    "/{stock_code}/score-trend",
+    summary="获取股票评分历史趋势",
+    description="获取指定股票的历史量化评分趋势（连续上升/下降天数、拐点信号）"
+)
+def get_score_trend(
+    stock_code: str,
+    days: int = Query(default=10, ge=3, le=30, description="回溯天数"),
+):
+    """获取股票评分趋势，含连续上升/下降天数、趋势方向和拐点信号"""
+    try:
+        from src.storage import DatabaseManager
+        db = DatabaseManager()
+        trend = db.get_score_trend(stock_code, days=days)
+        return {"stock_code": stock_code, "trend": trend}
+    except Exception as e:
+        logger.error(f"获取评分趋势失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "internal_error", "message": str(e)}
+        )
