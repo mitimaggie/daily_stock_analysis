@@ -200,7 +200,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
       {hasPositionInfo && costPrice != null && costPrice > 0 && (() => {
         const price = displayPrice ?? meta.currentPrice;
         const pnlPct = price && price > 0 ? ((price - costPrice) / costPrice * 100) : null;
-        const pnlAmt = price && positionAmount ? ((price - costPrice) * positionAmount) : null;
+        const pnlAmt = price && positionAmount && costPrice > 0 ? ((price - costPrice) / costPrice * positionAmount) : null;
         return (
           <div className="flex items-center gap-4 text-[12px] text-white/50">
             <span>成本 <span className="font-mono text-white/70">{costPrice.toFixed(2)}</span></span>

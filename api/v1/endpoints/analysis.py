@@ -195,12 +195,14 @@ def _handle_sync_analysis(
     
     try:
         service = AnalysisService()
+        position_info = request.position_info.model_dump() if request.position_info else None
         result = service.analyze_stock(
             stock_code=stock_code,
             report_type=request.report_type,
             force_refresh=request.force_refresh,
             query_id=query_id,
             send_notification=False,
+            position_info=position_info,
         )
 
         if result is None:

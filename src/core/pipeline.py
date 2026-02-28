@@ -240,7 +240,10 @@ class StockAnalysisPipeline:
         if not quote:
             logger.warning(f"[{code}] 无法获取实时行情，跳过")
             return None
-        stock_name = quote.name
+        import re as _re
+        _raw_name = (quote.name or '').strip()
+        _raw_name = _re.sub(r'\s*\(\d{6}\)\s*$', '', _raw_name)
+        stock_name = _re.sub(r'\s+', '', _raw_name).strip()
         
         try:
             cache_df = (prefetched or {}).get("df")
@@ -322,6 +325,7 @@ class StockAnalysisPipeline:
         tech_report = "数据不足，无法进行技术分析"
         tech_report_llm = "数据不足"
         trend_analysis_dict = {}
+        trend_result_obj = None
         if daily_df is not None and not daily_df.empty:
             try:
                 from src.stock_analyzer import StockTrendAnalyzer as _STA, MarketRegime
@@ -428,6 +432,7 @@ class StockAnalysisPipeline:
                 except NameError:
                     _market_snap = None
                 trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_val_snap, capital_flow=_capital_flow, sector_context=sector_context, chip_data=chip_data, fundamental_data=fundamental_data, quote_extra=_quote_extra, time_horizon=_time_horizon, market_snapshot=_market_snap)
+                trend_result_obj = trend_result
                 if quote.price:
                     trend_result.current_price = quote.price
                 # === P4-3: 资金面连续性检测（基于历史分析记录） ===
@@ -508,6 +513,7 @@ class StockAnalysisPipeline:
             'technical_analysis_report': tech_report,
             'technical_analysis_report_llm': tech_report_llm,
             'trend_analysis': trend_analysis_dict,
+            'trend_result': trend_result_obj,
             'fundamental': fundamental_data.to_dict(),
             'history_summary': history_summary,
             'sector_context': sector_context.to_dict() if isinstance(sector_context, SectorContext) else sector_context,
