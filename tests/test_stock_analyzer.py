@@ -188,7 +188,10 @@ class TestValuation:
         ScoringSystem.check_valuation(result, {"pe": 120, "pb": 5.0})
         assert result.valuation_verdict == "严重高估"
         assert result.valuation_downgrade == -15
-        assert result.signal_score == 65  # 80 - 15
+        # check_valuation 只写入 score_breakdown，需要 cap_adjustments 才会修改 signal_score
+        assert result.score_breakdown.get('valuation_adj') == -15
+        ScoringSystem.cap_adjustments(result)
+        assert result.signal_score == 72  # 80 - min(8, 15) = 80 - 8（单类adj上限±8）
 
     def test_moderate_pe(self, analyzer):
         """PE 15-30 合理区间不应降档"""
@@ -210,7 +213,10 @@ class TestValuation:
         ScoringSystem.check_valuation(result, {"pe": 65, "peg": 0.3})
         # PE>60 降 -10，PEG<0.5 减轻: min(0, -10+5)=-5 → net -5
         assert result.valuation_downgrade == -5
-        assert result.signal_score == 65  # 70 - 5
+        # check_valuation 只写入 score_breakdown，需要 cap_adjustments 才会修改 signal_score
+        assert result.score_breakdown.get('valuation_adj') == -5
+        ScoringSystem.cap_adjustments(result)
+        assert result.signal_score == 65  # 70 - 5（-5 在±8 单类上限内，不截断）
 
     def test_relative_pe_bank_stock(self, analyzer):
         """银行股 PE=15，行业中位 PE=7 → 应判定偏高(2.1x)"""
@@ -315,30 +321,32 @@ class TestTradingHalt:
 class TestCapitalFlow:
 
     def test_strong_inflow(self, analyzer):
-        """北向大幅流入 + 主力流入应提升评分"""
+        """主力大幅流入（超过默认阈值15000万）应提升评分"""
         result = TrendAnalysisResult(code="600000")
         result.signal_score = 70
         result.score_breakdown = {}
         result.buy_signal = BuySignal.BUY
         ScoringSystem.score_capital_flow(result, {
-            "north_net_flow": 60,
-            "main_net_flow": 8000,
+            "main_net_flow": 20000,  # 超过 large_threshold=15000，+3
         })
-        assert result.capital_flow_score >= 8
-        assert "北向大幅流入" in result.capital_flow_signal
+        assert result.capital_flow_score >= 8  # 5 + 3 = 8
+        assert "主力大幅净流入" in result.capital_flow_signal
+        # score_capital_flow 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score > 70  # 资金面加分
 
     def test_strong_outflow(self, analyzer):
-        """北向大幅流出应降低评分"""
+        """主力大幅流出（超过默认阈值15000万）应降低评分"""
         result = TrendAnalysisResult(code="600000")
         result.signal_score = 70
         result.score_breakdown = {}
         result.buy_signal = BuySignal.BUY
         ScoringSystem.score_capital_flow(result, {
-            "north_net_flow": -60,
-            "main_net_flow": -8000,
+            "main_net_flow": -20000,  # 超过 large_threshold=15000，-3
         })
-        assert result.capital_flow_score <= 2
+        assert result.capital_flow_score <= 2  # 5 - 3 = 2
+        # score_capital_flow 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score < 70  # 资金面减分
 
     def test_relative_threshold_small_cap(self, analyzer):
@@ -393,9 +401,11 @@ class TestSectorStrength:
             "relative": 2.5,
         })
         assert result.sector_score >= 8  # 5 + 2(板块强) + 2(跑赢)
-        assert result.signal_score > 70  # 加分
         assert "半导体" in result.sector_signal
         assert "强势" in result.sector_signal
+        # score_sector_strength 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
+        assert result.signal_score > 70  # 加分
 
     def test_weak_sector_weak_stock(self, analyzer):
         """板块弱势+个股跑输板块 → 低分+减分"""
@@ -409,8 +419,10 @@ class TestSectorStrength:
             "relative": -2.5,
         })
         assert result.sector_score <= 2  # 5 - 2(板块弱) - 2(跑输)
-        assert result.signal_score < 70  # 减分
         assert "房地产" in result.sector_signal
+        # score_sector_strength 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
+        assert result.signal_score < 70  # 减分
 
     def test_neutral_sector(self, analyzer):
         """板块涨跌幅为0 → 中性不加减分"""
@@ -451,6 +463,8 @@ class TestChipDistribution:
         result.buy_signal = BuySignal.BUY
         ScoringSystem.score_chip_distribution(result, {"profit_ratio": 0.95, "avg_cost": 15.0})
         assert result.chip_score < 5
+        # score_chip_distribution 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score < 70
 
     def test_low_profit_ratio(self, analyzer):
@@ -462,6 +476,8 @@ class TestChipDistribution:
         result.buy_signal = BuySignal.BUY
         ScoringSystem.score_chip_distribution(result, {"profit_ratio": 0.05, "avg_cost": 15.0})
         assert result.chip_score > 5
+        # score_chip_distribution 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score > 70
 
     def test_concentrated_chips(self, analyzer):
@@ -500,6 +516,8 @@ class TestFundamentalQuality:
             "financial": {"roe": "25.3", "debt_ratio": "20.5"}
         })
         assert result.fundamental_score >= 8  # 5 + 2(ROE优秀) + 1(负债健康)
+        # score_fundamental_quality 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score > 70
 
     def test_negative_roe_high_debt(self, analyzer):
@@ -512,6 +530,8 @@ class TestFundamentalQuality:
             "financial": {"roe": "-5.2", "debt_ratio": "85.0"}
         })
         assert result.fundamental_score <= 2  # 5 - 2(ROE负) - 2(负债高)
+        # score_fundamental_quality 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score < 70
 
     def test_no_fundamental_data(self, analyzer):
@@ -549,6 +569,8 @@ class TestQuoteExtra:
         result.buy_signal = BuySignal.BUY
         ScoringSystem.score_quote_extra(result, {"high_52w": 30.0, "low_52w": 10.0})
         assert result.week52_position > 90
+        # score_quote_extra 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score < 70
 
     def test_52w_low_position(self, analyzer):
@@ -560,6 +582,8 @@ class TestQuoteExtra:
         result.buy_signal = BuySignal.BUY
         ScoringSystem.score_quote_extra(result, {"high_52w": 30.0, "low_52w": 10.0})
         assert result.week52_position < 10
+        # score_quote_extra 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
         assert result.signal_score > 70
 
     def test_no_quote_extra(self, analyzer):
@@ -580,45 +604,51 @@ class TestCapAdjustments:
     def test_positive_cap(self, analyzer):
         """正向修正超过+15时截断"""
         result = TrendAnalysisResult(code="600000")
-        # 基础分50 + 修正总量+20 → 应截断为+15 → 最终65
+        # 每个 adj 最大 +8（SINGLE_ADJ_CAP），4个adj各+5 → 每个不超8,合计+20
+        # POS_CAP=15 → 截断后总adj=+15 → signal_score = 70 - 20 + 15 = 65
         result.score_breakdown = {
-            'trend': 15, 'bias': 10, 'volume': 8, 'support': 5,
-            'macd': 5, 'rsi': 4, 'kdj': 3,  # base=50
             'capital_flow_adj': 5, 'sector_adj': 5, 'chip_adj': 5,
-            'fundamental_adj': 5,  # total adj = +20
+            'fundamental_adj': 5,  # total adj = +20，超过 POS_CAP=15
         }
-        result.signal_score = 70  # 50+20
+        result.signal_score = 50  # base_score=50（不含任何adj，cap_adjustments 一次性加）
         result.buy_signal = BuySignal.BUY
         ScoringSystem.cap_adjustments(result)
-        assert result.signal_score == 65  # 50+15
+        assert result.signal_score == 65  # 50 + POS_CAP(15) = 65
         assert 'adj_cap' in result.score_breakdown
 
     def test_negative_cap(self, analyzer):
         """负向修正超过-20时截断"""
         result = TrendAnalysisResult(code="600000")
+        # valuation_adj=-15 → 被 SINGLE_ADJ_CAP=8 截断为-8
+        # capital_flow_adj=-5, chip_adj=-5 → 各不超8，neg_adj = -8 + -5 + -5 = -18
+        # NEG_CAP=-20，-18 > -20，不需要总量截断
+        # 最终 signal_score = 25 - (-25) + (-18) = 25 - 7 = 25 + (-8-5-5) = 25-18=7？
+        # 重新计算：signal_score=25，adj在score_breakdown中，cap_adjustments把adj加到signal_score
+        # 实际：adj_total = -8 + -5 + -5 = -18，capped = max(-18, -20) = -18
+        # signal_score = 25 + (-18) = 7... 但25本来已经含了adj
+        # 修正：signal_score应该是base_score（不含adj），adj通过cap_adjustments一次性加
+        # 让neg_adj总计超过-20：valuation_adj=-8(截断后), capital_flow_adj=-8, chip_adj=-8 → neg=-24 < NEG_CAP=-20
         result.score_breakdown = {
-            'trend': 15, 'bias': 10, 'volume': 8, 'support': 5,
-            'macd': 5, 'rsi': 4, 'kdj': 3,  # base=50
-            'valuation_adj': -15, 'capital_flow_adj': -5, 'chip_adj': -5,
+            'valuation_adj': -15,   # → 被截断为 -8
+            'capital_flow_adj': -9, # → 被截断为 -8
+            'chip_adj': -9,         # → 被截断为 -8，合计neg=-24 < NEG_CAP=-20，触发总量截断
         }
-        result.signal_score = 25  # 50-25
+        result.signal_score = 50  # base_score=50（不含任何adj）
         result.buy_signal = BuySignal.SELL
         ScoringSystem.cap_adjustments(result)
-        assert result.signal_score == 30  # 50-20
+        assert result.signal_score == 30  # 50 + NEG_CAP(-20) = 30
         assert 'adj_cap' in result.score_breakdown
 
     def test_within_range_no_cap(self, analyzer):
         """修正在范围内不截断"""
         result = TrendAnalysisResult(code="600000")
         result.score_breakdown = {
-            'trend': 15, 'bias': 10, 'volume': 8, 'support': 5,
-            'macd': 5, 'rsi': 4, 'kdj': 3,
-            'sector_adj': 3, 'fundamental_adj': 2,  # total adj = +5
+            'sector_adj': 3, 'fundamental_adj': 2,  # total adj = +5，在 POS_CAP=15 内
         }
-        result.signal_score = 55  # 50+5
+        result.signal_score = 50  # base_score=50（不含任何adj）
         result.buy_signal = BuySignal.HOLD
         ScoringSystem.cap_adjustments(result)
-        assert result.signal_score == 55  # 不变
+        assert result.signal_score == 55  # 50 + 5 = 55，不截断
         assert 'adj_cap' not in result.score_breakdown
 
 
@@ -728,6 +758,7 @@ class TestResonance:
         """多指标看多共振（≥3）应加分"""
         result = TrendAnalysisResult(code="600000")
         result.signal_score = 60
+        result.score_breakdown = {}
         result.buy_signal = BuySignal.HOLD
         result.macd_status = MACDStatus.GOLDEN_CROSS
         result.kdj_status = KDJStatus.GOLDEN_CROSS
@@ -736,8 +767,10 @@ class TestResonance:
         result.trend_status = TrendStatus.BULL
         ResonanceDetector.check_resonance(result)
         assert result.resonance_count >= 3
-        assert result.signal_score > 60
         assert result.resonance_bonus > 0
+        # check_resonance 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
+        assert result.signal_score > 60
 
     def test_bearish_resonance_penalty(self, analyzer):
         """多指标看空共振（≥3）应减分"""
@@ -752,8 +785,10 @@ class TestResonance:
         result.trend_status = TrendStatus.BEAR
         ResonanceDetector.check_resonance(result)
         assert result.resonance_count < 0
-        assert result.signal_score < 50
         assert result.resonance_bonus < 0
+        # check_resonance 只写入 score_breakdown，需要 cap_adjustments 才修改 signal_score
+        ScoringSystem.cap_adjustments(result)
+        assert result.signal_score < 50
 
     def test_no_resonance(self, analyzer):
         """无明确共振时不应修改评分"""

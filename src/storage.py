@@ -465,13 +465,20 @@ class DatabaseManager:
                     else:
                         try:
                             with session.begin_nested():
+                                ctx = query_context or {}
                                 record = NewsIntel(
                                     code=code, name=name, dimension=dimension, query=query, provider=response.provider,
                                     title=title, snippet=item.snippet, url=url_key, source=item.source,
                                     published_date=self._parse_published_date(item.published_date),
                                     fetched_at=datetime.now(),
-                                    query_id=(query_context or {}).get("query_id"),
-                                    query_source=(query_context or {}).get("query_source")
+                                    query_id=ctx.get("query_id"),
+                                    query_source=ctx.get("query_source"),
+                                    requester_platform=ctx.get("requester_platform"),
+                                    requester_user_id=ctx.get("requester_user_id"),
+                                    requester_user_name=ctx.get("requester_user_name"),
+                                    requester_chat_id=ctx.get("requester_chat_id"),
+                                    requester_message_id=ctx.get("requester_message_id"),
+                                    requester_query=ctx.get("requester_query"),
                                 )
                                 session.add(record)
                             saved_count += 1
@@ -632,8 +639,9 @@ class DatabaseManager:
             return 0
         try:
             with self._engine.begin() as conn:
+                # 步骤1：INSERT OR IGNORE 仅插入不存在的行（保留旧行的 id/created_at）
                 conn.execute(text("""
-                    INSERT OR REPLACE INTO stock_daily
+                    INSERT OR IGNORE INTO stock_daily
                         (code, date, open, high, low, close, volume, amount,
                          pct_chg, ma5, ma10, ma20, volume_ratio, data_source,
                          created_at, updated_at)
@@ -641,6 +649,15 @@ class DatabaseManager:
                         (:code, :date, :open, :high, :low, :close, :volume, :amount,
                          :pct_chg, :ma5, :ma10, :ma20, :volume_ratio, :data_source,
                          :created_at, :updated_at)
+                """), rows)
+                # 步骤2：UPDATE 覆盖已存在行的行情数据（不改动 id/created_at）
+                conn.execute(text("""
+                    UPDATE stock_daily SET
+                        open=:open, high=:high, low=:low, close=:close,
+                        volume=:volume, amount=:amount, pct_chg=:pct_chg,
+                        ma5=:ma5, ma10=:ma10, ma20=:ma20, volume_ratio=:volume_ratio,
+                        data_source=:data_source, updated_at=:updated_at
+                    WHERE code=:code AND date=:date
                 """), rows)
             saved_count = len(rows)
             logger.info(f"保存 {code} 数据成功，批量 upsert {saved_count} 条")
