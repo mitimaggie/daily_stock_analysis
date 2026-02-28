@@ -173,7 +173,7 @@ def get_history_detail(
             enhanced_context = context_snapshot.get("enhanced_context") or {}
             realtime = enhanced_context.get("realtime") or {}
             current_price = realtime.get("price")
-            change_pct = realtime.get("change_pct") or realtime.get("change_60d")
+            change_pct = realtime.get("change_pct")
             
             # 也尝试从 realtime_quote_raw 获取
             if current_price is None:
