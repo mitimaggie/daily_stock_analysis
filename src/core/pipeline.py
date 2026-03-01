@@ -1297,8 +1297,12 @@ class StockAnalysisPipeline:
         if len(results) >= 2:
             scores = sorted([r.sentiment_score for r in results], reverse=True)
             total = len(scores)
+            score_to_rank = {}
+            for i, s in enumerate(scores):
+                if s not in score_to_rank:
+                    score_to_rank[s] = i + 1
             for r in results:
-                rank_pos = scores.index(r.sentiment_score) + 1
+                rank_pos = score_to_rank.get(r.sentiment_score, total)
                 percentile = (1 - (rank_pos - 1) / total) * 100
                 r.score_percentile = round(percentile, 1)
                 r.score_rank = f"第{rank_pos}/{total}，前{percentile:.0f}%"

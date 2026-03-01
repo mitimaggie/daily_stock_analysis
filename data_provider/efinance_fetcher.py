@@ -640,8 +640,8 @@ class EfinanceFetcher(BaseFetcher):
         try:
             limiter = get_global_limiter()
             limiter.acquire('efinance', blocking=True, timeout=15.0)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug(f"[{stock_code}] 周线限流器获取失败: {_e}")
 
         try:
             end_dt = date.today()

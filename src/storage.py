@@ -1119,7 +1119,8 @@ class DatabaseManager:
             df['close'] = df['close'].astype(float)
             df['pct_chg'] = df['pct_chg'].astype(float)
             return df
-        except Exception:
+        except Exception as e:
+            logger.debug(f"读取指数K线失败 [{index_name}]: {e}")
             return pd.DataFrame()
 
     def get_index_returns(self, index_name: str = "上证指数", days: int = 120) -> pd.Series:
@@ -1135,7 +1136,8 @@ class DatabaseManager:
                 return pd.Series(dtype=float)
             df = df.sort_values('date').reset_index(drop=True)
             return df['pct_chg'].astype(float) / 100  # 百分比 -> 小数
-        except Exception:
+        except Exception as e:
+            logger.debug(f"读取指数收益率失败 [{index_name}]: {e}")
             return pd.Series(dtype=float)
 
     @staticmethod

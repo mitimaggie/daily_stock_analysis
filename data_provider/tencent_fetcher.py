@@ -171,6 +171,6 @@ class TencentFetcher(BaseFetcher):
             parts = text.split('~')
             if len(parts) >= 2:
                 return parts[1].strip()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[{stock_code}] 腾讯获取股票名失败: {e}")
         return None

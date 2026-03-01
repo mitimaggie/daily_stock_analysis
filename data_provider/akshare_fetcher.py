@@ -412,8 +412,8 @@ class AkshareFetcher(BaseFetcher):
                         "ON CONFLICT(cache_type, cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at"
                     ), {'k': stock_code, 'v': _payload})
                     _s.commit()
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug(f"[{stock_code}] 资金流向落DB缓存失败: {_e}")
             # 内存缓存：盘中3分钟，盘后10分钟
             _intraday = self._is_market_open()
             ttl = 180 if _intraday else self._CAPITAL_FLOW_TTL
