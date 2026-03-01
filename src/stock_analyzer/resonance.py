@@ -244,7 +244,7 @@ class ResonanceDetector:
         
         if (result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL] and
             len(recent_5) >= 5):
-            up_days = sum(1 for i in range(len(recent_5)) if recent_5.iloc[i]['close'] > recent_5.iloc[i]['open'])
+            up_days = int((recent_5['close'] > recent_5['open']).sum())
             avg_vol_ratio = recent_5['volume'].mean() / df['volume'].tail(20).mean() if len(df) >= 20 else 1.0
             if up_days >= 4 and avg_vol_ratio > 1.3:
                 behavior_signals.append("🚀 拉升阶段：持续放量上涨+均线多头，跟着主力吃肉")

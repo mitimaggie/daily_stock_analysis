@@ -289,13 +289,14 @@ class RiskManager:
         tail = df.tail(30)
         
         if len(tail) >= 5:
-            for i in range(2, len(tail) - 2):
-                h = float(tail.iloc[i]['high'])
-                l = float(tail.iloc[i]['low'])
-                prev_h = float(tail.iloc[i-1]['high'])
-                prev_l = float(tail.iloc[i-1]['low'])
-                next_h = float(tail.iloc[i+1]['high'])
-                next_l = float(tail.iloc[i+1]['low'])
+            tail_records = tail[['high', 'low']].to_dict('records')
+            for i in range(2, len(tail_records) - 2):
+                h = float(tail_records[i]['high'])
+                l = float(tail_records[i]['low'])
+                prev_h = float(tail_records[i-1]['high'])
+                prev_l = float(tail_records[i-1]['low'])
+                next_h = float(tail_records[i+1]['high'])
+                next_l = float(tail_records[i+1]['low'])
                 
                 if h > prev_h and h > next_h:
                     resistance_set.add(h)
@@ -535,20 +536,21 @@ class RiskManager:
         
         # --- 连续放量/缩量趋势 ---
         if len(df) >= 5:
+            vols = df['volume'].values
             # 分别检测连续放量和连续缩量
             consecutive_up = 0
-            for i in range(-1, -4, -1):
-                v = float(df.iloc[i]['volume'])
-                v_prev = float(df.iloc[i-1]['volume'])
+            for i in range(len(vols) - 1, len(vols) - 4, -1):
+                v = float(vols[i])
+                v_prev = float(vols[i-1])
                 if v > v_prev * 1.1:
                     consecutive_up += 1
                 else:
                     break
             
             consecutive_down = 0
-            for i in range(-1, -4, -1):
-                v = float(df.iloc[i]['volume'])
-                v_prev = float(df.iloc[i-1]['volume'])
+            for i in range(len(vols) - 1, len(vols) - 4, -1):
+                v = float(vols[i])
+                v_prev = float(vols[i-1])
                 if v < v_prev * 0.9:
                     consecutive_down += 1
                 else:
@@ -1263,14 +1265,18 @@ class RiskManager:
                 tr_list.append(tr)
             if len(tr_list) < atr_period:
                 return result
-            atr = float(sum(tr_list[-atr_period:]) / atr_period)
+            # Wilder平滑（与indicators.py _calc_atr保持一致）
+            atr = tr_list[0]
+            for tr_val in tr_list[1:]:
+                atr = (atr * (atr_period - 1) + tr_val) / atr_period
+            atr = float(atr)
         except Exception:
             return result
 
         result['atr'] = round(atr, 4)
 
         # 更新最高价
-        new_highest = max(current_price, prev_highest or cost_price, current_price)
+        new_highest = max(current_price, prev_highest or cost_price)
         result['highest_price'] = round(new_highest, 2)
 
         # 计算新止损候选（基于最高价）

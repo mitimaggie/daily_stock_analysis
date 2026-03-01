@@ -218,7 +218,7 @@ def get_pe_history(code: str, period: str = '近一年') -> Optional[list]:
         if df is None or df.empty:
             return None
         
-        pe_values = [float(v) for v in df['value'].dropna().tolist() if float(v) > 0]
+        pe_values = [fv for fv in (float(v) for v in df['value'].dropna().tolist()) if fv > 0]
         if len(pe_values) < 20:
             return None
         
@@ -262,8 +262,8 @@ def _get_margin_batch(date_str: str, is_sh: bool) -> Optional[pd.DataFrame]:
         if df is not None and not df.empty:
             _margin_batch_cache[key] = (time.time(), df)
             return df
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[{key}] 批量融资余额获取失败: {e}")
     return None
 
 

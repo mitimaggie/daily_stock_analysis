@@ -69,7 +69,8 @@ class TechnicalIndicators:
         """计算 KDJ"""
         low_min = df['low'].rolling(window=9).min()
         high_max = df['high'].rolling(window=9).max()
-        rsv = (df['close'] - low_min) / (high_max - low_min) * 100
+        denom = (high_max - low_min).replace(0, np.nan)
+        rsv = ((df['close'] - low_min) / denom * 100).fillna(50)
         df['K'] = rsv.ewm(com=2, adjust=False).mean()
         df['D'] = df['K'].ewm(com=2, adjust=False).mean()
         df['J'] = 3 * df['K'] - 2 * df['D']
