@@ -101,7 +101,9 @@ class TechnicalIndicators:
             avg_loss = loss_s.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
             rs = avg_gain / avg_loss.replace(0, np.nan)
             rsi = 100 - (100 / (1 + rs))
-            df[f'RSI_{period}'] = rsi.fillna(50)
+            # avg_loss==0 时 RS 为 NaN，此时全为涨，RSI 应为 100；其他 NaN（初始预热期）填 50
+            rsi = rsi.where(avg_loss != 0, 100.0).fillna(50)
+            df[f'RSI_{period}'] = rsi
         df['RSI'] = df[f'RSI_{TechnicalIndicators.RSI_MID}']
         return df
     
