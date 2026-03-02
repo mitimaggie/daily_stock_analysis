@@ -1592,26 +1592,8 @@ class ScoringSystem:
             except Exception:
                 pass
 
-            # 优先级 2: efinance 接口直接拉周线（klt=102），仅在 DB 数据不足时使用，带超时保护
-            if weekly is None or len(weekly) < 22:
-                _wdf_result = [None]
-                def _fetch_weekly():
-                    try:
-                        from data_provider.efinance_fetcher import EfinanceFetcher
-                        wdf = EfinanceFetcher.get_weekly_history(result.code, years=3)
-                        if wdf is not None and len(wdf) >= 22:
-                            _wdf_result[0] = wdf.set_index('date')
-                    except Exception:
-                        pass
-                import threading as _th
-                _t = _th.Thread(target=_fetch_weekly, daemon=True)
-                _t.start()
-                _t.join(timeout=3)
-                if _wdf_result[0] is not None:
-                    weekly = _wdf_result[0]
-
-            # 优先级 3: 传入 df 重采样（最短，仅兜底）
-            if weekly is None:
+            # 优先级 2: 传入 df 重采样（兜底，数据不足时用现有数据）
+            if weekly is None or len(weekly) < 10:
                 if df is None or len(df) < 60:
                     return
                 w = df.copy()
@@ -1625,14 +1607,14 @@ class ScoringSystem:
                     'close': 'last', 'volume': 'sum'
                 }).dropna()
 
-            if len(weekly) < 22:
+            if len(weekly) < 10:
                 return
 
             c = weekly['close']
-            # 周线均线
-            wma5 = float(c.rolling(5).mean().iloc[-1]) if len(c) >= 5 else 0
-            wma10 = float(c.rolling(10).mean().iloc[-1]) if len(c) >= 10 else 0
-            wma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else 0
+            # 周线均线（数据不足时降级使用可用的最高阶MA）
+            wma5 = float(c.rolling(5).mean().iloc[-1]) if len(c) >= 5 else float(c.iloc[-1])
+            wma10 = float(c.rolling(10).mean().iloc[-1]) if len(c) >= 10 else wma5
+            wma20 = float(c.rolling(20).mean().iloc[-1]) if len(c) >= 20 else wma10
 
             # 周线RSI(14)
             delta = c.diff()

@@ -123,7 +123,10 @@ def _fetch_intraday_efinance(code: str, period: str = "5", days: int = 1) -> Opt
         days: 获取天数
     """
     try:
-        import efinance as ef
+        # efinance 分钟线已禁用：import efinance 会在后台触发全量 817 支股票下载，耗时数分钟
+        # 使用 akshare 替代（_fetch_intraday_akshare）
+        return None
+        import efinance as ef  # noqa: unreachable
         
         # efinance 的 klt 参数: 1=1min, 5=5min, 15=15min, 30=30min, 60=60min
         klt = int(period)

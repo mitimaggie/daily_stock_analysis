@@ -577,6 +577,8 @@ class EfinanceFetcher(BaseFetcher):
             所属板块 DataFrame，获取失败返回 None
         """
         import efinance as ef
+        import threading as _th
+        import time as _time
         
         try:
             # 防封禁策略
@@ -584,10 +586,12 @@ class EfinanceFetcher(BaseFetcher):
             self._enforce_rate_limit()
             
             logger.info(f"[API调用] ef.stock.get_belong_board(stock_code={stock_code}) 获取所属板块...")
-            import time as _time
             api_start = _time.time()
             
-            df = ef.stock.get_belong_board(stock_code)
+            # efinance get_belong_board 会触发全量 817 支股票数据下载（耗时 30-60s），
+            # 且不提供 sector_pct（涨跌幅），已无实用价值，直接禁用。
+            df = None
+            logger.debug(f"[{stock_code}] get_belong_board 已禁用（触发全量下载），走 DB Fallback")
             
             api_elapsed = _time.time() - api_start
             
@@ -595,7 +599,7 @@ class EfinanceFetcher(BaseFetcher):
                 logger.info(f"[API返回] ef.stock.get_belong_board 成功: 返回 {len(df)} 个板块, 耗时 {api_elapsed:.2f}s")
                 return df
             else:
-                logger.warning(f"[API返回] 未获取到 {stock_code} 的板块信息")
+                logger.warning(f"[API返回] 未获取到 {stock_code} 的板块信息 (耗时 {api_elapsed:.2f}s)")
                 return None
                 
         except Exception as e:

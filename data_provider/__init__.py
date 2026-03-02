@@ -20,16 +20,15 @@
 """
 
 from .base import BaseFetcher, DataFetcherManager
-from .efinance_fetcher import EfinanceFetcher
 from .akshare_fetcher import AkshareFetcher
 from .pytdx_fetcher import PytdxFetcher
 from .baostock_fetcher import BaostockFetcher
 from .yfinance_fetcher import YfinanceFetcher
+# EfinanceFetcher 已移除：import efinance 会在后台触发全量 817 支股票下载，严重拖慢分析速度
 
 __all__ = [
     'BaseFetcher',
     'DataFetcherManager',
-    'EfinanceFetcher',
     'AkshareFetcher',
     'PytdxFetcher',
     'BaostockFetcher',

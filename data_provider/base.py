@@ -132,15 +132,16 @@ class DataFetcherManager:
         self._init_default_fetchers()
     
     def _init_default_fetchers(self) -> None:
-        from .efinance_fetcher import EfinanceFetcher
         from .akshare_fetcher import AkshareFetcher
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
         from .tencent_fetcher import TencentFetcher
         
+        # 注意：EfinanceFetcher 已被移除。
+        # 原因：import efinance 会在后台触发全量 817 支股票数据下载，耗时数分钟，
+        # 严重阻塞分析任务。akshare/baostock/tencent 可以替代其所有核心功能。
         akshare = AkshareFetcher()
-        efinance = EfinanceFetcher()
         baostock = BaostockFetcher()
         tencent = TencentFetcher()
         yfinance = YfinanceFetcher()
@@ -148,12 +149,11 @@ class DataFetcherManager:
         
         baostock.priority = 0   # 首选：稳定、免费、不反爬、速度快
         akshare.priority = 1    # 备用：功能全，但批量易限流
-        tencent.priority = 2    # 备用：腾讯K线，替代被封的 efinance K线
-        efinance.priority = 3   # 备用：push2his/kline 被封，资金流接口仍可用
+        tencent.priority = 2    # 备用：腾讯K线
         yfinance.priority = 4   # 备用：美股首选，A股延迟
         pytdx.priority = 5      # 备用：需要TCP连接
 
-        self._fetchers = [akshare, efinance, baostock, tencent, yfinance, pytdx]
+        self._fetchers = [akshare, baostock, tencent, yfinance, pytdx]
         self._fetchers.sort(key=lambda f: f.priority)
         
         logger.debug(f"🚀 数据源加载顺序: {', '.join([f.name for f in self._fetchers])}")
@@ -551,12 +551,12 @@ class DataFetcherManager:
                                  relative=round(stock_pct_chg - result.sector_pct, 2))
             return result
 
-        # 优先用 EfinanceFetcher（唯一稳定返回板块涨幅的数据源）
-        _ordered_fetchers = sorted(
-            self._fetchers,
-            key=lambda f: 0 if f.name == 'EfinanceFetcher' else 1
-        )
-        for f in _ordered_fetchers:
+        # 注意：EfinanceFetcher.get_belong_board 会触发全量 817 支股票数据下载（耗时 30-60s），
+        # 且返回的板块数据不包含今日涨跌幅（sector_pct=None），调用价值极低，直接跳过。
+        # 仅尝试非 efinance 的其他 fetcher（如 akshare 等），若无可用数据则走 DB Fallback。
+        for f in self._fetchers:
+            if getattr(f, 'name', '') == 'EfinanceFetcher':
+                continue
             try:
                 if not hasattr(f, 'get_stock_belong_board') and not hasattr(f, 'get_belong_board'):
                     continue

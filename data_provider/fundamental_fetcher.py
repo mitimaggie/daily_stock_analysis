@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 # === 全局请求限流器（所有 akshare 调用共享） ===
 _request_lock = threading.Lock()
 _request_timestamps: list = []  # 记录最近请求时间戳
-_MAX_REQUESTS_PER_MINUTE = 12   # 每分钟最多 12 次请求（保守）
-_MIN_INTERVAL = 3.0             # 最小请求间隔（秒）
+_MAX_REQUESTS_PER_MINUTE = 20   # 每分钟最多 20 次请求
+_MIN_INTERVAL = 1.0             # 最小请求间隔（秒）
 
 def _rate_limited_sleep():
     """全局限流：确保不超过每分钟 N 次请求，每次至少间隔 M 秒"""

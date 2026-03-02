@@ -464,14 +464,6 @@ class StockAnalysisPipeline:
                     logger.debug(f"[{code}] 资金面连续性检测跳过: {e}")
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
                 tech_report_llm = self.trend_analyzer.format_for_llm(trend_result)
-                # 用持仓成本价重新生成盘中关键价位（持仓时展示成本线/加仓点，未持仓展示建仓点）
-                _cost_price_pi = float(position_info.get('cost_price', 0) or 0) if position_info else 0.0
-                if _cost_price_pi > 0:
-                    try:
-                        from src.stock_analyzer.risk_management import RiskManager as _RM
-                        _RM.generate_intraday_watchlist(trend_result, daily_df, cost_price=_cost_price_pi)
-                    except Exception as _e:
-                        logger.debug(f"[{code}] 持仓盘中价位重生成失败: {_e}")
                 trend_analysis_dict = trend_result.to_dict()
                 trend_analysis_dict['market_regime'] = regime.value
                 # 从量化结果回填板块数据（量化分析可能丰富了板块信息）
@@ -522,6 +514,7 @@ class StockAnalysisPipeline:
             'technical_analysis_report_llm': tech_report_llm,
             'trend_analysis': trend_analysis_dict,
             'trend_result': trend_result_obj,
+            'daily_df': daily_df,
             'fundamental': fundamental_data.to_dict(),
             'history_summary': history_summary,
             'sector_context': sector_context.to_dict() if isinstance(sector_context, SectorContext) else sector_context,
@@ -875,6 +868,16 @@ class StockAnalysisPipeline:
                 _trend_result_obj = context.get('trend_result')
                 if _trend_result_obj is not None:
                     _RM.generate_trade_advice(_trend_result_obj, position_info=position_info)
+                    # 用持仓成本重新生成盘中关键价位（持仓时显示成本线/加仓点）
+                    _cp_pi = float(position_info.get('cost_price', 0) or 0) if position_info else 0.0
+                    if _cp_pi > 0:
+                        try:
+                            _daily_df_ctx = context.get('daily_df')
+                            if _daily_df_ctx is not None:
+                                _RM.generate_intraday_watchlist(_trend_result_obj, _daily_df_ctx, cost_price=_cp_pi)
+                                trend['intraday_watchlist'] = _trend_result_obj.intraday_watchlist
+                        except Exception as _e:
+                            logger.debug(f"[{code}] 持仓盘中价位重生成失败: {_e}")
                     dashboard['trade_advice'] = {
                         'scenario_id':        _trend_result_obj.scenario_id,
                         'scenario_label':     _trend_result_obj.scenario_label,
