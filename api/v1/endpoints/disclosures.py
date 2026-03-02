@@ -65,4 +65,4 @@ async def get_disclosures(
 
     except Exception as e:
         logger.warning(f"[{stock_code}] 获取公告失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取公告失败: {str(e)}")
+        return DisclosureResponse(stock_code=stock_code, items=[], total=0)

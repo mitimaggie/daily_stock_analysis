@@ -535,7 +535,9 @@ class DataFetcherManager:
         return None
 
     _sector_context_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
+    _sector_industry_cache: Dict[str, Any] = {}  # {industry: {'codes': [...], 'ts': ...}}
     _SECTOR_CONTEXT_TTL = 3600  # 1小时（板块归属不会频繁变化）
+    _SECTOR_INDUSTRY_TTL = 3600  # 行业成员列表1小时缓存
     def get_stock_sector_context(self, stock_code: str, stock_pct_chg: Optional[float] = None) -> Optional[SectorContext]:
         """获取个股所属板块及相对强弱（板块今日涨跌 vs 个股涨跌）"""
         # 检查缓存
@@ -621,10 +623,39 @@ class DataFetcherManager:
                         _industry = _d.get('industry', '') or _industry
                     if _industry:
                         # 2. 查同行业其他股票最近一日涨跌幅均值作为板块代理
-                        _peers = _s.execute(_text(
-                            "SELECT cache_key FROM data_cache WHERE cache_type='industry_pe' AND data_json LIKE :pat"
-                        ), {"pat": f'%"industry": "{_industry}"%'}).fetchall()
-                        _peer_codes = [r[0] for r in _peers if r[0] != stock_code]
+                        # 优先用内存缓存，避免每次 LIKE 全表扫描
+                        _cached_industry = self._sector_industry_cache.get(_industry)
+                        if _cached_industry and time.time() - _cached_industry['ts'] < self._SECTOR_INDUSTRY_TTL:
+                            _peer_codes = [c for c in _cached_industry['codes'] if c != stock_code]
+                        else:
+                            # 一次性加载所有 industry_pe 行并按行业分组（仅首次扫描）
+                            _sentinel = '__all_loaded__'
+                            _all_cached = self._sector_industry_cache.get(_sentinel)
+                            if not _all_cached or time.time() - _all_cached['ts'] >= self._SECTOR_INDUSTRY_TTL:
+                                import json as _json2
+                                _all_rows = _s.execute(_text(
+                                    "SELECT cache_key, data_json FROM data_cache WHERE cache_type='industry_pe'"
+                                )).fetchall()
+                                _industry_map: Dict[str, list] = {}
+                                for _ck, _dj in _all_rows:
+                                    try:
+                                        _ind = _json2.loads(_dj).get('industry', '')
+                                        if _ind:
+                                            _industry_map.setdefault(_ind, []).append(_ck)
+                                    except Exception:
+                                        pass
+                                _ts_now = time.time()
+                                for _ind, _codes in _industry_map.items():
+                                    if _ind not in self._sector_industry_cache or time.time() - self._sector_industry_cache[_ind]['ts'] >= self._SECTOR_INDUSTRY_TTL:
+                                        self._sector_industry_cache[_ind] = {'codes': _codes, 'ts': _ts_now}
+                                self._sector_industry_cache[_sentinel] = {'ts': _ts_now}
+                            _cached_industry = self._sector_industry_cache.get(_industry)
+                            _peer_codes = [c for c in (_cached_industry['codes'] if _cached_industry else []) if c != stock_code]
+                            if _cached_industry:
+                                pass  # already cached
+                            else:
+                                self._sector_industry_cache[_industry] = {'codes': [], 'ts': time.time()}
+                            _peer_codes = [c for c in self._sector_industry_cache.get(_industry, {}).get('codes', []) if c != stock_code]
                         _sector_pct = None
                         _sector_5d_pct = None
                         if _peer_codes:

@@ -464,6 +464,14 @@ class StockAnalysisPipeline:
                     logger.debug(f"[{code}] 资金面连续性检测跳过: {e}")
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
                 tech_report_llm = self.trend_analyzer.format_for_llm(trend_result)
+                # 用持仓成本价重新生成盘中关键价位（持仓时展示成本线/加仓点，未持仓展示建仓点）
+                _cost_price_pi = float(position_info.get('cost_price', 0) or 0) if position_info else 0.0
+                if _cost_price_pi > 0:
+                    try:
+                        from src.stock_analyzer.risk_management import RiskManager as _RM
+                        _RM.generate_intraday_watchlist(trend_result, daily_df, cost_price=_cost_price_pi)
+                    except Exception as _e:
+                        logger.debug(f"[{code}] 持仓盘中价位重生成失败: {_e}")
                 trend_analysis_dict = trend_result.to_dict()
                 trend_analysis_dict['market_regime'] = regime.value
                 # 从量化结果回填板块数据（量化分析可能丰富了板块信息）

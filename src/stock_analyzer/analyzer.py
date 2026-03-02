@@ -405,9 +405,19 @@ class StockTrendAnalyzer:
             ScoringSystem.detect_sequential_behavior(result, df)
             ScoringSystem.score_multi_signal_resonance(result, df)
             ScoringSystem.forecast_next_days(result, df)
-            ScoringSystem.score_capital_flow_history(result, code)
-            ScoringSystem.score_lhb_sentiment(result, code)
-            ScoringSystem.score_dzjy_and_holder(result, code)
+            # 三个外部数据评分并行执行，共享超时窗口
+            import threading as _th_score
+            import time as _t_score
+            _score_threads = [
+                _th_score.Thread(target=ScoringSystem.score_capital_flow_history, args=(result, code), daemon=True),
+                _th_score.Thread(target=ScoringSystem.score_lhb_sentiment, args=(result, code), daemon=True),
+                _th_score.Thread(target=ScoringSystem.score_dzjy_and_holder, args=(result, code), daemon=True),
+            ]
+            for _t in _score_threads:
+                _t.start()
+            _deadline_score = _t_score.time() + 6
+            for _t in _score_threads:
+                _t.join(timeout=max(0, _deadline_score - _t_score.time()))
             ScoringSystem.score_vwap_trend(result)
             ScoringSystem.score_intraday_volume_signal(result)
             ResonanceDetector.check_resonance(result)

@@ -732,65 +732,69 @@ class ScoringSystem:
         - 上榜但机构净买额接近零：博弈激烈，中性（0）
         - 未上榜：不处理
         """
-        try:
-            import akshare as ak
-            import time
-            import random
+        import threading
+        import logging
+        _logger = logging.getLogger(__name__)
 
-            # 使用项目内全局限流器
+        def _fetch():
             try:
-                from data_provider.rate_limiter import get_global_limiter
-                limiter = get_global_limiter()
-                limiter.acquire('akshare', blocking=True, timeout=8.0)
-            except Exception:
-                time.sleep(random.uniform(0.5, 1.5))
+                import akshare as ak
+                import time as _t
+                import random
 
-            df_lhb = ak.stock_lhb_stock_statistic_em(symbol='近一月')
-            if df_lhb is None or df_lhb.empty:
-                return
+                try:
+                    from data_provider.rate_limiter import get_global_limiter
+                    limiter = get_global_limiter()
+                    limiter.acquire('akshare', blocking=True, timeout=3.0)
+                except Exception:
+                    _t.sleep(random.uniform(0.3, 0.8))
 
-            # 查找个股
-            row = df_lhb[df_lhb['代码'] == stock_code]
-            if row.empty:
-                return  # 近一月未上榜，不处理
+                df_lhb = ak.stock_lhb_stock_statistic_em(symbol='近一月')
+                if df_lhb is None or df_lhb.empty:
+                    return
 
-            row = row.iloc[0]
-            lhb_net = float(row.get('龙虎榜净买额', 0) or 0)
-            inst_net = float(row.get('机构买入净额', 0) or 0)
-            times = int(row.get('上榜次数', 0) or 0)
+                row = df_lhb[df_lhb['代码'] == stock_code]
+                if row.empty:
+                    return
 
-            result.lhb_net_buy = round(lhb_net, 2)
-            result.lhb_institution_net = round(inst_net, 2)
-            result.lhb_times = times
+                row = row.iloc[0]
+                lhb_net = float(row.get('龙虎榜净买额', 0) or 0)
+                inst_net = float(row.get('机构买入净额', 0) or 0)
+                times = int(row.get('上榜次数', 0) or 0)
 
-            # 评分逻辑
-            p5c_adj = 0
-            # 机构净买额判断（元 → 万元）
-            inst_net_wan = inst_net / 10000
-            lhb_net_wan = lhb_net / 10000
+                result.lhb_net_buy = round(lhb_net, 2)
+                result.lhb_institution_net = round(inst_net, 2)
+                result.lhb_times = times
 
-            if inst_net_wan > 5000:  # 机构净买超5000万
-                p5c_adj += 3
-                result.lhb_signal = "机构持续买入"
-            elif inst_net_wan > 1000:  # 机构净买超1000万
-                p5c_adj += 2
-                result.lhb_signal = "机构净买入"
-            elif inst_net_wan < -5000:  # 机构净卖超5000万
-                p5c_adj -= 3
-                result.lhb_signal = "机构持续卖出"
-            elif inst_net_wan < -1000:  # 机构净卖超1000万
-                p5c_adj -= 2
-                result.lhb_signal = "机构净卖出"
-            elif times >= 3:
-                result.lhb_signal = "龙虎榜活跃"  # 频繁上榜但机构不明显
+                p5c_adj = 0
+                inst_net_wan = inst_net / 10000
 
-            p5c_adj = max(-3, min(3, p5c_adj))
-            if p5c_adj != 0:
-                result.score_breakdown['p5c_lhb'] = p5c_adj
+                if inst_net_wan > 5000:
+                    p5c_adj += 3
+                    result.lhb_signal = "机构持续买入"
+                elif inst_net_wan > 1000:
+                    p5c_adj += 2
+                    result.lhb_signal = "机构净买入"
+                elif inst_net_wan < -5000:
+                    p5c_adj -= 3
+                    result.lhb_signal = "机构持续卖出"
+                elif inst_net_wan < -1000:
+                    p5c_adj -= 2
+                    result.lhb_signal = "机构净卖出"
+                elif times >= 3:
+                    result.lhb_signal = "龙虎榜活跃"
 
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
+                p5c_adj = max(-3, min(3, p5c_adj))
+                if p5c_adj != 0:
+                    result.score_breakdown['p5c_lhb'] = p5c_adj
+            except Exception as e:
+                _logger.debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=5)
+        if t.is_alive():
+            _logger.debug(f"[P5-C] {stock_code} 龙虎榜情绪分析超时，已跳过")
 
     @staticmethod
     def score_dzjy_and_holder(result: TrendAnalysisResult, stock_code: str):
@@ -836,13 +840,7 @@ class ScoringSystem:
             except Exception as e:
                 logger.debug(f"[P5-C] {stock_code} 大宗交易查询失败: {e}")
 
-        t_dz = threading.Thread(target=_fetch_dzjy, daemon=True)
-        t_dz.start()
-        t_dz.join(timeout=5)
-        if t_dz.is_alive():
-            logger.debug(f"[P5-C] {stock_code} 大宗交易查询超时，已跳过")
-
-        # ---- 股东人数变化率（线程+超时5秒）----
+        # ---- 股东人数变化率 ----
         def _fetch_holder():
             try:
                 import akshare as ak
@@ -874,9 +872,17 @@ class ScoringSystem:
             except Exception as e:
                 logger.debug(f"[P5-C] {stock_code} 股东人数查询失败: {e}")
 
+        # 两个线程并行启动，共享5秒超时窗口（原串行10s→并行5s）
+        import time as _time
+        t_dz = threading.Thread(target=_fetch_dzjy, daemon=True)
         t_holder = threading.Thread(target=_fetch_holder, daemon=True)
+        t_dz.start()
         t_holder.start()
-        t_holder.join(timeout=5)
+        _deadline = _time.time() + 5
+        t_dz.join(timeout=max(0, _deadline - _time.time()))
+        t_holder.join(timeout=max(0, _deadline - _time.time()))
+        if t_dz.is_alive():
+            logger.debug(f"[P5-C] {stock_code} 大宗交易查询超时，已跳过")
         if t_holder.is_alive():
             logger.debug(f"[P5-C] {stock_code} 股东人数查询超时，已跳过")
 
@@ -1568,34 +1574,41 @@ class ScoringSystem:
         - 周线震荡：中性
         """
         try:
-            # 优先级 1: efinance 接口直接拉周线（klt=102，最准确，约150根）
+            # 优先级 1: DB 长历史重采样（500天日线 → 周线），速度快，优先用
             weekly = None
             try:
-                from data_provider.efinance_fetcher import EfinanceFetcher
-                wdf = EfinanceFetcher.get_weekly_history(result.code, years=3)
-                if wdf is not None and len(wdf) >= 22:
-                    wdf = wdf.set_index('date')
-                    weekly = wdf
+                from src.storage import DatabaseManager
+                db = DatabaseManager.get_instance()
+                long_df = db.get_stock_history_df(result.code, days=500)
+                if long_df is not None and len(long_df) >= 100:
+                    w = long_df.copy()
+                    if 'date' in w.columns:
+                        w['date'] = pd.to_datetime(w['date'])
+                        w = w.set_index('date')
+                    weekly = w.resample('W').agg({
+                        'open': 'first', 'high': 'max', 'low': 'min',
+                        'close': 'last', 'volume': 'sum'
+                    }).dropna()
             except Exception:
                 pass
 
-            # 优先级 2: DB 长历史重采样（500天日线 → 周线）
-            if weekly is None:
-                try:
-                    from src.storage import DatabaseManager
-                    db = DatabaseManager.get_instance()
-                    long_df = db.get_stock_history_df(result.code, days=500)
-                    if long_df is not None and len(long_df) >= 100:
-                        w = long_df.copy()
-                        if 'date' in w.columns:
-                            w['date'] = pd.to_datetime(w['date'])
-                            w = w.set_index('date')
-                        weekly = w.resample('W').agg({
-                            'open': 'first', 'high': 'max', 'low': 'min',
-                            'close': 'last', 'volume': 'sum'
-                        }).dropna()
-                except Exception:
-                    pass
+            # 优先级 2: efinance 接口直接拉周线（klt=102），仅在 DB 数据不足时使用，带超时保护
+            if weekly is None or len(weekly) < 22:
+                _wdf_result = [None]
+                def _fetch_weekly():
+                    try:
+                        from data_provider.efinance_fetcher import EfinanceFetcher
+                        wdf = EfinanceFetcher.get_weekly_history(result.code, years=3)
+                        if wdf is not None and len(wdf) >= 22:
+                            _wdf_result[0] = wdf.set_index('date')
+                    except Exception:
+                        pass
+                import threading as _th
+                _t = _th.Thread(target=_fetch_weekly, daemon=True)
+                _t.start()
+                _t.join(timeout=3)
+                if _wdf_result[0] is not None:
+                    weekly = _wdf_result[0]
 
             # 优先级 3: 传入 df 重采样（最短，仅兜底）
             if weekly is None:

@@ -562,7 +562,7 @@ class RiskManager:
                 result.volume_trend_3d = "连续缩量"
 
     @staticmethod
-    def generate_intraday_watchlist(result: TrendAnalysisResult, df: pd.DataFrame):
+    def generate_intraday_watchlist(result: TrendAnalysisResult, df: pd.DataFrame, cost_price: float = 0.0):
         """
         P1 盘中关键价位提醒：生成今日盘中应关注的价位清单
         
@@ -570,38 +570,73 @@ class RiskManager:
         - 突破XX价位 → 加仓信号
         - 跌破XX价位 → 止损信号  
         - 回踩XX价位 → 买入机会
+        
+        Args:
+            cost_price: 用户持仓成本价，>0 时启用持仓模式（加仓/减仓描述）
         """
         watchlist = []
         price = result.current_price
+        has_position = cost_price > 0 and price > 0
         if price <= 0:
             result.intraday_watchlist = watchlist
             return
+
+        pnl_pct: Optional[float] = None
+        if has_position:
+            pnl_pct = (price - cost_price) / cost_price * 100
         
         # 1. 止损价位（最重要）
         if result.stop_loss_intraday > 0:
+            if has_position:
+                sl_pnl = (result.stop_loss_intraday - cost_price) / cost_price * 100
+                sl_desc = f'跌破{result.stop_loss_intraday:.2f}→日内止损，届时盈亏{sl_pnl:+.1f}%'
+            else:
+                sl_desc = f'跌破{result.stop_loss_intraday:.2f}→短线止损离场'
             watchlist.append({
                 'price': result.stop_loss_intraday,
                 'type': 'stop_loss',
                 'action': '日内止损',
-                'desc': f'跌破{result.stop_loss_intraday:.2f}→短线止损离场',
+                'desc': sl_desc,
                 'priority': 1,
             })
         if result.stop_loss_short > 0 and result.stop_loss_short != result.stop_loss_intraday:
+            if has_position:
+                sl_pnl = (result.stop_loss_short - cost_price) / cost_price * 100
+                sl_desc = f'跌破{result.stop_loss_short:.2f}→短线止损，届时盈亏{sl_pnl:+.1f}%'
+            else:
+                sl_desc = f'跌破{result.stop_loss_short:.2f}→短线止损'
             watchlist.append({
                 'price': result.stop_loss_short,
                 'type': 'stop_loss',
                 'action': '短线止损',
-                'desc': f'跌破{result.stop_loss_short:.2f}→短线止损',
+                'desc': sl_desc,
                 'priority': 1,
             })
         
+        # 1b. 成本线（持仓时插入，作为重要心理位）
+        if has_position:
+            cp_dist_pct = (price - cost_price) / price * 100
+            if abs(cp_dist_pct) < 15:  # 距离成本不超过15%才有盘中监控意义
+                pnl_str = f'+{pnl_pct:.1f}%' if pnl_pct >= 0 else f'{pnl_pct:.1f}%'
+                watchlist.append({
+                    'price': cost_price,
+                    'type': 'cost_line',
+                    'action': '持仓成本',
+                    'desc': f'成本线{cost_price:.2f}（当前浮盈{pnl_str}），跌破后止损出场',
+                    'priority': 1,
+                })
+        
         # 2. 买入/加仓价位
         if result.ideal_buy_anchor > 0 and result.ideal_buy_anchor < price:
+            if has_position:
+                buy_desc = f'回踩{result.ideal_buy_anchor:.2f}(MA5/MA10)→加仓机会'
+            else:
+                buy_desc = f'回踩{result.ideal_buy_anchor:.2f}(MA5/MA10)→建仓买入机会'
             watchlist.append({
                 'price': result.ideal_buy_anchor,
                 'type': 'buy',
-                'action': '理想买点',
-                'desc': f'回踩{result.ideal_buy_anchor:.2f}(MA5/MA10)→买入/加仓机会',
+                'action': '加仓点' if has_position else '建仓点',
+                'desc': buy_desc,
                 'priority': 2,
             })
         
