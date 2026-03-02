@@ -358,7 +358,7 @@ class StockAnalysisPipeline:
                         _idx_df = _sh_df[['close']]
                 except Exception:
                     pass
-                regime, _ = _STA.detect_market_regime(daily_df, idx_pct, index_df=_idx_df)
+                regime, _ = _STA.detect_market_regime(daily_df, idx_pct)
                 # 获取指数收益率序列（供 Beta 计算）
                 idx_ret = None
                 try:

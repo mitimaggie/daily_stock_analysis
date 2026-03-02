@@ -111,7 +111,6 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         analysisSummary={summary.analysisSummary}
         intelligence={intelligence}
         counterArguments={counterArguments}
-        oneSentence={oneSentence ?? undefined}
         positionAdvice={
           (details?.rawResult as Record<string, any>)?.dashboard?.core_conclusion?.position_advice ??
           (details?.rawResult as Record<string, any>)?.core_conclusion?.position_advice ??

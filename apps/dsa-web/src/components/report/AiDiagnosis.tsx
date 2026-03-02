@@ -5,7 +5,6 @@ interface AiDiagnosisProps {
   analysisSummary?: string;
   intelligence?: Record<string, any>;
   counterArguments?: string[];
-  oneSentence?: string;
   positionAdvice?: { has_position?: string; no_position?: string };
 }
 
@@ -17,7 +16,6 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
   analysisSummary,
   intelligence,
   counterArguments,
-  oneSentence,
   positionAdvice,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -29,7 +27,7 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
   const riskAlerts: string[] = intelligence?.risk_alerts ?? intelligence?.riskAlerts ?? [];
   const hasDetails = earningsOutlook || sentimentSummary || positiveCatalysts.length > 0 || riskAlerts.length > 0 || (counterArguments && counterArguments.length > 0);
 
-  if (!analysisSummary && !hasDetails && !oneSentence) return null;
+  if (!analysisSummary && !hasDetails) return null;
 
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
@@ -43,14 +41,6 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
         </h3>
         <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
       </button>
-
-      {/* 核心结论（始终可见，最突出） */}
-      {oneSentence && (
-        <div className="mt-3 p-2.5 rounded-lg bg-white/[0.04] border border-white/[0.07]">
-          <div className="text-[10px] text-white/30 mb-1 font-medium tracking-wide uppercase">核心结论</div>
-          <p className="text-[13px] text-white/90 font-medium leading-snug">{oneSentence}</p>
-        </div>
-      )}
 
       {/* 操作建议（有仓/无仓分别展示） */}
       {adviceText && (

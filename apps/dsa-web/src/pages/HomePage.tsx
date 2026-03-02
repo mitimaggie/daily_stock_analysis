@@ -476,10 +476,25 @@ const HomePage: React.FC = () => {
     setStoreError(null);
     for (const code of codes) {
       try {
+        // 批量分析时按各股票的 localStorage 持仓读取，而非全局表单
+        const normalized = code;
+        const key = `dsa_pos_${normalized.replace(/\./g, '_')}`;
+        let stockPositionInfo: import('../types/analysis').PositionInfo | undefined;
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const { pa, cp } = JSON.parse(raw);
+            const pa_val = pa ? parseFloat(pa) * 10000 : undefined;
+            const cp_val = cp ? parseFloat(cp) : undefined;
+            if (pa_val || cp_val) {
+              stockPositionInfo = { positionAmount: pa_val, costPrice: cp_val };
+            }
+          }
+        } catch { /* ignore */ }
         await analysisApi.analyzeAsync({
           stockCode: code,
           reportType: 'detailed',
-          positionInfo: buildPositionInfo(),
+          positionInfo: stockPositionInfo,
         });
       } catch (err) {
         if (!(err instanceof DuplicateTaskError)) {
@@ -487,7 +502,7 @@ const HomePage: React.FC = () => {
         }
       }
     }
-  }, [buildPositionInfo]);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
