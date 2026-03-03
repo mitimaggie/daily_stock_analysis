@@ -85,6 +85,15 @@ export const portfolioApi = {
     return toCamelCase<PortfolioItem>(res.data.item as Record<string, unknown>);
   },
 
+  get: async (code: string): Promise<PortfolioItem | null> => {
+    try {
+      const res = await apiClient.get<{ item: unknown }>(`/api/v1/portfolio/${code}`);
+      return toCamelCase<PortfolioItem>(res.data.item as Record<string, unknown>);
+    } catch {
+      return null;
+    }
+  },
+
   remove: async (code: string): Promise<void> => {
     await apiClient.delete(`/api/v1/portfolio/${code}`);
   },

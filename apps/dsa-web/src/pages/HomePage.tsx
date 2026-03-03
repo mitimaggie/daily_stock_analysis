@@ -105,17 +105,19 @@ const HomePage: React.FC = () => {
   const [positionAmount, setPositionAmount] = useState('');
   const [costPrice, setCostPrice] = useState('');
 
-  // 按股票代码持久化持仓信息
-  const savePositionForStock = useCallback((code: string, pa: string, cp: string) => {
-    if (!code) return;
-    const key = `dsa_pos_${code.replace(/\./g, '_')}`;
-    if (pa || cp) {
-      localStorage.setItem(key, JSON.stringify({ pa, cp }));
-    }
-  }, []);
+  // 按股票代码从 portfolio 表加载/保存持仓信息
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadPositionForStock = useCallback((code: string) => {
+  const loadPositionForStock = useCallback(async (code: string) => {
     if (!code) return;
+    try {
+      const item = await portfolioApi.get(code);
+      if (item) {
+        setPositionAmount(String(item.shares || ''));
+        setCostPrice(String(item.costPrice || ''));
+        return;
+      }
+    } catch { /* 未在持仓表中，尝试 localStorage */ }
     const key = `dsa_pos_${code.replace(/\./g, '_')}`;
     try {
       const raw = localStorage.getItem(key);
@@ -128,6 +130,22 @@ const HomePage: React.FC = () => {
     } catch { /* ignore */ }
     setPositionAmount('');
     setCostPrice('');
+  }, []);
+
+  // debounce 同步持仓到数据库
+  const syncPositionToDb = useCallback((code: string, shares: string, cp: string, name: string) => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(async () => {
+      if (!code || !cp || !shares) return;
+      try {
+        await portfolioApi.add({
+          code,
+          name: name || code,
+          costPrice: parseFloat(cp),
+          shares: parseInt(shares) || 0,
+        });
+      } catch { /* 静默失败 */ }
+    }, 1000);
   }, []);
 
   // 历史列表状态
@@ -166,11 +184,12 @@ const HomePage: React.FC = () => {
     if (totalCapital) localStorage.setItem('dsa_total_capital', totalCapital);
   }, [totalCapital]);
 
-  // 构建持仓信息（有任意一项有效值时才传递）
+  // 构建持仓信息（持仓（股）× 成本价 = 持仓金额（元））
   const buildPositionInfo = (): PositionInfo | undefined => {
     const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
-    const pa = positionAmount ? parseFloat(positionAmount) * 10000 : undefined;
+    const shares = positionAmount ? parseInt(positionAmount) : 0;
     const cp = costPrice ? parseFloat(costPrice) : undefined;
+    const pa = (shares > 0 && cp && cp > 0) ? shares * cp : undefined;
     if (tc || pa || cp) {
       return { totalCapital: tc, positionAmount: pa, costPrice: cp };
     }
@@ -359,8 +378,7 @@ const HomePage: React.FC = () => {
     if (!positionAmount && !costPrice) {
       loadPositionForStock(normalized);
     }
-    // 保存持仓信息到 localStorage（按股票代码）
-    savePositionForStock(normalized, positionAmount, costPrice);
+    // 持仓信息通过 syncPositionToDb 实时同步到数据库，此处无需额外保存
 
     const currentRequestId = ++analysisRequestIdRef.current;
 
@@ -627,21 +645,33 @@ const HomePage: React.FC = () => {
                       <input type="number" value={totalCapital} onChange={(e) => setTotalCapital(e.target.value)} placeholder="100" className="header-input flex-1 text-xs py-1.5" />
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">持仓(万)</label>
-                      <input type="number" value={positionAmount} onChange={(e) => setPositionAmount(e.target.value)} placeholder="10" className="header-input flex-1 text-xs py-1.5" />
+                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">持仓(股)</label>
+                      <input type="number" value={positionAmount} onChange={(e) => {
+                        setPositionAmount(e.target.value);
+                        syncPositionToDb(stockCode, e.target.value, costPrice, '');
+                      }} placeholder="100" className="header-input flex-1 text-xs py-1.5" />
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-[11px] text-white/30 whitespace-nowrap w-16">成本价</label>
-                      <input type="number" step="0.01" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} placeholder="35.00" className="header-input flex-1 text-xs py-1.5" />
+                      <input type="number" step="0.01" value={costPrice} onChange={(e) => {
+                        setCostPrice(e.target.value);
+                        syncPositionToDb(stockCode, positionAmount, e.target.value, '');
+                      }} placeholder="35.00" className="header-input flex-1 text-xs py-1.5" />
                     </div>
                   </div>
-                  {(totalCapital || positionAmount) && (
-                    <div className="mt-2 pt-2 border-t border-white/5 text-[11px] text-white/40 font-mono text-right">
-                      仓位 {totalCapital && positionAmount
-                        ? `${((parseFloat(positionAmount) / parseFloat(totalCapital)) * 100).toFixed(1)}%`
-                        : '--'}
-                    </div>
-                  )}
+                  {(totalCapital || positionAmount) && (() => {
+                    const shares = positionAmount ? parseInt(positionAmount) : 0;
+                    const cp = costPrice ? parseFloat(costPrice) : 0;
+                    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : 0;
+                    const posVal = shares > 0 && cp > 0 ? shares * cp : 0;
+                    const pct = tc > 0 && posVal > 0 ? (posVal / tc * 100).toFixed(1) : '--';
+                    return (
+                      <div className="mt-2 pt-2 border-t border-white/5 text-[11px] text-white/40 font-mono text-right">
+                        仓位 {pct !== '--' ? `${pct}%` : '--'}
+                        {posVal > 0 && <span className="ml-2">持仓市值 {(posVal / 10000).toFixed(2)}万</span>}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
