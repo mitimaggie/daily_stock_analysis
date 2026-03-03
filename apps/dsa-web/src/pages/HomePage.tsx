@@ -109,14 +109,16 @@ const HomePage: React.FC = () => {
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadPositionForStock = useCallback(async (code: string) => {
-    if (!code) return;
+  const loadPositionForStock = useCallback(async (code: string): Promise<{ pa: string; cp: string }> => {
+    if (!code) return { pa: '', cp: '' };
     try {
       const item = await portfolioApi.get(code);
       if (item) {
-        setPositionAmount(String(item.shares || ''));
-        setCostPrice(String(item.costPrice || ''));
-        return;
+        const pa = String(item.shares || '');
+        const cp = String(item.costPrice || '');
+        setPositionAmount(pa);
+        setCostPrice(cp);
+        return { pa, cp };
       }
     } catch { /* 未在持仓表中，尝试 localStorage */ }
     const key = `dsa_pos_${code.replace(/\./g, '_')}`;
@@ -126,11 +128,12 @@ const HomePage: React.FC = () => {
         const { pa, cp } = JSON.parse(raw);
         setPositionAmount(pa || '');
         setCostPrice(cp || '');
-        return;
+        return { pa: pa || '', cp: cp || '' };
       }
     } catch { /* ignore */ }
     setPositionAmount('');
     setCostPrice('');
+    return { pa: '', cp: '' };
   }, []);
 
   // debounce 同步持仓到数据库
@@ -374,17 +377,25 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setStoreError(null);
 
-    // 先尝试从 localStorage 恢复该股票的持仓信息（用户可能之前填过）
+    // 先尝试从 portfolio DB / localStorage 恢复该股票的持仓信息
     // 只有当前表单为空时才自动加载，避免覆盖用户正在编辑的值
+    // 注意：必须 await 并用返回值，因为 setState 是异步的，不能立即读取
+    let effectivePa = positionAmount;
+    let effectiveCp = costPrice;
     if (!positionAmount && !costPrice) {
-      loadPositionForStock(normalized);
+      const loaded = await loadPositionForStock(normalized);
+      effectivePa = loaded.pa;
+      effectiveCp = loaded.cp;
     }
-    // 持仓信息通过 syncPositionToDb 实时同步到数据库，此处无需额外保存
 
     const currentRequestId = ++analysisRequestIdRef.current;
 
-    // 只使用当前表单中用户明确填写的持仓信息，不自动读取历史数据
-    const effectivePositionInfo: PositionInfo | undefined = buildPositionInfo();
+    // 用实际生效的持仓值（可能来自 DB 加载）构造 positionInfo
+    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
+    const pa = effectivePa ? parseInt(effectivePa) : undefined;
+    const cp = effectiveCp ? parseFloat(effectiveCp) : undefined;
+    const effectivePositionInfo: PositionInfo | undefined =
+      (pa || cp) ? { totalCapital: tc, positionAmount: pa, costPrice: cp } : undefined;
 
     try {
       const response = await analysisApi.analyzeAsync({

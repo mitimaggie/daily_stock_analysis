@@ -162,6 +162,10 @@ export const KeyPriceLevels: React.FC<KeyPriceLevelsProps> = ({
           📋 {takeProfitPlan}
         </div>
       )}
+      {/* 说明：技术面客观价位，与持仓诊断的区别 */}
+      <div className="mt-2 pt-2 border-t border-white/[0.04] text-[10px] text-white/25 leading-relaxed">
+        💡 <span className="text-white/40 font-medium">如何选择止损线？</span> 回测数据（1590 样本）显示：「技术止损」综合收益 +0.49%，胜率 36%；「成本线止损」触发率高达 97%（股价几乎必然短暂跌破买入价），综合收益 -0.22%。<span className="text-yellow-400/60">建议以此处技术止损为执行线，成本线仅作心理参考。</span>
+      </div>
     </div>
   );
 };
