@@ -23,6 +23,15 @@ from .pattern_recognition import PatternRecognition
 
 logger = logging.getLogger(__name__)
 
+# A股 ETF 代码前缀
+_ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
+
+
+def _is_etf(code: str) -> bool:
+    """判断代码是否为 A 股 ETF"""
+    c = (code or '').strip().split('.')[0]
+    return c.isdigit() and len(c) == 6 and c.startswith(_ETF_PREFIXES)
+
 
 class StockTrendAnalyzer:
     """股票趋势分析器 - 模块化重构版"""
@@ -381,24 +390,39 @@ class StockTrendAnalyzer:
             ResonanceDetector.detect_market_behavior(result, df)
             ResonanceDetector.check_multi_timeframe_resonance(result, df)
             
-            ScoringSystem.check_valuation(result, valuation)
-            ScoringSystem.check_trading_halt(result)
-            ScoringSystem.score_capital_flow(result, capital_flow)
-            ScoringSystem.score_capital_flow_trend(result, df)
-            ScoringSystem.score_sector_strength(result, sector_context)
-            ScoringSystem.score_chip_distribution(result, chip_data)
-            ScoringSystem.score_fundamental_quality(result, fundamental_data)
-            ScoringSystem.score_forecast(result, fundamental_data)
-            ScoringSystem.detect_sentiment_extreme(result, chip_data=chip_data, capital_flow=capital_flow, df=df)
-            ScoringSystem.score_quote_extra(result, quote_extra)
-            ScoringSystem.score_limit_and_enhanced(result)
+            is_etf_code = _is_etf(code)
+
+            if is_etf_code:
+                # ETF 专属评分逻辑：跳过无意义模块，强化有效维度
+                ScoringSystem.check_trading_halt(result)
+                ScoringSystem.score_capital_flow(result, capital_flow)       # 行业资金对 ETF 有效
+                ScoringSystem.score_capital_flow_trend(result, df)
+                ScoringSystem.score_sector_strength(result, sector_context)
+                ScoringSystem.detect_sentiment_extreme(result, chip_data=None, capital_flow=capital_flow, df=df)
+                ScoringSystem.score_quote_extra(result, quote_extra)
+                # ETF 专属提示
+                result.signal_reasons.insert(0, "📊 ETF模式：已跳过个股估值/基本面/龙虎榜评分，专注技术面+资金面")
+            else:
+                ScoringSystem.check_valuation(result, valuation)
+                ScoringSystem.check_trading_halt(result)
+                ScoringSystem.score_capital_flow(result, capital_flow)
+                ScoringSystem.score_capital_flow_trend(result, df)
+                ScoringSystem.score_sector_strength(result, sector_context)
+                ScoringSystem.score_chip_distribution(result, chip_data)
+                ScoringSystem.score_fundamental_quality(result, fundamental_data)
+                ScoringSystem.score_forecast(result, fundamental_data)
+                ScoringSystem.detect_sentiment_extreme(result, chip_data=chip_data, capital_flow=capital_flow, df=df)
+                ScoringSystem.score_quote_extra(result, quote_extra)
+                ScoringSystem.score_limit_and_enhanced(result)
+
             # K线形态评分调整（仅记录，由 cap_adjustments 统一应用）
             if result.candle_score_adj != 0:
                 result.score_breakdown['candle_pattern'] = result.candle_score_adj
             # OBV/ADX/均线发散 评分修正
             ScoringSystem.score_obv_adx(result)
             ScoringSystem.detect_rsi_macd_divergence(result, df)
-            ScoringSystem.detect_volume_spike_trap(result, df)
+            if not is_etf_code:
+                ScoringSystem.detect_volume_spike_trap(result, df)  # 游资陷阱对 ETF 无意义
             ScoringSystem.score_weekly_trend(result, df)
             ScoringSystem.score_chart_patterns(result, df)
             ScoringSystem.score_vol_anomaly(result, df)
@@ -409,13 +433,19 @@ class StockTrendAnalyzer:
             ScoringSystem.score_multi_signal_resonance(result, df)
             ScoringSystem.forecast_next_days(result, df)
             # 三个外部数据评分并行执行，共享超时窗口
+            # ETF 跳过龙虎榜/大宗交易/持仓者数据（对 ETF 无意义，且浪费请求）
             import threading as _th_score
             import time as _t_score
-            _score_threads = [
-                _th_score.Thread(target=ScoringSystem.score_capital_flow_history, args=(result, code), daemon=True),
-                _th_score.Thread(target=ScoringSystem.score_lhb_sentiment, args=(result, code), daemon=True),
-                _th_score.Thread(target=ScoringSystem.score_dzjy_and_holder, args=(result, code), daemon=True),
-            ]
+            if is_etf_code:
+                _score_threads = [
+                    _th_score.Thread(target=ScoringSystem.score_capital_flow_history, args=(result, code), daemon=True),
+                ]
+            else:
+                _score_threads = [
+                    _th_score.Thread(target=ScoringSystem.score_capital_flow_history, args=(result, code), daemon=True),
+                    _th_score.Thread(target=ScoringSystem.score_lhb_sentiment, args=(result, code), daemon=True),
+                    _th_score.Thread(target=ScoringSystem.score_dzjy_and_holder, args=(result, code), daemon=True),
+                ]
             for _t in _score_threads:
                 _t.start()
             _deadline_score = _t_score.time() + 6

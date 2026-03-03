@@ -104,9 +104,8 @@ class AkshareFetcher(BaseFetcher):
         return df
 
     def _fetch_etf_data(self, code, start, end):
-        import akshare as ak
-        self._enforce_rate_limit()
-        return ak.fund_etf_hist_em(symbol=code, period="daily", start_date=start.replace('-',''), end_date=end.replace('-',''), adjust="qfq")
+        """ETF K线：akshare 各接口易被反爬，直接交由 BaostockFetcher 接管"""
+        raise DataFetchError(f"ETF {code} akshare 源不稳定，交由 baostock 接管")
         
     def _fetch_us_data(self, code, start, end):
         import akshare as ak
@@ -219,23 +218,22 @@ class AkshareFetcher(BaseFetcher):
         )
 
     def _get_etf_realtime_quote(self, stock_code):
-        import akshare as ak
-        current_time = time.time()
-        if _etf_realtime_cache['data'] is not None and current_time - _etf_realtime_cache['timestamp'] < _etf_realtime_cache['ttl']:
-            df = _etf_realtime_cache['data']
-        else:
-            self._enforce_rate_limit()
-            df = ak.fund_etf_spot_em()
-            _etf_realtime_cache['data'] = df
-            _etf_realtime_cache['timestamp'] = current_time
-            
-        row = df[df['代码'] == stock_code]
-        if row.empty: return None
-        row = row.iloc[0]
-        return UnifiedRealtimeQuote(
-            code=stock_code, name=str(row.get('名称')), source=RealtimeSource.AKSHARE_EM,
-            price=safe_float(row.get('最新价')), change_pct=safe_float(row.get('涨跌幅'))
-        )
+        """ETF 实时行情：用腾讯/新浪接口（东财 fund_etf_spot_em 易断连）"""
+        # 腾讯财经接口对 ETF 同样支持 sh/sz 前缀
+        try:
+            q = self._get_tencent_quote(stock_code)
+            if q and q.price and q.price > 0:
+                return q
+        except Exception:
+            pass
+        # 备用：新浪
+        try:
+            q = self._get_sina_quote(stock_code)
+            if q and q.price and q.price > 0:
+                return q
+        except Exception:
+            pass
+        return None
 
     # 板块排行缓存（避免短时间内重复请求东财被断连）
     _sector_cache: Dict[str, Any] = {'data': None, 'timestamp': 0, 'ttl': 600}
