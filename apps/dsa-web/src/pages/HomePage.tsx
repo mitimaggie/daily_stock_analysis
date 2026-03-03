@@ -189,16 +189,25 @@ const HomePage: React.FC = () => {
   }, [totalCapital]);
 
   // 构建持仓信息（持仓（股）× 成本价 = 持仓金额（元））
-  const buildPositionInfo = (): PositionInfo | undefined => {
-    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
-    const shares = positionAmount ? parseInt(positionAmount) : 0;
-    const cp = costPrice ? parseFloat(costPrice) : undefined;
+  // 接受显式参数，避免调用方依赖 state 时序
+  const buildPositionInfoFrom = (
+    tcStr: string,
+    paStr: string,
+    cpStr: string,
+  ): PositionInfo | undefined => {
+    const tc = tcStr ? parseFloat(tcStr) * 10000 : undefined;
+    const shares = paStr ? parseInt(paStr) : 0;
+    const cp = cpStr ? parseFloat(cpStr) : undefined;
     const pa = (shares > 0 && cp && cp > 0) ? shares * cp : undefined;
     if (tc || pa || cp) {
       return { totalCapital: tc, positionAmount: pa, costPrice: cp };
     }
     return undefined;
   };
+
+  // 使用当前 state 的快捷包装
+  const buildPositionInfo = (): PositionInfo | undefined =>
+    buildPositionInfoFrom(totalCapital, positionAmount, costPrice);
 
   // 更新任务列表中的任务
   const updateTask = useCallback((updatedTask: TaskInfo) => {
@@ -391,13 +400,8 @@ const HomePage: React.FC = () => {
     const currentRequestId = ++analysisRequestIdRef.current;
 
     // 用实际生效的持仓值（可能来自 DB 加载）构造 positionInfo
-    // 注意：positionAmount 传的是持仓金额（元）= shares × costPrice，不是股数
-    const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
-    const shares = effectivePa ? parseInt(effectivePa) : 0;
-    const cp = effectiveCp ? parseFloat(effectiveCp) : undefined;
-    const pa = (shares > 0 && cp && cp > 0) ? shares * cp : undefined;
-    const effectivePositionInfo: PositionInfo | undefined =
-      (tc || pa || cp) ? { totalCapital: tc, positionAmount: pa, costPrice: cp } : undefined;
+    // 统一用 buildPositionInfoFrom，避免重复语义转换逻辑
+    const effectivePositionInfo = buildPositionInfoFrom(totalCapital, effectivePa, effectiveCp);
 
     try {
       const response = await analysisApi.analyzeAsync({
