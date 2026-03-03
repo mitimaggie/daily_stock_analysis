@@ -446,13 +446,13 @@ def main() -> int:
                     'bear':     {'trend': 13, 'bias': 17, 'volume': 18, 'support': 13, 'macd': 10, 'rsi': 13, 'kdj': 16},
                 }
             }
-            # 新权重（Layer A 修改后，MACD 提权）
+            # 新权重（P3优化，MACD趋势共振，2694样本回测夏普+0.129，胜率+1.1%）
             config_new = {
-                'name': '新权重（当前，MACD提权）',
+                'name': '新权重（P3优化，MACD趋势共振）',
                 'weights': {
-                    'bull':     {'trend': 30, 'bias': 12, 'volume': 10, 'support': 5,  'macd': 20, 'rsi': 10, 'kdj': 13},
-                    'sideways': {'trend': 18, 'bias': 20, 'volume': 10, 'support': 12, 'macd': 15, 'rsi': 10, 'kdj': 15},
-                    'bear':     {'trend': 13, 'bias': 17, 'volume': 15, 'support': 13, 'macd': 14, 'rsi': 13, 'kdj': 15},
+                    'bull':     {'trend': 32, 'bias': 10, 'volume': 8,  'support': 5,  'macd': 25, 'rsi': 10, 'kdj': 10},
+                    'sideways': {'trend': 18, 'bias': 18, 'volume': 10, 'support': 12, 'macd': 18, 'rsi': 12, 'kdj': 12},
+                    'bear':     {'trend': 12, 'bias': 16, 'volume': 14, 'support': 14, 'macd': 16, 'rsi': 14, 'kdj': 14},
                 }
             }
             report = runner.compare_weight_configs(config_old, config_new, lookback_days=90, buy_threshold=70)
