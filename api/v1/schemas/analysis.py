@@ -24,11 +24,18 @@ class TaskStatusEnum(str, Enum):
     FAILED = "failed"
 
 
+class PreviousPositionModel(BaseModel):
+    """上次分析时的持仓快照（用于感知操作变化）"""
+    position_amount: Optional[float] = Field(None, description="上次持仓金额（元）")
+    cost_price: Optional[float] = Field(None, description="上次持仓均价")
+
+
 class PositionInfoModel(BaseModel):
     """用户持仓信息（可选，用于个性化分析）"""
     total_capital: Optional[float] = Field(None, description="总资金（元）")
     position_amount: Optional[float] = Field(None, description="持仓金额（元）")
     cost_price: Optional[float] = Field(None, description="持仓均价")
+    previous_position: Optional[PreviousPositionModel] = Field(None, description="上次分析时的持仓（用于感知减仓/加仓等操作）")
 
 
 class AnalyzeRequest(BaseModel):

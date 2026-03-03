@@ -557,6 +557,33 @@ class GeminiAnalyzer:
             if total_capital > 0 and pos_amount > 0:
                 actual_pct = pos_amount / total_capital * 100
                 pos_parts.append(f"仓位占比: {actual_pct:.1f}%（总资金{total_capital/10000:.1f}万）")
+
+            # 持仓操作变化感知（若有上次快照则注入对比）
+            prev_pos = position_info.get('previous_position')
+            if prev_pos and isinstance(prev_pos, dict):
+                prev_amt = float(prev_pos.get('position_amount') or 0)
+                prev_cp = float(prev_pos.get('cost_price') or 0)
+                if prev_amt > 0 and pos_amount > 0:
+                    chg_pct = (pos_amount - prev_amt) / prev_amt * 100
+                    if chg_pct < -5:
+                        action_label = f"减仓 {abs(chg_pct):.1f}%"
+                    elif chg_pct > 5:
+                        action_label = f"加仓 {chg_pct:.1f}%"
+                    else:
+                        action_label = "持仓基本未变"
+                    pos_parts.append(
+                        f"⚡ 本次操作感知：用户已执行「{action_label}」"
+                        f"（上次持仓 {prev_amt/10000:.1f}万 → 当前 {pos_amount/10000:.1f}万）"
+                    )
+                    if chg_pct < -5:
+                        pos_parts.append(
+                            "请基于当前持仓比例给出针对性建议，不要再建议用户继续减仓（除非有新的技术/基本面理由）"
+                        )
+                elif prev_cp > 0 and cost_price > 0 and abs(prev_cp - cost_price) / prev_cp > 0.01:
+                    pos_parts.append(
+                        f"⚡ 成本价变化：{prev_cp:.2f} → {cost_price:.2f}（用户可能调整了均价）"
+                    )
+
             position_section = "\n\n## 用户持仓信息（针对持仓者给出建议）\n" + "\n".join(f"- {p}" for p in pos_parts)
 
         # JSON 输出协议：持仓者只需 has_position，空仓者只需 no_position

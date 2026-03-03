@@ -10,6 +10,10 @@ export interface PositionInfo {
   totalCapital?: number;   // 总资金（元）
   positionAmount?: number; // 持仓金额（元）
   costPrice?: number;      // 持仓均价
+  previousPosition?: {     // 上次分析时的持仓（用于感知操作变化）
+    positionAmount?: number; // 上次持仓金额（元）
+    costPrice?: number;      // 上次持仓均价
+  };
 }
 
 export interface AnalysisRequest {

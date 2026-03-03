@@ -1,4 +1,5 @@
 import type React from 'react';
+import { useState } from 'react';
 import type { QuantVsAi as QuantVsAiType } from '../../types/analysis';
 
 interface QuantVsAiProps {
@@ -33,22 +34,40 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
   const hasSevereDivergence = divergence >= 20;
   const hasMildDivergence = divergence >= 10 && divergence < 20;
 
+  // 严重分歧时默认展开（用户需要知道），否则默认折叠
+  const [expanded, setExpanded] = useState(hasSevereDivergence);
+
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-      <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5 mb-3">
-        <span>⚖️</span> 量化 vs AI
-        {hasSevereDivergence && (
-          <span className="ml-auto text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold animate-pulse">
-            ⚠️ 严重分歧 {divergence}分
-          </span>
-        )}
-        {hasMildDivergence && (
-          <span className="ml-auto text-[11px] px-2 py-0.5 rounded bg-orange-500/15 text-orange-400">
-            分歧 {divergence}分
-          </span>
-        )}
-      </h3>
+      <button
+        type="button"
+        className="w-full flex items-center justify-between text-left"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <h3 className="text-sm font-semibold text-white/70 flex items-center gap-1.5">
+          <span>⚖️</span> 量化 vs AI
+          {hasSevereDivergence && (
+            <span className="text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold animate-pulse">
+              ⚠️ 严重分歧 {divergence}分
+            </span>
+          )}
+          {hasMildDivergence && (
+            <span className="text-[11px] px-2 py-0.5 rounded bg-orange-500/15 text-orange-400">
+              分歧 {divergence}分
+            </span>
+          )}
+        </h3>
+        <span className="text-xs text-white/30 ml-2">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {!expanded && (
+        <div className="mt-2 text-[11px] text-white/35">
+          量化 <span className={`font-mono font-semibold ${scoreColor(quantScore)}`}>{quantScore}</span>
+          {aiScore != null && <> · AI <span className={`font-mono font-semibold ${scoreColor(aiScore)}`}>{aiScore}</span></>}
+          {hasSevereDivergence && <span className="ml-1 text-red-400">分歧</span>}
+        </div>
+      )}
 
+      {expanded && (<>
       {/* 严重分歧告警横幅 */}
       {hasSevereDivergence && (
         <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/25 text-[11px] text-red-300 leading-relaxed">
@@ -117,6 +136,7 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
           return prefix + reason;
         })()}
       </div>
+      </>)}
     </div>
   );
 };

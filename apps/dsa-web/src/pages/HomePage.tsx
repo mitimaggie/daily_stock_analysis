@@ -403,12 +403,44 @@ const HomePage: React.FC = () => {
     // 统一用 buildPositionInfoFrom，避免重复语义转换逻辑
     const effectivePositionInfo = buildPositionInfoFrom(totalCapital, effectivePa, effectiveCp);
 
+    // 读取上次分析时的持仓快照，注入到 previousPosition 供 AI 感知操作变化
+    const snapshotKey = `dsa_pos_snapshot_${normalized}`;
+    if (effectivePositionInfo) {
+      try {
+        const prevSnap = localStorage.getItem(snapshotKey);
+        if (prevSnap) {
+          const prev = JSON.parse(prevSnap) as { positionAmount?: number; costPrice?: number };
+          const curAmt = effectivePositionInfo.positionAmount;
+          const prevAmt = prev.positionAmount;
+          // 仅当持仓金额有明显变化（>5%）时才注入，避免误触
+          const hasChanged = prevAmt != null && curAmt != null
+            ? Math.abs(curAmt - prevAmt) / Math.max(prevAmt, 1) > 0.05
+            : prev.costPrice !== effectivePositionInfo.costPrice;
+          if (hasChanged) {
+            effectivePositionInfo.previousPosition = {
+              positionAmount: prev.positionAmount,
+              costPrice: prev.costPrice,
+            };
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
     try {
       const response = await analysisApi.analyzeAsync({
         stockCode: normalized,
         reportType: 'detailed',
         positionInfo: effectivePositionInfo,
       });
+      // 分析提交成功后，保存当前持仓为快照（下次分析时用于对比）
+      if (effectivePositionInfo) {
+        try {
+          localStorage.setItem(snapshotKey, JSON.stringify({
+            positionAmount: effectivePositionInfo.positionAmount,
+            costPrice: effectivePositionInfo.costPrice,
+          }));
+        } catch { /* ignore */ }
+      }
 
       // 直接添加任务到侧边栏（不依赖 SSE）
       setActiveTasks((prev) => {

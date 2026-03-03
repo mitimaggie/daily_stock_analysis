@@ -100,7 +100,7 @@ const IndicatorCard: React.FC<{
  * 展示技术指标、估值、资金面、筹码等量化数据
  */
 export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   const qe = data as Record<string, any>;
   if (!qe || Object.keys(qe).length === 0) return null;

@@ -53,11 +53,18 @@ export const analysisApi = {
       async_mode: true,
     };
     if (data.positionInfo) {
-      requestData.position_info = {
+      const pi: Record<string, unknown> = {
         total_capital: data.positionInfo.totalCapital,
         position_amount: data.positionInfo.positionAmount,
         cost_price: data.positionInfo.costPrice,
       };
+      if (data.positionInfo.previousPosition) {
+        pi.previous_position = {
+          position_amount: data.positionInfo.previousPosition.positionAmount,
+          cost_price: data.positionInfo.previousPosition.costPrice,
+        };
+      }
+      requestData.position_info = pi;
     }
 
     const response = await apiClient.post<Record<string, unknown>>(

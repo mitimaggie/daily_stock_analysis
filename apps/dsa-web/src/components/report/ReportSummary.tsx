@@ -91,7 +91,19 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         skillUsed={skillUsed ?? undefined}
       />
 
-      {/* 2. 作战计划 */}
+      {/* 2. 持仓诊断（有持仓时优先展示，紧跟决策区） */}
+      {positionInfo && (
+        <PositionDiagnosis
+          positionInfo={positionInfo}
+          currentPrice={meta.currentPrice}
+          suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
+          stopLoss={strategy?.stopLoss}
+          takeProfit={strategy?.takeProfit}
+          holdingStrategy={strategy?.holdingStrategy}
+        />
+      )}
+
+      {/* 3. 作战计划 */}
       <ReportStrategy
         strategy={strategy}
         hasPositionInfo={hasPosition}
@@ -104,7 +116,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
       />
 
-      {/* 3. 盘中关键价位 */}
+      {/* 4. 盘中关键价位 */}
       {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (
         <KeyPriceLevels
           levels={strategy.keyPriceLevels}
@@ -117,15 +129,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
-      {/* 4. 量化 vs AI 对比（含综合研判叙述） */}
-      {summary.quantVsAi && (
-        <QuantVsAi data={summary.quantVsAi} />
-      )}
-
-      {/* 5. 量化诊断（细化指标） */}
-      {quantExtras && <QuantAnalysis data={quantExtras} />}
-
-      {/* 6. AI 诊断（细化分析 + 信息依据） */}
+      {/* 5. AI 诊断（折叠，默认只显示摘要） */}
       <AiDiagnosis
         analysisSummary={summary.analysisSummary}
         intelligence={intelligence}
@@ -137,16 +141,12 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         }
       />
 
-      {/* 7. 持仓诊断（有持仓信息时显示） */}
-      {positionInfo && (
-        <PositionDiagnosis
-          positionInfo={positionInfo}
-          currentPrice={meta.currentPrice}
-          suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
-          stopLoss={strategy?.stopLoss}
-          takeProfit={strategy?.takeProfit}
-          holdingStrategy={strategy?.holdingStrategy}
-        />
+      {/* 6. 量化诊断（默认折叠） */}
+      {quantExtras && <QuantAnalysis data={quantExtras} />}
+
+      {/* 7. 量化 vs AI 对比（默认折叠，严重分歧时自动展开） */}
+      {summary.quantVsAi && (
+        <QuantVsAi data={summary.quantVsAi} />
       )}
 
       {/* 8. 公告与披露 */}
@@ -162,7 +162,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         currentPrice={meta.currentPrice}
       />
 
-      {/* 11. 透明度与追溯区 */}
+      {/* 10. 透明度与追溯区 */}
       <ReportDetails details={details} queryId={queryId} />
     </div>
   );
