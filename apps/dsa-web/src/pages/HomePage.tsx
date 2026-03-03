@@ -107,6 +107,7 @@ const HomePage: React.FC = () => {
 
   // 按股票代码从 portfolio 表加载/保存持仓信息
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadPositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadPositionForStock = useCallback(async (code: string) => {
     if (!code) return;
@@ -603,9 +604,17 @@ const HomePage: React.FC = () => {
                 type="text"
                 value={stockCode}
                 onChange={(e) => {
-                  setStockCode(e.target.value.toUpperCase());
+                  const val = e.target.value.toUpperCase();
+                  setStockCode(val);
                   setInputError(undefined);
                   setDuplicateError(null);
+                  // 代码输入完整（≥5位）时 debounce 加载持仓信息
+                  if (loadPositionTimerRef.current) clearTimeout(loadPositionTimerRef.current);
+                  if (val.length >= 5) {
+                    loadPositionTimerRef.current = setTimeout(() => {
+                      if (!positionAmount && !costPrice) loadPositionForStock(val);
+                    }, 500);
+                  }
                 }}
                 onKeyDown={handleKeyDown}
                 placeholder="股票代码  600519 / HK00700 / AAPL"
