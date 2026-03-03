@@ -391,11 +391,13 @@ const HomePage: React.FC = () => {
     const currentRequestId = ++analysisRequestIdRef.current;
 
     // 用实际生效的持仓值（可能来自 DB 加载）构造 positionInfo
+    // 注意：positionAmount 传的是持仓金额（元）= shares × costPrice，不是股数
     const tc = totalCapital ? parseFloat(totalCapital) * 10000 : undefined;
-    const pa = effectivePa ? parseInt(effectivePa) : undefined;
+    const shares = effectivePa ? parseInt(effectivePa) : 0;
     const cp = effectiveCp ? parseFloat(effectiveCp) : undefined;
+    const pa = (shares > 0 && cp && cp > 0) ? shares * cp : undefined;
     const effectivePositionInfo: PositionInfo | undefined =
-      (pa || cp) ? { totalCapital: tc, positionAmount: pa, costPrice: cp } : undefined;
+      (tc || pa || cp) ? { totalCapital: tc, positionAmount: pa, costPrice: cp } : undefined;
 
     try {
       const response = await analysisApi.analyzeAsync({
