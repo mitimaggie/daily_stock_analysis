@@ -292,12 +292,16 @@ class AkshareFetcher(BaseFetcher):
     _CAPITAL_FLOW_TTL = 600  # 10分钟
 
     def get_capital_flow(self, stock_code: str) -> Optional[CapitalFlowData]:
-        """获取个股资金流向（东方财富）
+        """获取个股资金流向
 
-        缓存策略（三层）：
+        数据源优先级：
+        - 盘中：efinance.get_today_bill（实时累计资金流，无反爬问题）→ 东财历史接口备用
+        - 盘后：DB缓存（今日已落库）→ akshare 历史接口 → efinance 备用
+
+        缓存策略：
         1. 内存缓存（盘中3分钟，盘后10分钟）
-        2. DB缓存（data_cache 表，盘后24h内复用，避免批量分析反复请求）
-        3. 实时拉取 ak.stock_individual_fund_flow，成功后落 DB
+        2. DB缓存（盘中不读旧日缓存，盘后24h内复用）
+        3. 实时拉取，成功后落 DB
 
         Returns:
             CapitalFlowData or None on failure.
@@ -305,19 +309,75 @@ class AkshareFetcher(BaseFetcher):
         if _is_us_code(stock_code) or _is_etf_code(stock_code):
             return None
 
-        # 1. 内存缓存
+        _intraday = self._is_market_open()
+
+        # 1. 内存缓存（盘中 TTL=3min，盘后 TTL=10min）
         cached = self._capital_flow_cache.get(stock_code)
         if cached:
             _ttl = cached.get('ttl', self._CAPITAL_FLOW_TTL)
             if time.time() - cached['ts'] < _ttl:
                 return cached['data']
 
-        # 2. DB 缓存（盘后24h内直接复用，避免批量分析打爆接口）
+        from datetime import datetime as _dt
+
+        def _save_cache(result: CapitalFlowData, is_today: bool, source: str):
+            """落内存缓存 + DB 缓存"""
+            ttl = 180 if _intraday else self._CAPITAL_FLOW_TTL
+            self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time(), 'ttl': ttl}
+            logger.info(f"💰 [{stock_code}] 资金流向({source}): 主力净流入={result.main_net_flow:.0f}万 ({result.main_net_flow_pct:.1f}%)")
+            try:
+                import json as _json2
+                from src.storage import DatabaseManager
+                from sqlalchemy import text as _text2
+                _db2 = DatabaseManager()
+                _payload = _json2.dumps({
+                    'main_net_flow': result.main_net_flow,
+                    'main_net_flow_pct': result.main_net_flow_pct,
+                    'super_large_net': result.super_large_net,
+                    'large_net': result.large_net,
+                })
+                with _db2.get_session() as _s2:
+                    _s2.execute(_text2(
+                        "INSERT INTO data_cache (cache_type, cache_key, data_json, fetched_at) "
+                        "VALUES ('capital_flow', :k, :v, datetime('now')) "
+                        "ON CONFLICT(cache_type, cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at"
+                    ), {'k': stock_code, 'v': _payload})
+                    _s2.commit()
+            except Exception as _e:
+                logger.debug(f"[{stock_code}] 资金流向落DB缓存失败: {_e}")
+
+        # ── 盘中：优先用 efinance 实时今日资金流（东财历史接口盘中易断连）──
+        if _intraday:
+            try:
+                import efinance as _ef
+                df_bill = _ef.stock.get_today_bill(stock_code)
+                if df_bill is not None and not df_bill.empty:
+                    last_row = df_bill.iloc[-1]
+                    main_net_raw = float(last_row.get('主力净流入', 0) or 0)  # 元
+                    super_large_raw = float(last_row.get('超大单净流入', 0) or 0)  # 元
+                    large_raw = float(last_row.get('大单净流入', 0) or 0)  # 元
+                    # 净占比 = 主力净流入 / 成交额（需估算）
+                    main_net_w = main_net_raw / 10000  # → 万元
+                    super_large_w = super_large_raw / 10000
+                    large_w = large_raw / 10000
+                    # 净占比：用主力/(超大+大+中+小) 近似，暂置0（scoring 不强依赖）
+                    result = CapitalFlowData(
+                        main_net_flow=round(main_net_w, 2),
+                        main_net_flow_pct=0.0,
+                        super_large_net=round(super_large_w, 2),
+                        large_net=round(large_w, 2),
+                    )
+                    _save_cache(result, is_today=True, source="efinance实时")
+                    return result
+            except Exception as _ef_e:
+                logger.debug(f"[{stock_code}] efinance 资金流获取失败: {_ef_e}")
+            # efinance 失败 → 继续尝试 akshare/DB
+
+        # ── 盘后或 efinance 失败：读 DB 缓存（今日数据，盘中不读跨日旧缓存）──
         try:
             from src.storage import DatabaseManager
             from sqlalchemy import text as _text
             import json as _json
-            from datetime import datetime as _dt2
             _db = DatabaseManager()
             with _db.get_session() as _s:
                 _row = _s.execute(_text(
@@ -326,8 +386,11 @@ class AkshareFetcher(BaseFetcher):
                     "ORDER BY fetched_at DESC LIMIT 1"
                 ), {'k': stock_code}).fetchone()
             if _row:
+                from datetime import datetime as _dt2
                 _age_h = (_dt2.now() - _dt2.fromisoformat(str(_row[1]))).total_seconds() / 3600
-                _max_age = 6 if self._is_market_open() else 24
+                # 盘中：只允许30分钟内缓存（efinance已失败，用兜底缓存）
+                # 盘后：24小时内复用
+                _max_age = 0.5 if _intraday else 24
                 if _age_h < _max_age:
                     _d = _json.loads(_row[0])
                     result = CapitalFlowData(
@@ -342,9 +405,8 @@ class AkshareFetcher(BaseFetcher):
         except Exception:
             pass
 
+        # ── 最终 fallback：akshare 历史接口（单日汇总，盘中可能有今日数据）──
         import akshare as ak
-        from datetime import datetime as _dt, date as _date
-
         market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
         try:
             self._enforce_rate_limit()
@@ -352,15 +414,8 @@ class AkshareFetcher(BaseFetcher):
             if df is None or df.empty:
                 return None
 
-            # 优先取今日数据；盘中今日数据可能尚未入库，则退回最新一行并标注
             today_str = _dt.now().strftime('%Y-%m-%d')
-            # 检测日期列名
-            date_col = None
-            for c in ('日期', 'date', 'Date'):
-                if c in df.columns:
-                    date_col = c
-                    break
-            
+            date_col = next((c for c in ('日期', 'date', 'Date') if c in df.columns), None)
             latest = None
             is_today = False
             if date_col:
@@ -370,18 +425,12 @@ class AkshareFetcher(BaseFetcher):
                     latest = today_rows.iloc[-1]
                     is_today = True
                 else:
-                    # 今日无数据（盘前/接口延迟），取最新一行（昨日）
                     latest = df.iloc[-1]
-                    is_today = False
             else:
                 latest = df.iloc[-1]
-                is_today = False
 
-            # 主力净流入（元 → 万元）
             main_net_raw = safe_float(latest.get('主力净流入-净额', 0))
             main_pct = safe_float(latest.get('主力净流入-净占比', 0))
-
-            # 超大单+大单 = 主力；也单独暴露便于精细分析
             super_large = safe_float(latest.get('超大单净流入-净额', 0))
             large = safe_float(latest.get('大单净流入-净额', 0))
 
@@ -391,37 +440,12 @@ class AkshareFetcher(BaseFetcher):
                 super_large_net=round(super_large / 10000, 2) if super_large else 0,
                 large_net=round(large / 10000, 2) if large else 0,
             )
-            # 落 DB 缓存（供下次批量分析复用，避免重复打接口）
-            try:
-                import json as _json
-                from src.storage import DatabaseManager
-                from sqlalchemy import text as _text
-                _db = DatabaseManager()
-                _payload = _json.dumps({
-                    'main_net_flow': result.main_net_flow,
-                    'main_net_flow_pct': result.main_net_flow_pct,
-                    'super_large_net': result.super_large_net,
-                    'large_net': result.large_net,
-                })
-                with _db.get_session() as _s:
-                    _s.execute(_text(
-                        "INSERT INTO data_cache (cache_type, cache_key, data_json, fetched_at) "
-                        "VALUES ('capital_flow', :k, :v, datetime('now')) "
-                        "ON CONFLICT(cache_type, cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at"
-                    ), {'k': stock_code, 'v': _payload})
-                    _s.commit()
-            except Exception as _e:
-                logger.debug(f"[{stock_code}] 资金流向落DB缓存失败: {_e}")
-            # 内存缓存：盘中3分钟，盘后10分钟
-            _intraday = self._is_market_open()
-            ttl = 180 if _intraday else self._CAPITAL_FLOW_TTL
-            self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time(), 'ttl': ttl}
             data_tag = "今日" if is_today else "昨日"
-            logger.info(f"💰 [{stock_code}] 资金流向({data_tag}): 主力净流入={result.main_net_flow:.0f}万 ({result.main_net_flow_pct:.1f}%)")
+            _save_cache(result, is_today=is_today, source=f"akshare({data_tag})")
             return result
 
         except Exception as e:
-            logger.debug(f"[{stock_code}] 资金流向获取失败: {e}")
+            logger.debug(f"[{stock_code}] 资金流向获取失败(akshare): {e}")
             return None
 
     @staticmethod
