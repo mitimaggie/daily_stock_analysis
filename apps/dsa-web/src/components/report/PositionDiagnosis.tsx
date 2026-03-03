@@ -88,9 +88,12 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
 
   return (
     <Card variant="bordered" padding="md">
-      <div className="flex items-baseline gap-2 mb-3">
+      <div className="flex items-baseline gap-2 mb-1">
         <span className="label-uppercase">PORTFOLIO</span>
         <h3 className="text-base font-semibold text-white">持仓诊断</h3>
+      </div>
+      <div className="text-[10px] text-white/25 mb-3 leading-relaxed">
+        💡 <span className="text-white/35">成本线的作用</span>：不作为硬止损执行线（统计显示跌破成本线触发率高达 97%，会过早被迫出场），而是用于①感知当前浮盈状态②判断是否应启动「保利止损线（移动止损）」。止损执行以上方「盘中关键价位」的技术止损为准。
       </div>
 
       <div className="space-y-3">
