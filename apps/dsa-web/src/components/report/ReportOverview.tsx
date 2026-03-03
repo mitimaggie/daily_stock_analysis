@@ -15,9 +15,12 @@ interface ReportOverviewProps {
   oneSentence?: string;
   costPrice?: number;
   positionAmount?: number;
+  shares?: number;
+  totalCapital?: number;
   scoreMomentumAdj?: number;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  onPositionChange?: (shares: number, costPrice: number) => void;
   actionNow?: string;
   executionDifficulty?: string;
   executionNote?: string;
@@ -49,15 +52,22 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   oneSentence,
   costPrice,
   positionAmount,
+  shares,
+  totalCapital,
   scoreMomentumAdj = 0,
   onRefresh,
   isRefreshing = false,
+  onPositionChange,
   actionNow,
   executionDifficulty,
   executionNote,
   behavioralWarning,
   skillUsed,
 }) => {
+  // 内联持仓编辑状态
+  const [editingPosition, setEditingPosition] = useState(false);
+  const [editShares, setEditShares] = useState('');
+  const [editCost, setEditCost] = useState('');
   // 盘中自动刷新价格
   const [livePrice, setLivePrice] = useState<number | undefined>(meta.currentPrice ?? undefined);
   const [liveChangePct, setLiveChangePct] = useState<number | undefined>(meta.changePct ?? undefined);
@@ -220,14 +230,46 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         </div>
       </div>
 
-      {/* 持仓成本 & 浮盈亏（有持仓时显示） */}
+      {/* 持仓成本 & 浮盈亏（有持仓时显示，支持内联编辑） */}
       {hasPositionInfo && costPrice != null && costPrice > 0 && (() => {
         const price = displayPrice ?? meta.currentPrice;
         const pnlPct = price && price > 0 ? ((price - costPrice) / costPrice * 100) : null;
-        const pnlAmt = price && positionAmount && costPrice > 0 ? ((price - costPrice) / costPrice * positionAmount) : null;
-        return (
-          <div className="flex items-center gap-4 text-[12px] text-white/50">
+        const sharesVal = shares ?? (positionAmount && costPrice > 0 ? Math.round(positionAmount / costPrice) : undefined);
+        const posVal = sharesVal && sharesVal > 0 && costPrice > 0 ? sharesVal * costPrice : null;
+        const pctOfCapital = posVal && totalCapital && totalCapital > 0 ? (posVal / totalCapital * 100).toFixed(1) : null;
+        const pnlAmt = price && sharesVal && sharesVal > 0 ? (price - costPrice) * sharesVal : null;
+        return editingPosition ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="number" step="1" value={editShares}
+              onChange={e => setEditShares(e.target.value)}
+              placeholder="持股（股）"
+              className="w-24 bg-white/5 border border-white/15 rounded px-2 py-0.5 text-[12px] text-white font-mono placeholder-white/25 focus:outline-none focus:border-cyan-500/50"
+            />
+            <input
+              type="number" step="0.01" value={editCost}
+              onChange={e => setEditCost(e.target.value)}
+              placeholder="成本价"
+              className="w-24 bg-white/5 border border-white/15 rounded px-2 py-0.5 text-[12px] text-white font-mono placeholder-white/25 focus:outline-none focus:border-cyan-500/50"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const s = parseInt(editShares) || 0;
+                const c = parseFloat(editCost) || 0;
+                if (s > 0 && c > 0 && onPositionChange) onPositionChange(s, c);
+                setEditingPosition(false);
+              }}
+              className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/25 transition"
+            >确认 →重新分析</button>
+            <button type="button" onClick={() => setEditingPosition(false)} className="text-[11px] text-white/25 hover:text-white/50">取消</button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 text-[12px] text-white/50 flex-wrap">
             <span>成本 <span className="font-mono text-white/70">{costPrice.toFixed(2)}</span></span>
+            {sharesVal != null && <span className="font-mono text-white/40">{sharesVal}股</span>}
+            {posVal && <span className="font-mono text-white/40">{(posVal / 10000).toFixed(2)}万</span>}
+            {pctOfCapital && <span className="font-mono text-white/40">仓位{pctOfCapital}%</span>}
             {pnlPct != null && (
               <span className={`font-mono font-semibold ${pnlPct >= 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
                 {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
@@ -237,6 +279,13 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               <span className={`font-mono text-[11px] ${pnlAmt >= 0 ? 'text-[#ff4d4d]/70' : 'text-[#00d46a]/70'}`}>
                 {pnlAmt >= 0 ? '+' : ''}{(pnlAmt / 10000).toFixed(2)}万
               </span>
+            )}
+            {onPositionChange && (
+              <button
+                type="button"
+                onClick={() => { setEditShares(String(sharesVal ?? '')); setEditCost(String(costPrice)); setEditingPosition(true); }}
+                className="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/25 hover:text-white/50 hover:border-white/20 transition ml-1"
+              >修改</button>
             )}
           </div>
         );

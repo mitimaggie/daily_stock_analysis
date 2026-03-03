@@ -16,6 +16,9 @@ interface ReportSummaryProps {
   isHistory?: boolean;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  shares?: number;
+  totalCapital?: number;
+  onPositionChange?: (shares: number, costPrice: number) => void;
 }
 
 /**
@@ -27,6 +30,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   isHistory = false,
   onRefresh,
   isRefreshing,
+  shares,
+  totalCapital,
+  onPositionChange,
 }) => {
   // 兼容 AnalysisResult 和 AnalysisReport 两种数据格式
   const report: AnalysisReport = 'report' in data ? data.report : data;
@@ -71,10 +77,13 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         oneSentence={oneSentence ?? undefined}
         costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
         positionAmount={positionInfo?.position_amount ?? positionInfo?.positionAmount}
+        shares={shares}
+        totalCapital={totalCapital}
         scoreMomentumAdj={scoreMomentumAdj}
         isHistory={isHistory}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
+        onPositionChange={onPositionChange}
         actionNow={actionNow ?? undefined}
         executionDifficulty={executionDifficulty ?? undefined}
         executionNote={executionNote ?? undefined}

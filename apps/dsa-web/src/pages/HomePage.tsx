@@ -480,6 +480,24 @@ const HomePage: React.FC = () => {
     }
   }, [selectedReport, buildPositionInfo]);
 
+  // 持仓变更：更新 state + 同步数据库 + 触发重新分析
+  const handlePositionChange = useCallback(async (newShares: number, newCostPrice: number) => {
+    setPositionAmount(String(newShares));
+    setCostPrice(String(newCostPrice));
+    const code = stockCode || (selectedReport?.meta?.stockCode ?? '');
+    if (code) {
+      try {
+        await portfolioApi.add({
+          code,
+          name: selectedReport?.meta?.stockName || code,
+          costPrice: newCostPrice,
+          shares: newShares,
+        });
+      } catch { /* 静默失败 */ }
+    }
+    handleRefreshReport();
+  }, [stockCode, selectedReport, handleRefreshReport]);
+
   // 自选股：单只分析
   const handleWatchlistAnalyze = useCallback((code: string) => {
     setStockCode(code);
@@ -769,7 +787,15 @@ const HomePage: React.FC = () => {
             ) : selectedReport ? (
               <>
                 <div className="max-w-4xl mx-auto animate-fade-in">
-                  <ReportSummary data={selectedReport} isHistory onRefresh={handleRefreshReport} isRefreshing={isAnalyzing} />
+                  <ReportSummary
+                    data={selectedReport}
+                    isHistory
+                    onRefresh={handleRefreshReport}
+                    isRefreshing={isAnalyzing}
+                    shares={positionAmount ? parseInt(positionAmount) : undefined}
+                    totalCapital={totalCapital ? parseFloat(totalCapital) * 10000 : undefined}
+                    onPositionChange={handlePositionChange}
+                  />
                   {/* 加入持仓/关注 快捷操作 */}
                   <QuickAddBar report={selectedReport} />
                 </div>
