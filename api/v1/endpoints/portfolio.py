@@ -81,9 +81,84 @@ def api_monitor_portfolio():
     """
     try:
         signals = monitor_portfolio()
-        return {"signals": signals, "count": len(signals)}
+        # P3: 生成组合集中度预警
+        concentration_warnings = _calc_concentration_warnings(signals)
+        return {"signals": signals, "count": len(signals), "concentration_warnings": concentration_warnings}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _calc_concentration_warnings(signals: list) -> list:
+    """从最近分析记录里读取板块/仓位信息，运行 PortfolioAnalyzer 生成集中度预警"""
+    try:
+        import json
+        from src.storage import DatabaseManager, AnalysisHistory
+        from src.analyzer import AnalysisResult
+        from src.portfolio_analyzer import PortfolioAnalyzer
+        from sqlalchemy import select, desc, and_
+
+        if not signals:
+            return []
+
+        db = DatabaseManager.get_instance()
+        codes = [s['code'] for s in signals]
+
+        # 取每只股票最近一条分析记录（含 score_breakdown / sector / position_pct）
+        fake_results = []
+        for sig in signals:
+            code = sig['code']
+            with db.get_session() as session:
+                rec = session.execute(
+                    select(AnalysisHistory)
+                    .where(AnalysisHistory.code == code)
+                    .order_by(desc(AnalysisHistory.created_at))
+                    .limit(1)
+                ).scalar_one_or_none()
+
+            if not rec:
+                continue
+
+            r = AnalysisResult(
+                code=code,
+                name=sig.get('name', ''),
+                sentiment_score=rec.sentiment_score or 50,
+                operation_advice=rec.operation_advice or '',
+                trend_prediction='',
+                analysis_summary='',
+                success=True,
+            )
+            # 根据信号确定 decision_type
+            signal_val = sig.get('signal', 'hold')
+            r.decision_type = 'sell' if signal_val in ('stop_loss', 'reduce') else 'hold'
+
+            # 从 raw_result 里提取 dashboard 数据（板块、仓位）
+            if rec.raw_result:
+                try:
+                    raw = json.loads(rec.raw_result)
+                    db_data = raw.get('dashboard', {})
+                    qe = db_data.get('quant_extras', {}) or {}
+                    # 补充持仓市值用于仓位计算
+                    current_price = sig.get('current_price') or 0
+                    shares = sig.get('shares') or 0
+                    if current_price > 0 and shares > 0:
+                        pos_pct = round(current_price * shares / 500000 * 100)  # 假设总资金50万
+                        qe['suggested_position_pct'] = max(pos_pct, qe.get('suggested_position_pct', 0))
+                    r.dashboard = {'quant_extras': qe}
+                except Exception:
+                    pass
+
+            fake_results.append(r)
+
+        if not fake_results:
+            return []
+
+        analyzer = PortfolioAnalyzer()
+        report = analyzer.analyze(fake_results)
+        return report.concentration_warnings or []
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"concentration_warnings 计算失败: {e}")
+        return []
 
 
 # ─── 关注股 CRUD ──────────────────────────────

@@ -174,6 +174,7 @@ const WatchlistCard: React.FC<{
 const PortfolioPage: React.FC = () => {
   const [tab, setTab] = useState<'monitor' | 'watchlist'>('monitor');
   const [signals, setSignals] = useState<MonitorSignal[]>([]);
+  const [concentrationWarnings, setConcentrationWarnings] = useState<string[]>([]);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [sortBy, setSortBy] = useState<'score' | 'change'>('score');
   const [loadingSignals, setLoadingSignals] = useState(false);
@@ -188,7 +189,8 @@ const PortfolioPage: React.FC = () => {
     setLoadingSignals(true);
     try {
       const data = await portfolioApi.monitor();
-      setSignals(data);
+      setSignals(data.signals);
+      setConcentrationWarnings(data.concentrationWarnings);
       setLastUpdated(new Date());
     } catch (e) {
       console.error('监控信号获取失败', e);
@@ -296,6 +298,18 @@ const PortfolioPage: React.FC = () => {
                 {loadingSignals ? '刷新中…' : '立即刷新'}
               </button>
             </div>
+
+            {/* 组合集中度预警横幅 */}
+            {concentrationWarnings.length > 0 && (
+              <div className="space-y-2">
+                {concentrationWarnings.map((w, i) => (
+                  <div key={i} className="flex items-start gap-2 rounded-lg px-3 py-2 border border-amber-500/25 bg-amber-500/8 text-[12px] text-amber-300/90 leading-relaxed">
+                    <span className="flex-shrink-0 mt-0.5">⚠️</span>
+                    <span>{w.replace(/^⚠️\s*/, '')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* 持仓卡片列表 */}
             {signals.length === 0 ? (

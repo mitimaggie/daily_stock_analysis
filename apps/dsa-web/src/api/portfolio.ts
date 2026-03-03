@@ -90,9 +90,12 @@ export const portfolioApi = {
   },
 
   // 持仓监控
-  monitor: async (): Promise<MonitorSignal[]> => {
-    const res = await apiClient.get<{ signals: unknown[] }>('/api/v1/portfolio/monitor/signals');
-    return (res.data.signals || []).map(s => toCamelCase<MonitorSignal>(s as Record<string, unknown>));
+  monitor: async (): Promise<{ signals: MonitorSignal[]; concentrationWarnings: string[] }> => {
+    const res = await apiClient.get<{ signals: unknown[]; concentration_warnings?: string[] }>('/api/v1/portfolio/monitor/signals');
+    return {
+      signals: (res.data.signals || []).map(s => toCamelCase<MonitorSignal>(s as Record<string, unknown>)),
+      concentrationWarnings: res.data.concentration_warnings || [],
+    };
   },
 
   // 关注股 CRUD

@@ -94,6 +94,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--chip-only', action='store_true', help='仅拉取筹码分布并落库（供定时任务在固定时间跑，分析时用缓存）')
     parser.add_argument('--fast', action='store_true', help='盘中快速模式：跳过外部搜索、用缓存舆情、强制轻量模型、跳过F10')
     parser.add_argument('--backtest', action='store_true', help='回测模式：回填历史分析的实际收益率并输出胜率统计')
+    parser.add_argument('--compare-weights', action='store_true', help='权重对比模式：用历史 score_breakdown 重算两套权重的胜率差异')
     parser.add_argument('--daemon', action='store_true', help='守护进程模式：启动 FastAPI + 定时调度，不立即分析')
     return parser.parse_args()
 
@@ -428,6 +429,33 @@ def main() -> int:
             from src.backtest import BacktestRunner
             runner = BacktestRunner()
             report = runner.run(lookback_days=60)
+            print(report)
+            return 0
+
+        # 模式-1b: 权重对比回测
+        if getattr(args, 'compare_weights', False):
+            logger.info("模式: 权重对比回测")
+            from src.backtest import BacktestRunner
+            runner = BacktestRunner()
+            # 旧权重（Layer A 修改前）
+            config_old = {
+                'name': '旧权重（修改前，量能偏重）',
+                'weights': {
+                    'bull':     {'trend': 28, 'bias': 12, 'volume': 15, 'support': 5,  'macd': 15, 'rsi': 12, 'kdj': 13},
+                    'sideways': {'trend': 18, 'bias': 20, 'volume': 15, 'support': 12, 'macd': 10, 'rsi': 10, 'kdj': 15},
+                    'bear':     {'trend': 13, 'bias': 17, 'volume': 18, 'support': 13, 'macd': 10, 'rsi': 13, 'kdj': 16},
+                }
+            }
+            # 新权重（Layer A 修改后，MACD 提权）
+            config_new = {
+                'name': '新权重（当前，MACD提权）',
+                'weights': {
+                    'bull':     {'trend': 30, 'bias': 12, 'volume': 10, 'support': 5,  'macd': 20, 'rsi': 10, 'kdj': 13},
+                    'sideways': {'trend': 18, 'bias': 20, 'volume': 10, 'support': 12, 'macd': 15, 'rsi': 10, 'kdj': 15},
+                    'bear':     {'trend': 13, 'bias': 17, 'volume': 15, 'support': 13, 'macd': 14, 'rsi': 13, 'kdj': 15},
+                }
+            }
+            report = runner.compare_weight_configs(config_old, config_new, lookback_days=90, buy_threshold=70)
             print(report)
             return 0
 

@@ -549,3 +549,167 @@ class BacktestRunner:
             round(max_drawdown, 2),
             round(calmar, 2)
         )
+
+    def compare_weight_configs(
+        self,
+        config_a: Dict[str, Any],
+        config_b: Dict[str, Any],
+        lookback_days: int = 60,
+        buy_threshold: int = 70,
+    ) -> str:
+        """对比两套权重配置的回测效果
+        
+        利用历史记录中已存储的 score_breakdown（各维度原始分），
+        用两套权重分别重新计算假设评分，然后比较胜率/平均收益/夏普比率。
+        
+        Args:
+            config_a: 权重配置A，形如 {"name": "...", "weights": {"bull": {...}, "sideways": {...}, "bear": {...}}}
+            config_b: 权重配置B，同上
+            lookback_days: 回溯天数
+            buy_threshold: 买入信号阈值（假设评分>=该值视为买入）
+        
+        Returns:
+            对比报告文本
+        """
+        import json as _json
+        
+        with self.db.get_session() as session:
+            cutoff = datetime.now() - timedelta(days=lookback_days)
+            records = session.execute(
+                select(AnalysisHistory).where(
+                    and_(
+                        AnalysisHistory.created_at >= cutoff,
+                        AnalysisHistory.backtest_filled == 1,
+                        AnalysisHistory.actual_pct_5d != None,
+                    )
+                )
+            ).scalars().all()
+            records = list(records)
+
+        if not records:
+            return "暂无可用的回测数据"
+
+        # 只保留有 score_breakdown 的记录（可重算）
+        import json as _json_pre
+        def _has_breakdown(r) -> bool:
+            try:
+                raw = _json_pre.loads(r.raw_result)
+                qe = raw.get("dashboard", {}).get("quant_extras", {}) or {}
+                return bool(qe.get("score_breakdown"))
+            except Exception:
+                return False
+
+        records = [r for r in records if _has_breakdown(r)]
+        if not records:
+            return "⚠️ 暂无含 score_breakdown 的回测记录（score_breakdown 自 Layer A 修改后才开始记录，需等待更多新数据回填）"
+
+        # 去重（同股同日保留最高评分）
+        dedup_map: dict = {}
+        for r in records:
+            day_key = (r.code, r.created_at.date() if r.created_at else None)
+            existing = dedup_map.get(day_key)
+            if existing is None or (r.sentiment_score or 0) > (existing.sentiment_score or 0):
+                dedup_map[day_key] = r
+        records = list(dedup_map.values())
+
+        BASE_DIMS = ("trend", "bias", "volume", "support", "macd", "rsi", "kdj")
+
+        def _recalc_score(score_breakdown: Dict[str, float], regime: str, weights_cfg: Dict[str, Dict]) -> int:
+            """用新权重重新计算基础分（只用7个基础维度）"""
+            regime_key = regime.lower() if regime else "sideways"
+            if regime_key not in ("bull", "sideways", "bear"):
+                regime_key = "sideways"
+            w = weights_cfg.get(regime_key, weights_cfg.get("sideways", {}))
+            if not w:
+                return 0
+            score = sum(
+                min(w.get(dim, 0), round(score_breakdown.get(dim, 0) * w.get(dim, 0)))
+                for dim in BASE_DIMS
+                if dim in score_breakdown
+            )
+            return min(100, max(0, score))
+
+        def _analyze_group(recs: List[AnalysisHistory], weights_cfg: Dict[str, Dict]) -> Dict[str, Any]:
+            """按新权重对一组记录重新计算评分，统计买入信号胜率"""
+            buy_pcts = []
+            total_recalc = 0
+            for r in recs:
+                if r.actual_pct_5d is None or not r.raw_result:
+                    continue
+                try:
+                    raw = _json.loads(r.raw_result)
+                    db = raw.get("dashboard", {})
+                    qe = db.get("quant_extras", {}) if isinstance(db, dict) else {}
+                    sb = qe.get("score_breakdown", {}) if isinstance(qe, dict) else {}
+                    regime = qe.get("market_regime", "sideways") if isinstance(qe, dict) else "sideways"
+                    if not sb:
+                        continue
+                    new_score = _recalc_score(sb, regime, weights_cfg)
+                    total_recalc += 1
+                    if new_score >= buy_threshold:
+                        buy_pcts.append(r.actual_pct_5d)
+                except Exception:
+                    continue
+            if not buy_pcts:
+                return {"buy_count": 0, "win_rate": 0.0, "avg_pct": 0.0, "sharpe": 0.0, "total_recalc": total_recalc}
+            win_rate = sum(1 for p in buy_pcts if p > 0) / len(buy_pcts) * 100
+            avg_pct = sum(buy_pcts) / len(buy_pcts)
+            sharpe = self._calc_sharpe_ratio(buy_pcts)
+            return {"buy_count": len(buy_pcts), "win_rate": win_rate, "avg_pct": avg_pct, "sharpe": sharpe, "total_recalc": total_recalc}
+
+        res_a = _analyze_group(records, config_a["weights"])
+        res_b = _analyze_group(records, config_b["weights"])
+
+        name_a = config_a.get("name", "配置A")
+        name_b = config_b.get("name", "配置B（当前）")
+
+        lines = [
+            f"## ⚖️ 权重配置对比回测（近{lookback_days}天，去重后{len(records)}条，买入阈值≥{buy_threshold}分）",
+            "",
+            f"| 指标 | {name_a} | {name_b} | 变化 |",
+            "|------|---------|---------|------|",
+        ]
+
+        def _fmt_chg(v_a, v_b, fmt="+.2f", unit=""):
+            chg = v_b - v_a
+            sign = "+" if chg >= 0 else ""
+            return f"{sign}{chg:{fmt}}{unit}"
+
+        for label, key, fmt, unit in [
+            ("买入信号数", "buy_count", "d", ""),
+            ("胜率", "win_rate", ".1f", "%"),
+            ("平均5日收益", "avg_pct", "+.2f", "%"),
+            ("夏普比率", "sharpe", ".2f", ""),
+        ]:
+            va = res_a[key]
+            vb = res_b[key]
+            if fmt == "d":
+                lines.append(f"| {label} | {va} | {vb} | {vb - va:+d} |")
+            else:
+                lines.append(f"| {label} | {va:{fmt}}{unit} | {vb:{fmt}}{unit} | {_fmt_chg(va, vb, fmt, unit)} |")
+
+        lines.extend([
+            "",
+            f"> 可重新计算的记录数：{name_a} {res_a['total_recalc']} / {name_b} {res_b['total_recalc']}（需记录含 score_breakdown）",
+            "",
+            "### 权重配置详情",
+            "",
+            f"**{name_a}**",
+            "| 市场 | trend | bias | volume | support | macd | rsi | kdj |",
+            "|------|-------|------|--------|---------|------|-----|-----|",
+        ])
+        for regime in ("bull", "sideways", "bear"):
+            w = config_a["weights"].get(regime, {})
+            lines.append(f"| {regime} | {w.get('trend','-')} | {w.get('bias','-')} | {w.get('volume','-')} | {w.get('support','-')} | {w.get('macd','-')} | {w.get('rsi','-')} | {w.get('kdj','-')} |")
+
+        lines.extend([
+            "",
+            f"**{name_b}**",
+            "| 市场 | trend | bias | volume | support | macd | rsi | kdj |",
+            "|------|-------|------|--------|---------|------|-----|-----|",
+        ])
+        for regime in ("bull", "sideways", "bear"):
+            w = config_b["weights"].get(regime, {})
+            lines.append(f"| {regime} | {w.get('trend','-')} | {w.get('bias','-')} | {w.get('volume','-')} | {w.get('support','-')} | {w.get('macd','-')} | {w.get('rsi','-')} | {w.get('kdj','-')} |")
+
+        return "\n".join(lines)
