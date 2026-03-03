@@ -299,6 +299,46 @@ const PortfolioPage: React.FC = () => {
               </button>
             </div>
 
+            {/* 组合盈亏汇总卡片 */}
+            {signals.length > 0 && (() => {
+              const validSignals = signals.filter(s => s.currentPrice != null && s.shares > 0);
+              const totalCost = validSignals.reduce((sum, s) => sum + s.costPrice * s.shares, 0);
+              const totalMarket = validSignals.reduce((sum, s) => sum + (s.currentPrice ?? s.costPrice) * s.shares, 0);
+              const totalPnlAmt = totalMarket - totalCost;
+              const totalPnlPct = totalCost > 0 ? totalPnlAmt / totalCost * 100 : 0;
+              const pnlColor = totalPnlAmt >= 0 ? 'text-red-400' : 'text-emerald-400';
+              const maxRiskSignal = signals.filter(s => s.signal === 'stop_loss' || s.signal === 'reduce')
+                .map(s => ({ name: s.name, pnlPct: s.pnlPct ?? 0 }))
+                .sort((a, b) => a.pnlPct - b.pnlPct)[0];
+              return (
+                <div className="rounded-lg border border-white/8 bg-white/3 px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+                    <div className="text-[11px] text-white/30 font-medium uppercase tracking-wider flex-none w-full mb-0.5">组合概览</div>
+                    <div className="text-[12px] text-white/50">
+                      持仓市值 <span className="font-mono text-white/80">{(totalMarket / 10000).toFixed(2)}万</span>
+                    </div>
+                    <div className="text-[12px] text-white/50">
+                      总成本 <span className="font-mono text-white/60">{(totalCost / 10000).toFixed(2)}万</span>
+                    </div>
+                    <div className="text-[12px] text-white/50">
+                      总浮盈亏
+                      <span className={`font-mono font-semibold ml-1 ${pnlColor}`}>
+                        {totalPnlAmt >= 0 ? '+' : ''}{(totalPnlAmt / 10000).toFixed(2)}万
+                      </span>
+                      <span className={`font-mono text-[11px] ml-1 ${pnlColor}`}>
+                        ({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)
+                      </span>
+                    </div>
+                    {maxRiskSignal && (
+                      <div className="text-[12px] text-white/50">
+                        最大风险 <span className="font-mono text-red-400/80">{maxRiskSignal.name}（{maxRiskSignal.pnlPct >= 0 ? '+' : ''}{maxRiskSignal.pnlPct.toFixed(1)}%）</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* 组合集中度预警横幅 */}
             {concentrationWarnings.length > 0 && (
               <div className="space-y-2">

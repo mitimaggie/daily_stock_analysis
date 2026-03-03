@@ -187,7 +187,67 @@ class PortfolioAnalyzer:
         else:
             report.overall_advice = "📊 组合中性，观望为主"
 
+        # === 7. 持仓间相关性矩阵预警 ===
+        PortfolioAnalyzer._calc_correlation_warnings(stocks, report)
+
         return report
+
+    @staticmethod
+    def _calc_correlation_warnings(stocks: list, report: 'PortfolioReport'):
+        """计算持仓股票间的60日收益率相关性，高相关（>0.85）触发预警
+
+        高相关意味着两只股票走势高度同步，组合分散效果极弱，
+        实际等于在同一个风险上下了双倍注。
+        """
+        if len(stocks) < 2:
+            return
+        try:
+            import pandas as pd
+            from src.storage import DatabaseManager
+
+            db = DatabaseManager.get_instance()
+            ret_series: dict = {}
+
+            for s in stocks:
+                try:
+                    df = db.get_stock_history_df(s.code, days=80)
+                    if df is not None and len(df) >= 40 and 'close' in df.columns:
+                        ret = df['close'].pct_change().dropna().tail(60)
+                        if len(ret) >= 40:
+                            ret_series[s.code] = ret.reset_index(drop=True)
+                except Exception:
+                    continue
+
+            codes = list(ret_series.keys())
+            if len(codes) < 2:
+                return
+
+            # 对齐最小长度
+            min_len = min(len(ret_series[c]) for c in codes)
+            matrix = pd.DataFrame({c: ret_series[c].values[:min_len] for c in codes})
+
+            corr = matrix.corr()
+            warned_pairs: set = set()
+
+            for i, c1 in enumerate(codes):
+                for j, c2 in enumerate(codes):
+                    if j <= i:
+                        continue
+                    pair_key = tuple(sorted([c1, c2]))
+                    if pair_key in warned_pairs:
+                        continue
+                    r = corr.loc[c1, c2]
+                    if r > 0.85:
+                        n1 = next((s.name for s in stocks if s.code == c1), c1)
+                        n2 = next((s.name for s in stocks if s.code == c2), c2)
+                        w = (
+                            f"⚠️ {n1}({c1}) 与 {n2}({c2}) 60日收益相关性={r:.2f}（>0.85），"
+                            f"高度同步，组合分散效果极弱，实际等于双倍持仓同一风险"
+                        )
+                        report.concentration_warnings.append(w)
+                        warned_pairs.add(pair_key)
+        except Exception as e:
+            logger.debug(f"相关性矩阵计算失败: {e}")
 
     @staticmethod
     def format_report(report: PortfolioReport, portfolio_size: float = 0) -> str:

@@ -397,6 +397,8 @@ class StockTrendAnalyzer:
                 result.score_breakdown['candle_pattern'] = result.candle_score_adj
             # OBV/ADX/均线发散 评分修正
             ScoringSystem.score_obv_adx(result)
+            ScoringSystem.detect_rsi_macd_divergence(result, df)
+            ScoringSystem.detect_volume_spike_trap(result, df)
             ScoringSystem.score_weekly_trend(result, df)
             ScoringSystem.score_chart_patterns(result, df)
             ScoringSystem.score_vol_anomaly(result, df)
@@ -421,6 +423,7 @@ class StockTrendAnalyzer:
                 _t.join(timeout=max(0, _deadline_score - _t_score.time()))
             ScoringSystem.score_vwap_trend(result)
             ScoringSystem.score_intraday_volume_signal(result)
+            ScoringSystem.score_market_sentiment_adj(result)
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)

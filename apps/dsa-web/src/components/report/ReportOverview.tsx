@@ -291,6 +291,55 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         );
       })()}
 
+      {/* 评分历史折线图（有数据时显示） */}
+      {scoreTrend && scoreTrend.scores.length >= 3 && (() => {
+        const scores = scoreTrend.scores;
+        const W = 120, H = 28, PAD = 2;
+        const vals = scores.map(s => s.score);
+        const minV = Math.max(0, Math.min(...vals) - 5);
+        const maxV = Math.min(100, Math.max(...vals) + 5);
+        const range = maxV - minV || 1;
+        const pts = vals.map((v, i) => {
+          const x = PAD + (i / (vals.length - 1)) * (W - PAD * 2);
+          const y = H - PAD - ((v - minV) / range) * (H - PAD * 2);
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const lastScore = vals[vals.length - 1];
+        const firstScore = vals[0];
+        const improving = lastScore > firstScore;
+        const lineColor = improving ? '#34d399' : lastScore < firstScore ? '#f87171' : '#94a3b8';
+        const dir = scoreTrend.trend_direction;
+        return (
+          <div className="flex items-center gap-3">
+            <svg width={W} height={H} className="flex-none overflow-visible">
+              <polyline
+                points={pts}
+                fill="none"
+                stroke={lineColor}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.85"
+              />
+              {/* 最后一个点高亮 */}
+              {(() => {
+                const [lx, ly] = pts.split(' ').pop()!.split(',').map(Number);
+                return <circle cx={lx} cy={ly} r="2.5" fill={lineColor} />;
+              })()}
+            </svg>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono">
+              <span className="text-white/25">{scores[0].date.slice(5)}</span>
+              <span className="text-white/20">→</span>
+              <span className="text-white/25">{scores[scores.length - 1].date.slice(5)}</span>
+              <span className={`ml-1 ${dir === 'improving' ? 'text-emerald-400' : dir === 'declining' ? 'text-red-400' : 'text-white/35'}`}>
+                {dir === 'improving' ? '↗' : dir === 'declining' ? '↘' : '→'}
+                {scoreTrend.avg_score.toFixed(0)}均
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 操作建议 + 趋势预测（紧凑两行） */}
       <div className="grid grid-cols-2 gap-x-4 text-[13px]">
         <div>

@@ -363,14 +363,27 @@ class ScoringSystem:
                     v_score = 10
                     result.valuation_verdict = f"低估(PE{result.pe_ratio:.0f},行业{industry_pe:.0f},{pe_ratio_rel:.1f}x)"
             else:
+                # 成长股豁免：净利/营收增速>30% 且 PE<150 时降低惩罚（科技/医药成长溢价合理）
+                _growth = valuation.net_profit_growth or valuation.revenue_growth
+                _is_growth = isinstance(_growth, (int, float)) and _growth > 30
                 if result.pe_ratio > 100:
-                    v_score = 0
-                    downgrade = -15
-                    result.valuation_verdict = "严重高估"
+                    if _is_growth and result.pe_ratio < 150:
+                        v_score = 3
+                        downgrade = -8
+                        result.valuation_verdict = f"成长溢价(PE{result.pe_ratio:.0f},增速{_growth:.0f}%,尚可接受)"
+                    else:
+                        v_score = 0
+                        downgrade = -15
+                        result.valuation_verdict = "严重高估"
                 elif result.pe_ratio > 60:
-                    v_score = 2
-                    downgrade = -10
-                    result.valuation_verdict = "偏高"
+                    if _is_growth:
+                        v_score = 4
+                        downgrade = -5
+                        result.valuation_verdict = f"成长溢价偏高(PE{result.pe_ratio:.0f},增速{_growth:.0f}%)"
+                    else:
+                        v_score = 2
+                        downgrade = -10
+                        result.valuation_verdict = "偏高"
                 elif result.pe_ratio > 30:
                     v_score = 4
                     downgrade = -3
@@ -1581,6 +1594,200 @@ class ScoringSystem:
             result.signal_reasons.append(f"均线空头收敛({spread:.1f}%)，下跌动能减弱")
             result.score_breakdown['ma_spread'] = 1
         
+    @staticmethod
+    def detect_rsi_macd_divergence(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P2: RSI / MACD 背离检测（顶背离看空、底背离看多）
+
+        背离定义：
+        - 顶背离：价格创近期新高，但 RSI/MACD_DIF 未创新高（动量衰竭，看空信号）
+        - 底背离：价格创近期新低，但 RSI/MACD_DIF 未创新低（下跌动力减弱，看多信号）
+
+        检测窗口：以近 40 根日线的局部高/低点为基础，识别最近两个同向极值点。
+
+        评分调整：
+        - RSI 顶背离：-4（高位追涨风险）
+        - MACD 顶背离：-3（动量衰竭）
+        - RSI+MACD 双顶背离：-6（强顶部警告）
+        - RSI 底背离：+4（超跌反弹）
+        - MACD 底背离：+3（动力衰竭止跌）
+        - RSI+MACD 双底背离：+6（强底部信号）
+        """
+        if df is None or len(df) < 30:
+            return
+        try:
+            close = df['close'].values.astype(float)
+            n = len(close)
+
+            # 计算 RSI(14)
+            delta = pd.Series(close).diff()
+            gain = delta.clip(lower=0).rolling(14).mean()
+            loss = (-delta.clip(upper=0)).rolling(14).mean()
+            rsi_series = (100 - 100 / (1 + gain / (loss + 1e-9))).values
+
+            # 计算 MACD DIF（EMA12-EMA26）
+            ema12 = pd.Series(close).ewm(span=12, adjust=False).mean().values
+            ema26 = pd.Series(close).ewm(span=26, adjust=False).mean().values
+            macd_dif = ema12 - ema26
+
+            # --- 寻找最近两个局部高点（近 60 日内，窗口=5）---
+            window = 5
+            lookback = min(60, n - 1)
+            start_idx = n - lookback
+
+            def find_peaks(arr, start, end, k=2):
+                """在 arr[start:end] 中找最近 k 个局部高点，返回 [(idx, val)]"""
+                peaks = []
+                for i in range(end - 1, start + window - 1, -1):
+                    lo, hi = max(0, i - window), min(len(arr), i + window + 1)
+                    if arr[i] >= max(arr[lo:hi]) - 1e-9:
+                        # 与上一个高点至少间隔 window 日
+                        if not peaks or (peaks[-1][0] - i) >= window:
+                            peaks.append((i, float(arr[i])))
+                        if len(peaks) >= k:
+                            break
+                return peaks
+
+            def find_troughs(arr, start, end, k=2):
+                """在 arr[start:end] 中找最近 k 个局部低点，返回 [(idx, val)]"""
+                troughs = []
+                for i in range(end - 1, start + window - 1, -1):
+                    lo, hi = max(0, i - window), min(len(arr), i + window + 1)
+                    if arr[i] <= min(arr[lo:hi]) + 1e-9:
+                        if not troughs or (troughs[-1][0] - i) >= window:
+                            troughs.append((i, float(arr[i])))
+                        if len(troughs) >= k:
+                            break
+                return troughs
+
+            price_peaks = find_peaks(close, start_idx, n)
+            price_troughs = find_troughs(close, start_idx, n)
+
+            rsi_div = 0    # >0 底背离, <0 顶背离
+            macd_div = 0
+
+            # === 顶背离检测 ===
+            if len(price_peaks) >= 2:
+                p1_idx, p1_val = price_peaks[0]   # 最近高点
+                p2_idx, p2_val = price_peaks[1]   # 上一个高点
+                # 价格创新高（近高点 > 前高点）
+                if p1_val > p2_val * 1.005 and p1_idx > p2_idx:
+                    rsi1, rsi2 = rsi_series[p1_idx], rsi_series[p2_idx]
+                    dif1, dif2 = macd_dif[p1_idx], macd_dif[p2_idx]
+                    # RSI 顶背离：价格新高但 RSI 更低
+                    if not (np.isnan(rsi1) or np.isnan(rsi2)) and rsi1 < rsi2 - 3 and rsi1 > 50:
+                        rsi_div = -1
+                        result.risk_factors.append(
+                            f"📉 RSI顶背离：价格高点{p1_val:.2f}>{p2_val:.2f}，"
+                            f"但RSI从{rsi2:.0f}降至{rsi1:.0f}，动量衰竭"
+                        )
+                    # MACD 顶背离：价格新高但 DIF 更低
+                    if not (np.isnan(dif1) or np.isnan(dif2)) and dif1 < dif2 - 0.001 * abs(p1_val):
+                        macd_div = -1
+                        result.risk_factors.append(
+                            f"📉 MACD顶背离：价格新高但DIF回落"
+                            f"({dif2:.4f}→{dif1:.4f})，上涨动力不足"
+                        )
+
+            # === 底背离检测 ===
+            if len(price_troughs) >= 2:
+                t1_idx, t1_val = price_troughs[0]   # 最近低点
+                t2_idx, t2_val = price_troughs[1]   # 上一个低点
+                # 价格创新低（近低点 < 前低点）
+                if t1_val < t2_val * 0.995 and t1_idx > t2_idx:
+                    rsi1, rsi2 = rsi_series[t1_idx], rsi_series[t2_idx]
+                    dif1, dif2 = macd_dif[t1_idx], macd_dif[t2_idx]
+                    # RSI 底背离：价格新低但 RSI 更高
+                    if not (np.isnan(rsi1) or np.isnan(rsi2)) and rsi1 > rsi2 + 3 and rsi1 < 50:
+                        rsi_div = 1
+                        result.signal_reasons.append(
+                            f"📈 RSI底背离：价格低点{t1_val:.2f}<{t2_val:.2f}，"
+                            f"但RSI从{rsi2:.0f}升至{rsi1:.0f}，下跌动力衰竭"
+                        )
+                    # MACD 底背离：价格新低但 DIF 更高
+                    if not (np.isnan(dif1) or np.isnan(dif2)) and dif1 > dif2 + 0.001 * abs(t1_val):
+                        macd_div = 1
+                        result.signal_reasons.append(
+                            f"📈 MACD底背离：价格新低但DIF抬升"
+                            f"({dif2:.4f}→{dif1:.4f})，止跌迹象"
+                        )
+
+            # 综合评分
+            adj = 0
+            if rsi_div < 0 and macd_div < 0:
+                adj = -6
+                result.risk_factors.append("⚠️ RSI+MACD双顶背离，高位反转风险极高，建议止盈减仓")
+            elif rsi_div < 0:
+                adj = -4
+            elif macd_div < 0:
+                adj = -3
+
+            if rsi_div > 0 and macd_div > 0:
+                adj = 6
+                result.signal_reasons.append("✅ RSI+MACD双底背离，强反转信号，关注底部买入机会")
+            elif rsi_div > 0:
+                adj = 4
+            elif macd_div > 0:
+                adj = 3
+
+            if adj != 0:
+                result.score_breakdown['divergence_adj'] = adj
+
+        except Exception as e:
+            logger.debug(f"[背离检测] 失败: {e}")
+
+    @staticmethod
+    def detect_volume_spike_trap(result: TrendAnalysisResult, df: pd.DataFrame):
+        """游资拉升陷阱检测：连续异常放量 + 短期大涨 = 追高风险
+
+        触发条件（需同时满足）：
+        1. 近5日内有 ≥3 日量比>2（连续异常放量）
+        2. 近10日涨幅>15%（短期大涨）
+        3. 当前非强势上涨趋势中的首板（排除真正突破）
+        
+        风险逻辑：游资连续拉升 + 量比异常 + 短期涨幅过大 → 出货迹象明显，
+        追高者面临高位接盘风险。
+        """
+        if df is None or len(df) < 10:
+            return
+        try:
+            recent5 = df.tail(5)
+            recent10 = df.tail(10)
+
+            # 计算近5日各日量比（当日成交量 / 近20日均量）
+            vol_20d_avg = float(df['volume'].tail(20).mean())
+            if vol_20d_avg <= 0:
+                return
+            vol_ratios_5d = [float(v) / vol_20d_avg for v in recent5['volume'].values]
+            spike_days = sum(1 for r in vol_ratios_5d if r > 2.0)
+
+            # 近10日涨幅
+            price_10d_ago = float(recent10['close'].iloc[0])
+            price_now = result.current_price or float(df['close'].iloc[-1])
+            if price_10d_ago <= 0:
+                return
+            gain_10d = (price_now - price_10d_ago) / price_10d_ago * 100
+
+            # 触发陷阱检测
+            if spike_days >= 3 and gain_10d > 15:
+                # 排除：真实强势突破（连板涨停 + 首板）
+                is_genuine_breakout = (
+                    result.is_limit_up and result.consecutive_limits <= 1
+                )
+                if not is_genuine_breakout:
+                    adj = -8
+                    result.score_breakdown['volume_spike_trap'] = adj
+                    result.risk_factors.append(
+                        f"⚠️ 游资拉升陷阱：近5日{spike_days}日量比>2倍+10日涨{gain_10d:.0f}%，"
+                        f"连续异常放量后高位追涨风险极高"
+                    )
+                    result.trading_halt = True
+                    halt_msg = f"异常放量拉升({spike_days}日量比>2x，10日涨{gain_10d:.0f}%)，疑似游资出货"
+                    result.trading_halt_reason = (
+                        (result.trading_halt_reason + "；" if result.trading_halt_reason else "") + halt_msg
+                    )
+        except Exception as e:
+            logger.debug(f"[游资陷阱检测] 失败: {e}")
+
     @staticmethod
     def score_weekly_trend(result: TrendAnalysisResult, df: pd.DataFrame):
         """P0: 周线趋势分析 — 日线分析的大背景
@@ -2879,7 +3086,8 @@ class ScoringSystem:
                    'forecast_adj', 'mcap_risk', 'beta_adj', 'intraday_vol_signal',
                    'weekly_trend_adj', 'chart_pattern_adj',
                    'fib_adj', 'vol_price_structure', 'vol_anomaly',
-                   'p3_resonance', 'p4_capital_flow', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder']
+                   'p3_resonance', 'p4_capital_flow', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder',
+                   'market_sentiment_adj', 'volume_spike_trap', 'divergence_adj']
         
         # === Beta 系数调整 ===
         # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚
@@ -2951,6 +3159,69 @@ class ScoringSystem:
             result._conflict_warnings = []
         result._conflict_warnings = conflicts
     
+    # ---- 市场情绪温度缓存（TTL=5分钟，避免每次分析都拉取全市场数据）----
+    _sentiment_cache: dict = {'data': None, 'ts': 0.0}
+    _SENTIMENT_TTL = 300  # 5分钟
+
+    @staticmethod
+    def score_market_sentiment_adj(result: TrendAnalysisResult):
+        """P0: 市场情绪温度修正（带TTL缓存，避免频繁akshare请求）
+
+        逻辑（逆向情绪投资）：
+        - 极度恐惧（temperature<25）：全市场亏钱效应强，但往往是底部区域 → +3~+5
+        - 恐惧（25~40）：情绪偏冷 → +1~+2
+        - 中性（40~65）：不修正
+        - 贪婪（65~80）：情绪偏热，追涨风险加大 → -2~-3
+        - 极度贪婪（>80）：市场过热，高位追涨风险极高 → -4~-6
+
+        注意：该修正仅调整 score_breakdown，不直接修改 signal_score，
+        由 cap_adjustments 统一应用。
+        """
+        import time as _t
+        cache = ScoringSystem._sentiment_cache
+        now = _t.time()
+
+        # 缓存未命中或已过期，重新获取
+        if cache['data'] is None or (now - cache['ts']) > ScoringSystem._SENTIMENT_TTL:
+            try:
+                from src.market_sentiment import fetch_market_sentiment
+                sentiment = fetch_market_sentiment()
+                cache['data'] = sentiment
+                cache['ts'] = now
+            except Exception:
+                cache['data'] = None
+                cache['ts'] = now
+
+        sentiment = cache['data']
+        if sentiment is None:
+            return
+
+        temp = sentiment.temperature
+        adj = 0
+
+        if temp < 25:
+            adj = 5   # 极度恐惧：逆向买入机会
+            result.signal_reasons.append(
+                f"🌡️ 市场极度恐惧(温度{temp})，历史上往往是底部区域，逆向机会"
+            )
+        elif temp < 40:
+            adj = 2   # 恐惧：情绪偏冷，估值相对合理
+            result.signal_reasons.append(f"🌡️ 市场偏冷(温度{temp})，情绪修复行情可期")
+        elif temp > 80:
+            adj = -6  # 极度贪婪：高位风险，快速降分
+            result.risk_factors.append(
+                f"🌡️ 市场极度贪婪(温度{temp}，涨停{sentiment.limit_up_count}家)，"
+                f"过热行情追涨风险极高，建议减仓"
+            )
+        elif temp > 65:
+            adj = -3  # 贪婪：情绪偏热，追高需谨慎
+            result.risk_factors.append(
+                f"🌡️ 市场偏热(温度{temp})，情绪高涨时需警惕回调"
+            )
+
+        if adj != 0:
+            result.score_breakdown['market_sentiment_adj'] = adj
+
     @staticmethod
     def update_buy_signal(result: TrendAnalysisResult):
         """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）"""
