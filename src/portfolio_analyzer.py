@@ -58,6 +58,8 @@ class PortfolioReport:
     overall_advice: str = ""
     # 风险告警
     risk_warnings: List[str] = field(default_factory=list)
+    # P3 增刧4: 集中度预警
+    concentration_warnings: List[str] = field(default_factory=list)
 
 
 class PortfolioAnalyzer:
@@ -117,6 +119,12 @@ class PortfolioAnalyzer:
                     f"建议分散至不同行业"
                 )
                 report.risk_warnings.append(report.sector_concentration_warning)
+            # P3 增刧4: 同一板块 ≥3 只且建议仓位占比>40%
+            if len(names) >= 3:
+                sector_pos_sum = sum(s.position_pct for s in stocks if s.sector == sector)
+                if sector_pos_sum > 40:
+                    _w = f"⚠️ {sector}板块持仓集中度过高（{len(names)}只，建议仓位合计{sector_pos_sum}%），板块系统性风险将同步放大"
+                    report.concentration_warnings.append(_w)
 
         # === 2. 方向分布 ===
         report.buy_count = sum(1 for s in stocks if s.decision_type == 'buy')
@@ -161,13 +169,21 @@ class PortfolioAnalyzer:
             else:
                 report.priority_hold.append(label)
 
+        # P3 增刧4: 多只同时减仓预警
+        sell_stocks = [s for s in stocks if s.decision_type == 'sell']
+        if len(sell_stocks) >= 2:
+            _sell_names = '\u3001'.join(f"{s.name}" for s in sell_stocks)
+            _w2 = f"⚠️ {len(sell_stocks)}只持仓同时走弱（{_sell_names}），建议优先减仓基本面较弱的个股，而非平均减仓"
+            report.concentration_warnings.append(_w2)
+
         # === 6. 综合建议 ===
-        if report.buy_count > report.sell_count and not report.risk_warnings:
+        total_warnings = len(report.risk_warnings) + len(report.concentration_warnings)
+        if report.buy_count > report.sell_count and not report.risk_warnings and not report.concentration_warnings:
             report.overall_advice = "📈 组合整体偏多，风险可控"
         elif report.sell_count > report.buy_count:
             report.overall_advice = "📉 组合整体偏空，建议降低仓位"
-        elif report.risk_warnings:
-            report.overall_advice = f"⚠️ 组合存在{len(report.risk_warnings)}个风险点，请关注"
+        elif total_warnings > 0:
+            report.overall_advice = f"⚠️ 组合存在{total_warnings}个风险点，请关注"
         else:
             report.overall_advice = "📊 组合中性，观望为主"
 
@@ -207,6 +223,11 @@ class PortfolioAnalyzer:
         if report.risk_warnings:
             lines.append("\n⚠️ 风险告警:")
             for w in report.risk_warnings:
+                lines.append(f"  {w}")
+
+        if report.concentration_warnings:
+            lines.append("\n📊 集中度预警:")
+            for w in report.concentration_warnings:
                 lines.append(f"  {w}")
 
         lines.append("━" * 50)

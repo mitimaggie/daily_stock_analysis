@@ -18,11 +18,30 @@ interface ReportOverviewProps {
   scoreMomentumAdj?: number;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  actionNow?: string;
+  executionDifficulty?: string;
+  executionNote?: string;
+  behavioralWarning?: string;
+  skillUsed?: string;
 }
 
 /**
  * 报告概览区组件 - 终端风格
  */
+const SKILL_LABEL: Record<string, string> = {
+  druckenmiller: 'Druckenmiller',
+  lynch: 'Lynch',
+  buffett: 'Buffett',
+  soros: 'Soros',
+  default: '通用',
+};
+
+const DIFFICULTY_COLOR: Record<string, string> = {
+  低: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  中: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  高: 'text-red-400 bg-red-500/10 border-red-500/20',
+};
+
 export const ReportOverview: React.FC<ReportOverviewProps> = ({
   meta,
   summary,
@@ -33,6 +52,11 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   scoreMomentumAdj = 0,
   onRefresh,
   isRefreshing = false,
+  actionNow,
+  executionDifficulty,
+  executionNote,
+  behavioralWarning,
+  skillUsed,
 }) => {
   // 盘中自动刷新价格
   const [livePrice, setLivePrice] = useState<number | undefined>(meta.currentPrice ?? undefined);
@@ -237,6 +261,38 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
       <p className="text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap text-left">
         {oneSentence || summary.analysisSummary || '暂无分析结论'}
       </p>
+
+      {/* 立即行动卡片（actionNow 有值时显示） */}
+      {actionNow && (
+        <div className="border-t border-white/5 pt-3">
+          <div className="rounded-lg p-3 border border-cyan-500/20 bg-cyan-500/5 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-400 font-mono">立即行动</span>
+              {executionDifficulty && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${DIFFICULTY_COLOR[executionDifficulty] ?? 'text-white/40 bg-white/5 border-white/10'}`}>
+                  操作难度：{executionDifficulty}
+                </span>
+              )}
+              {skillUsed && skillUsed !== 'default' && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-violet-500/20 bg-violet-500/5 text-violet-400 font-mono ml-auto">
+                  {SKILL_LABEL[skillUsed] ?? skillUsed} 框架
+                </span>
+              )}
+            </div>
+            <p className="text-[13px] text-white/90 leading-relaxed font-medium">{actionNow}</p>
+            {executionNote && (
+              <p className="text-[11px] text-white/50 leading-relaxed">{executionNote}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 心理陷阱预警（behavioralWarning 有值时显示） */}
+      {behavioralWarning && (
+        <div className={`rounded-lg px-3 py-2 border border-amber-500/20 bg-amber-500/5 text-[12px] text-amber-300/90 leading-relaxed ${actionNow ? '' : 'border-t border-white/5 mt-2 pt-0'}`}>
+          {behavioralWarning}
+        </div>
+      )}
 
       {/* 场景识别卡片（有场景时展示） */}
       {summary.positionAdvice?.tradeAdvice?.scenarioId && summary.positionAdvice.tradeAdvice.scenarioId !== 'none' && (() => {

@@ -95,6 +95,13 @@ class AnalysisResult:
     score_weakness: str = ""                 # 短板分析 (如 "量能不足是主要短板")
     score_strength: str = ""                 # 优势分析
 
+    # === P3: AI Skill 增强字段 ===
+    action_now: str = ""                     # ≤30字一句话行动指令
+    execution_difficulty: str = ""           # 执行难度：低/中/高
+    execution_note: str = ""                 # 执行难度说明
+    behavioral_warning: str = ""             # 心理陷阱预警（规则生成）
+    skill_used: str = ""                     # 本次使用的 Skill 名称
+
     def __post_init__(self):
         if self.signal_changes is None:
             self.signal_changes = []
@@ -121,6 +128,11 @@ class AnalysisResult:
             'score_change': self.score_change,
             'is_first_analysis': self.is_first_analysis,
             'signal_changes': self.signal_changes,
+            'action_now': self.action_now,
+            'execution_difficulty': self.execution_difficulty,
+            'execution_note': self.execution_note,
+            'behavioral_warning': self.behavioral_warning,
+            'skill_used': self.skill_used,
         }
 
     def get_core_conclusion(self) -> str:
@@ -299,6 +311,7 @@ class GeminiAnalyzer:
         market_overview: Optional[str] = None,
         use_light_model: bool = False,
         position_info: Optional[Dict[str, Any]] = None,
+        skill: str = "default",
     ) -> AnalysisResult:
         """
         执行分析
@@ -306,6 +319,7 @@ class GeminiAnalyzer:
         :param market_overview: 大盘环境数据
         :param use_light_model: True 时若配置了轻量模型（如 2.5 Flash）则用之，省成本、适合命中舆情缓存的场景
         :param position_info: 用户持仓信息，有则使用持仓者视角 prompt
+        :param skill: 使用的分析框架 Skill ('druckenmiller'/'soros'/'lynch'/'default')
         """
         code = context.get('code', 'Unknown')
         name = context.get('stock_name') or STOCK_NAME_MAP.get(code, f'股票{code}')
@@ -328,7 +342,7 @@ class GeminiAnalyzer:
                 system_prompt = self.PROMPT_TRADER
 
             # 2. 构建 User Prompt (注入 F10, 记忆, 以及新增的大盘数据)
-            prompt = self._format_prompt(context, name, news_context, market_overview, position_info)
+            prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill)
             
             response_text = ""
             
@@ -347,6 +361,7 @@ class GeminiAnalyzer:
                         result.search_performed = bool(news_context)
                         result.current_price = context.get('price', 0)
                         result.market_snapshot = self._build_market_snapshot(context)
+                        result.skill_used = skill
                         return result
                 except Exception as e:
                     logger.debug(f"Function Calling失败，降级为文本解析: {e}")
@@ -362,6 +377,7 @@ class GeminiAnalyzer:
             result.search_performed = bool(news_context)
             result.current_price = context.get('price', 0)
             result.market_snapshot = self._build_market_snapshot(context)
+            result.skill_used = skill
             return result
             
         except Exception as e:
@@ -429,7 +445,7 @@ class GeminiAnalyzer:
             raise last_err
         raise RuntimeError("无可用 AI 模型")
 
-    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None) -> str:
+    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default") -> str:
         code = context.get('code', 'Unknown')
 
         # A. 技术面数据 (量化模型产出 - 使用精简版供 LLM)
@@ -564,6 +580,72 @@ class GeminiAnalyzer:
 > - `risk_alerts` 中不得出现基金管理人相关的公司经营风险
 """
 
+        # Layer B: 宏观可靠性评估注入（只在 trader 角色时注入）
+        reliability_section = ""
+        if role not in ('macro', 'researcher'):
+            _signal_score = trend_analysis.get('signal_score') or trend_analysis.get('score')
+            _regime_label = regime_label_map.get(market_regime, market_regime) if market_regime else ''
+            _volatility_hint = ""
+            if market_regime in ('bull', 'bear', 'recovery'):
+                _volatility_hint = "\n- 注意：当前市场处于较大波动阶段，建议适当提升基本面/舆情分析权重，谨慎对待技术面信号的短期准确性。"
+            if _regime_label or _signal_score is not None:
+                _score_str = f"量化评分：{_signal_score}分、" if _signal_score is not None else ""
+                reliability_section = f"""
+## 量化模型参考信息
+- 当前市场形态：{_regime_label or '未知'}（{_score_str}供参考）{_volatility_hint}"""
+
+        # Layer C: Skill 步骤框架注入（只在 trader 角色时注入）
+        skill_section = ""
+        if role not in ('macro', 'researcher') and skill != 'default':
+            _has_pos_label = "持仓者" if has_position else "空仓者"
+            if skill == 'druckenmiller':
+                if has_position:
+                    _skill_step4 = """宏观顺风 → 当前浮盈/亏％下是否可加仓（给出加仓触发价和幅度）
+宏观逆风但个股强 → 降低持仓比例，移动止损至成本价附近
+宏观+个股同步转弱 → 建议止损或减仓，说明止损触发价（结合量化键点）"""
+                else:
+                    _skill_step4 = """宏观+行业+个股三者对齐 → 给出建议入场价位区间（参考量化锐点）和初始仓位%
+仅部分对齐 → 列出需要满足的前置条件，等待确认再建仓
+宏观明显不利 → 即使技术面好看也建议观望，说明观望的具体条件变化"""
+                skill_section = f"""## 分析框架：Druckenmiller 宏观流动性框架（{_has_pos_label}视角）
+当前市场处于宏观转折期，按以下步骤分析（每步必须基于数据）：
+Step 1 - 流动性环境：大盘成交量趋势 + 近期政策方向，判断资金是"进场"还是"沦退"状态。
+Step 2 - 行业主线对齐：该股板块是否顺应当前市场资金主线？顺应=加分，逆势=警告。
+Step 3 - 催化剂检验：是否存在改变趋势的具体催化剂（政策/业绩拐点/行业事件）？"估值低""/""超跌"不算催化剂。
+Step 4（{_has_pos_label}） - 结论：
+{_skill_step4}"""
+            elif skill == 'soros':
+                if has_position:
+                    _skill_step4 = """阶段A/B早期：继续持仓，移动止损至近期低点，是否加仓取决于浮盈幅度
+阶段C临界：建议减仓，说明减仓触发价（结合量化键点和成本价保本点）
+阶段D崩溃：若浮亏已超止损线则止损；若浮盈，考虑部分锁仓"""
+                else:
+                    _skill_step4 = """阶段A/B早期：可参与但仓位上限不超过量化建议仓位，硬止损设在量化键点
+阶段C临界：不建议新建仓，等待情绪修正后更好入场点，给出观察指标
+阶段D崩溃：逆势机会需大盘企稳信号确认，给出观察指标"""
+                skill_section = f"""## 分析框架：索罗斯反身性框架（{_has_pos_label}视角）
+当前市场情绪处于极端区间，技术指标参考价値降低，优先基于舆情和基本面判断。
+Step 1 - 主流偏见识别：用一句话描述市场对该股/行业的"共识叙事"（对还是错）。
+Step 2 - 反身性阶段：A初始（顺势可进）/ B自我强化（保持警惕）/ C临界（准备减仓）/ D崩溃（逆势机会）（必须明确选一个，说明判断依据）。
+Step 3 - 反向论据：列出 2-3 条"市场集体忽视的风险或机会"，这是 counter_arguments 的核心。
+Step 4（{_has_pos_label}） - 操作建议：
+{_skill_step4}"""
+            elif skill == 'lynch':
+                if has_position:
+                    _skill_step4 = """成长逻辑完整：继续持仓，基本面支持下跌时加仓（给出加仓条件和幅度）
+成长逻辑出现裂缝（增速下滑/估值过高）：建议减仓，说明触发止损的具体基本面信号
+成长逻辑已破坏：建议清仓，给出清仓触发价（结合量化止损键点）"""
+                else:
+                    _skill_step4 = """林奇式最优建仓：机构持仓低+业绩持续增长+PEG合理 = 建议建仓，给出建议仓位%
+部分满足：说明缺少哪个条件，给出观察触发点
+不满足：基本面不支持，即使技术面好看也不建议建仓（说明理由）"""
+                skill_section = f"""## 分析框架：彼得·林奇成长股侦察框架（{_has_pos_label}视角）
+Step 1 - 股票分类：必须明确归类（快速增长/稳定增长/困境反转/隐蔽资产/周期股），每类对应不同估值逻辑。
+Step 2 - PEG检验：PEG<1通常低估 / 1-2合理 / >2需有故事支撑；无数据则说明。
+Step 3 - 成长可持续性：增长来源（量/价/新产品/并购）+ 能否持续3-5年 + 天花板风险。
+Step 4（{_has_pos_label}） - 结论：
+{_skill_step4}"""
+
         # 组装精简 Prompt
         return f"""{header}
 {etf_constraint}
@@ -571,8 +653,8 @@ class GeminiAnalyzer:
 基于以下数据，完成你的3项职责（舆情解读/基本面定性/综合结论）。技术面分析已由量化模型完成，不要重复。
 
 ## 大盘环境（仓位滤网）
-{market_str}
-
+{market_str}{reliability_section}
+{skill_section}
 ## 历史回溯
 {history_str}
 
@@ -603,7 +685,10 @@ dashboard: {{
   }},
   intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
   battle_plan: {{ sniper_points: {{ ideal_buy: 用量化锚点, stop_loss: 用量化锚点 }} }},
-  counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"]
+  counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"],
+  action_now: "≤30字，直接说现在怎么操作（空仓：入场触发条件+价位+止损；持仓：加减仓触发价+止损线）",
+  execution_difficulty: "低（条件已满足）或中（需等待确认）或高（逆势操作）",
+  execution_note: "简短说明执行难度判断依据（1句话）"
 }}
 
 ### 输出质量规则（违反则重新生成）：
@@ -707,7 +792,10 @@ dashboard: {{
                                 "type": "array",
                                 "items": {"type": "string"},
                                 "description": "反面论证，必须列出2-3条当前判断可能错误的理由，禁止为空数组"
-                            }
+                            },
+                            "action_now": {"type": "string", "description": "≤30字一句话行动指令"},
+                            "execution_difficulty": {"type": "string", "enum": ["低", "中", "高"]},
+                            "execution_note": {"type": "string"}
                         }
                     }
                 },
@@ -828,6 +916,12 @@ dashboard: {{
                 result.confidence_level = '高'
             elif any(k in cr for k in ('低', '不足', '缺少')):
                 result.confidence_level = '低'
+
+        # P3: 新增字段（从 dashboard 或顶层读取）
+        _db = data.get('dashboard') or {}
+        result.action_now = _s(data.get('action_now') or _db.get('action_now'))
+        result.execution_difficulty = _s(data.get('execution_difficulty') or _db.get('execution_difficulty'))
+        result.execution_note = _s(data.get('execution_note') or _db.get('execution_note'))
 
         return result
 

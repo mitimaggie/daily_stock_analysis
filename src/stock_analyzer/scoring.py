@@ -20,9 +20,9 @@ class ScoringSystem:
     """评分系统：多维度评分与修正"""
     
     REGIME_WEIGHTS = {
-        MarketRegime.BULL:     {"trend": 30, "bias": 12, "volume": 12, "support": 5,  "macd": 18, "rsi": 10, "kdj": 13},
-        MarketRegime.SIDEWAYS: {"trend": 18, "bias": 20, "volume": 12, "support": 12, "macd": 13, "rsi": 10, "kdj": 15},
-        MarketRegime.BEAR:     {"trend": 13, "bias": 17, "volume": 17, "support": 13, "macd": 12, "rsi": 13, "kdj": 15},
+        MarketRegime.BULL:     {"trend": 30, "bias": 12, "volume": 10, "support": 5,  "macd": 20, "rsi": 10, "kdj": 13},
+        MarketRegime.SIDEWAYS: {"trend": 18, "bias": 20, "volume": 10, "support": 12, "macd": 15, "rsi": 10, "kdj": 15},
+        MarketRegime.BEAR:     {"trend": 13, "bias": 17, "volume": 15, "support": 13, "macd": 14, "rsi": 13, "kdj": 15},
     }
 
     # 改进4: 短线交易敏感度 - 不同时间维度使用不同权重表
@@ -64,25 +64,33 @@ class ScoringSystem:
         score = sum(result.score_breakdown.values())
         return min(100, max(0, score))
     
+    # 各维度理论满分（与 _calc_*_score 函数的返回范围上界保持一致）
+    # 修改任一 _calc_*_score 时需同步更新此处
+    _DIM_MAX = {
+        "trend": 30,
+        "bias":  20,
+        "volume": 15,
+        "support": 10,
+        "macd":  15,
+        "rsi":   10,
+        "kdj":   13,
+    }
+
     @staticmethod
     def _get_raw_dimension_scores(result: TrendAnalysisResult) -> Dict[str, float]:
-        """获取各维度的原始得分率（0.0~1.0）"""
-        trend_score = ScoringSystem._calc_trend_score(result)
-        bias_score = ScoringSystem._calc_bias_score(result)
-        volume_score = ScoringSystem._calc_volume_score(result)
-        support_score = ScoringSystem._calc_support_score(result)
-        macd_score = ScoringSystem._calc_macd_score(result)
-        rsi_score = ScoringSystem._calc_rsi_score(result)
-        kdj_score = ScoringSystem._calc_kdj_score(result)
-        
+        """获取各维度的原始得分率（0.0~1.0），统一以 _DIM_MAX 为分母，消除结构性评分压缩"""
+        raw = {
+            "trend":   ScoringSystem._calc_trend_score(result),
+            "bias":    ScoringSystem._calc_bias_score(result),
+            "volume":  ScoringSystem._calc_volume_score(result),
+            "support": ScoringSystem._calc_support_score(result),
+            "macd":    ScoringSystem._calc_macd_score(result),
+            "rsi":     ScoringSystem._calc_rsi_score(result),
+            "kdj":     ScoringSystem._calc_kdj_score(result),
+        }
         return {
-            "trend": trend_score / 30,
-            "bias": bias_score / 20,
-            "volume": volume_score / 15,
-            "support": support_score / 10,
-            "macd": macd_score / 15,
-            "rsi": rsi_score / 10,
-            "kdj": kdj_score / 13,
+            k: min(1.0, raw[k] / ScoringSystem._DIM_MAX[k])
+            for k in raw
         }
     
     @staticmethod
@@ -237,8 +245,13 @@ class ScoringSystem:
     
     @staticmethod
     def _calc_rsi_score(result: TrendAnalysisResult) -> int:
-        """计算RSI评分 (0-10)"""
-        scores = {
+        """计算RSI评分 (0-10)
+        
+        P0修复：RSI超买（>70）在强势多头趋势中是健康表现，不应给0分。
+        强势趋势中 RSI 可长期维持超买区，一律给0分会系统性低估强势股。
+        修复后：STRONG_BULL→5分（中性），BULL/WEAK_BULL→3分（轻微惩罚）。
+        """
+        base_scores = {
             RSIStatus.GOLDEN_CROSS_OVERSOLD: 10,
             RSIStatus.BULLISH_DIVERGENCE: 10,
             RSIStatus.OVERSOLD: 9,
@@ -250,7 +263,17 @@ class ScoringSystem:
             RSIStatus.BEARISH_DIVERGENCE: 1,
             RSIStatus.OVERBOUGHT: 0,
         }
-        return scores.get(result.rsi_status, 5)
+        score = base_scores.get(result.rsi_status, 5)
+        
+        # P0修复：超买状态在强势趋势中降级而非直接给0分
+        if result.rsi_status == RSIStatus.OVERBOUGHT:
+            if result.trend_status == TrendStatus.STRONG_BULL:
+                score = 5  # 强势多头中超买 = 中性（趋势健康的体现）
+            elif result.trend_status in (TrendStatus.BULL, TrendStatus.WEAK_BULL):
+                score = 3  # 普通多头中超买 = 轻微惩罚（警惕但未到卖出）
+            # else: 震荡/空头中超买保持0分（追高风险真实存在）
+        
+        return score
     
     @staticmethod
     def _calc_kdj_score(result: TrendAnalysisResult) -> int:
@@ -2787,6 +2810,55 @@ class ScoringSystem:
                 )
         except Exception:
             pass
+
+    @staticmethod
+    def score_support_strength(result: TrendAnalysisResult, df: pd.DataFrame):
+        """P1-2: 支撑位强度评分 — 引入历史测试次数权重
+        
+        原 _calc_support_score 只考虑现价距最近支撑位的距离，不考虑支撑位强度。
+        本方法补充：统计每个支撑位在历史K线中被触及（±1.5%容差）的次数，
+        多次验证的支撑位得到额外加分（+1~+3），弱支撑（只出现1次）不额外加分。
+        
+        仅在支撑位存在且现价接近支撑位（距离 ≤8%）时触发。
+        """
+        if not result.support_levels or result.current_price <= 0 or df is None or len(df) < 10:
+            return
+
+        price = result.current_price
+        # 只评估现价下方最近的支撑位（距离≤8%）
+        candidates = [s for s in result.support_levels if 0 < s < price and (price - s) / price <= 0.08]
+        if not candidates:
+            return
+
+        nearest = max(candidates)  # 最近的支撑位
+        dist_pct = (price - nearest) / price * 100
+
+        # 统计该支撑位在历史K线中被测试的次数（K线的low价落在支撑位±1.5%范围内）
+        tolerance = nearest * 0.015
+        try:
+            lows = df['low'].astype(float)
+            test_count = int(((lows >= nearest - tolerance) & (lows <= nearest + tolerance)).sum())
+        except Exception:
+            test_count = 0
+
+        # 根据测试次数确定强度加分（仅在现价接近支撑位时才有意义）
+        if dist_pct <= 5:
+            if test_count >= 5:
+                adj = 3
+                result.signal_reasons.append(f"强支撑位{nearest:.2f}(历史{test_count}次测试验证)，距现价{dist_pct:.1f}%")
+            elif test_count >= 3:
+                adj = 2
+                result.signal_reasons.append(f"有效支撑位{nearest:.2f}(历史{test_count}次测试)，距现价{dist_pct:.1f}%")
+            elif test_count >= 2:
+                adj = 1
+                result.signal_reasons.append(f"支撑位{nearest:.2f}(历史{test_count}次测试)，距现价{dist_pct:.1f}%")
+            else:
+                adj = 0  # 仅出现1次的弱支撑，不额外加分
+        else:
+            adj = 0  # 距离超过5%，强度加分价值有限
+
+        if adj > 0:
+            result.score_breakdown['support_strength'] = adj
 
     @staticmethod
     def cap_adjustments(result: TrendAnalysisResult):

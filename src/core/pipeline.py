@@ -185,6 +185,45 @@ class StockAnalysisPipeline:
         except Exception as e:
             return False, str(e), None, None
 
+    @staticmethod
+    def _select_skill(context: dict) -> str:
+        """
+        根据市场环境和个股基本面动态选择 AI 分析 Skill。
+        优先级：宏观转折(druckenmiller) > 极端板块情绪(soros) > 成长股(lynch) > 默认(default)
+        """
+        try:
+            trend = context.get('trend_analysis') or {}
+            regime = trend.get('market_regime', 'sideways')
+
+            sec = context.get('sector_context') or {}
+            sector_5d = sec.get('sector_5d_pct')
+
+            f10 = context.get('fundamental') or {}
+            fin = f10.get('financial') or {}
+            val = f10.get('valuation') or {}
+            growth = fin.get('net_profit_growth')
+            pe = val.get('pe')
+            peg = val.get('peg')
+
+            # 宏观转折：bull/bear/recovery 状态触发 Druckenmiller
+            if regime in ('bull', 'bear', 'recovery'):
+                return 'druckenmiller'
+
+            # 极端板块情绪：板块近5日涨跌幅超过±15% 触发索罗斯反身性
+            if isinstance(sector_5d, (int, float)) and abs(sector_5d) >= 15:
+                return 'soros'
+
+            # 成长股特征：PEG<1 或（净利增速>20% 且 PE<40）
+            has_peg = isinstance(peg, (int, float)) and 0 < peg < 1
+            has_growth = (isinstance(growth, (int, float)) and growth > 20
+                          and isinstance(pe, (int, float)) and 0 < pe < 40)
+            if has_peg or has_growth:
+                return 'lynch'
+
+        except Exception:
+            pass
+        return 'default'
+
     def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6,
                                   limit: int = 5, provider: str = None,
                                   min_count: int = 1) -> str:
@@ -737,6 +776,9 @@ class StockAnalysisPipeline:
                 use_light = False
                 logger.info(f"🔬 [{stock_name}] 量价异常，使用重量级模型深度分析")
             # === 3. 执行分析（带超时，默认 180 秒）===
+            # 选择 Skill（根据市场环境 + 个股基本面）
+            _selected_skill = self._select_skill(context)
+            logger.info(f"[С {stock_name}] Skill选择: {_selected_skill}")
             analysis_timeout = getattr(self.config, 'analysis_timeout_seconds', 180) or 180
             def _run_analyze():
                 return self.analyzer.analyze(
@@ -746,6 +788,7 @@ class StockAnalysisPipeline:
                     market_overview=market_overview,
                     use_light_model=use_light,
                     position_info=position_info,
+                    skill=_selected_skill,
                 )
             try:
                 with ThreadPoolExecutor(max_workers=1) as ex:
@@ -847,6 +890,73 @@ class StockAnalysisPipeline:
                 # 新量化字段注入 dashboard（供 notification 渲染）
                 # trend 本身就是 TrendAnalysisResult.to_dict() 的输出，直接复用
                 dashboard['quant_extras'] = trend
+
+                # === P3: Skill 信息记录 ===
+                dashboard['skill_used'] = getattr(result, 'skill_used', _selected_skill)
+
+                # === P3 增强3: 心理陷阱预警（纯规则，不调用 AI）===
+                _behavioral_warning = ""
+                try:
+                    _score_scores = _score_trend.get('scores', [])
+                    _cur_score = result.sentiment_score
+                    _has_pos = bool(position_info and any(
+                        position_info.get(k) for k in ('cost_price', 'position_amount', 'total_capital')
+                    ))
+                    _cost_price = float(position_info.get('cost_price', 0) or 0) if position_info else 0.0
+                    _cur_price = float(context.get('price') or 0)
+                    _stop_loss = 0.0
+                    try:
+                        _sniper = dashboard.get('battle_plan', {}).get('sniper_points', {})
+                        _stop_loss = float(_sniper.get('stop_loss') or 0)
+                    except Exception:
+                        pass
+
+                    # 规则1: 追高偏差 - 连续上升≥3次且当日涨幅>2%
+                    _today_pct = float(context.get('today', {}).get('pct_chg') or
+                                       context.get('realtime', {}).get('change_pct') or 0)
+                    if _cons_up >= 3 and _today_pct > 2:
+                        _behavioral_warning = (
+                            f"⚠️ 连续{_cons_up}日评分上升，股价今日已涨{_today_pct:.1f}%，"
+                            f"追高风险上升——建议等回踩确认而非直接追市价"
+                        )
+                    # 规则2: 厌损偏差 - 持仓且浮亏已超过止损线
+                    elif _has_pos and _cost_price > 0 and _cur_price > 0 and _stop_loss > 0:
+                        _pnl_pct = (_cur_price - _cost_price) / _cost_price * 100
+                        if _pnl_pct < 0 and _cur_price < _stop_loss:
+                            _behavioral_warning = (
+                                f"⚠️ 当前浮亏{abs(_pnl_pct):.1f}%，价格已跌破止损线{_stop_loss:.2f}，"
+                                f"未执行止损——持续持有将扩大损失，建议严格执行"
+                            )
+                    # 规则3: 处置效应 - 评分从高位回落且持仓浮盈>10%
+                    elif _has_pos and _cost_price > 0 and _cur_price > 0:
+                        _pnl_pct = (_cur_price - _cost_price) / _cost_price * 100
+                        _score_change_val = _score_trend.get('score_change', 0) or 0
+                        _prev_score_for_check = _cur_score - _score_change_val
+                        if _prev_score_for_check >= 80 and _cur_score < 70 and _pnl_pct > 10:
+                            _behavioral_warning = (
+                                f"⚠️ 评分从高位回落（{_prev_score_for_check}→{_cur_score}），"
+                                f"但持有浮盈{_pnl_pct:.1f}%——考虑部分止盈，避免浮盈变浮亏"
+                            )
+                    # 规则4: 踏空焦虑 - 评分偏低但无持仓
+                    elif not _has_pos and _cur_score < 50:
+                        _behavioral_warning = (
+                            f"💡 当前评分{_cur_score}分，不是好的买入时机，"
+                            f"观望不等于踏空——等待评分>70的信号再入场"
+                        )
+                    # 规则5: 犹豫不决 - 近3次均为"观望"
+                    if not _behavioral_warning and len(_score_scores) >= 3:
+                        _recent_advices = [s.get('advice', '') for s in _score_scores[-3:]]
+                        if all('观望' in (a or '') for a in _recent_advices):
+                            _behavioral_warning = (
+                                f"💡 已连续{len(_recent_advices)}次分析结果为观望——"
+                                f"若逻辑没有改变，等待明确触发信号比频繁分析更有价值"
+                            )
+                except Exception as _be:
+                    logger.debug(f"[{code}] 心理陷阱预警计算失败(非致命): {_be}")
+
+                if _behavioral_warning:
+                    result.behavioral_warning = _behavioral_warning
+                    dashboard['behavioral_warning'] = _behavioral_warning
                 # 补充序列化 _conflict_warnings（动态属性不在 dataclass fields 里）
                 _tr_obj = context.get('trend_result')
                 if _tr_obj is not None and hasattr(_tr_obj, '_conflict_warnings') and _tr_obj._conflict_warnings:
@@ -902,6 +1012,66 @@ class StockAnalysisPipeline:
                     or (_ts in ('BEAR', 'STRONG_BEAR', 'bear', 'strong_bear') and _sc <= -10)  # 趋势恶化+评分骤降
                 )
                 dashboard['defense_mode'] = _defense
+
+                # === P1-3: AI-量化融合分数机制 ===
+                # 量化分数已由 quant_score 决定，LLM 给出独立判断（llm_score/llm_advice）
+                # 融合逻辑：方向一致 → 置信度加分（最多+5），严重分歧 → 降档（最多-5）
+                _llm_s = result.llm_score if result.llm_score is not None else _qs
+                _llm_adv = (result.llm_advice or '').strip()
+                _quant_adv = (result.operation_advice or '').strip()
+
+                def _is_bullish(adv: str) -> bool:
+                    return any(k in adv for k in ('买入', '加仓', '强烈买入', '激进买入', '谨慎买入'))
+
+                def _is_bearish(adv: str) -> bool:
+                    return any(k in adv for k in ('卖出', '减仓', '清仓', '强烈卖出'))
+
+                _quant_bull = _is_bullish(_quant_adv)
+                _quant_bear = _is_bearish(_quant_adv)
+                _llm_bull = _is_bullish(_llm_adv)
+                _llm_bear = _is_bearish(_llm_adv)
+
+                _fusion_adj = 0
+                _fusion_note = ''
+                # 方向一致：双引擎共振，置信度加成
+                if _quant_bull and _llm_bull:
+                    _score_diff = abs(_qs - _llm_s)
+                    if _score_diff <= 15:
+                        _fusion_adj = 5   # 量化+AI双看多且评分接近：强共振
+                        _fusion_note = f'AI-量化双看多共振(+5, AI评分{_llm_s})'
+                    else:
+                        _fusion_adj = 3   # 方向一致但分数差距较大：温和共振
+                        _fusion_note = f'AI-量化方向一致(+3, AI评分{_llm_s})'
+                elif _quant_bear and _llm_bear:
+                    _fusion_adj = -5  # 双空：降档信号更可靠
+                    _fusion_note = f'AI-量化双看空(-5, AI评分{_llm_s})'
+                # 严重分歧：一个看多一个看空
+                elif (_quant_bull and _llm_bear) or (_quant_bear and _llm_bull):
+                    _fusion_adj = -5
+                    _fusion_note = f'⚠️ AI-量化严重分歧(-5，量化:{_quant_adv} vs AI:{_llm_adv})'
+                # 温和分歧：一个中性一个极端
+                elif _quant_bull and not _llm_bull and not _llm_bear and _llm_s < _qs - 20:
+                    _fusion_adj = -3
+                    _fusion_note = f'量化看多但AI偏中性(-3, AI评分{_llm_s})'
+
+                if _fusion_adj != 0:
+                    _old = result.sentiment_score
+                    result.sentiment_score = max(0, min(100, result.sentiment_score + _fusion_adj))
+                    logger.info(f"[{code}] AI-量化融合: {_old}→{result.sentiment_score} ({_fusion_note})")
+                    dashboard['ai_quant_fusion'] = {
+                        'adj': _fusion_adj,
+                        'note': _fusion_note,
+                        'quant_score': _qs,
+                        'llm_score': _llm_s,
+                    }
+                    # 融合后评分变化可能触发买卖信号更新
+                    from src.stock_analyzer.scoring import ScoringSystem as _SS
+                    _trend_result_for_fusion = context.get('trend_result')
+                    if _trend_result_for_fusion is not None:
+                        _trend_result_for_fusion.signal_score = result.sentiment_score
+                        _SS.update_buy_signal(_trend_result_for_fusion)
+                        result.operation_advice = _trend_result_for_fusion.buy_signal.value
+
                 result.dashboard = dashboard
 
                 # 决策类型

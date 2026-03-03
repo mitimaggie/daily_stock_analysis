@@ -78,33 +78,35 @@ class BacktestRunner:
                 if not analysis_date:
                     continue
 
-                # 获取分析日之后 20 个交易日的价格数据（支持多周期回测）
+                # 获取分析日起 21 个交易日的价格数据（T+1~T+20，多取1条用于T+1开盘价）
                 df = self._get_prices_after(code, analysis_date, days=25)
-                if df is None or len(df) < 5:
+                # df.iloc[0] = 分析日本身，df.iloc[1] = T+1（实际买入日）
+                # P0修复：以 T+1 开盘价作为买入基准，消除前视偏差
+                # 若 T+1 数据不存在（如分析日为最新交易日），则跳过此条记录
+                if df is None or len(df) < 2:
                     continue
-
-                # 分析日的收盘价（用第一条记录）
-                price_at_analysis = float(df.iloc[0]['close'])
+                price_at_analysis = float(df.iloc[1]['open'])  # T+1 开盘价（实际可成交价）
                 if price_at_analysis <= 0:
                     continue
 
-                # 多周期收益率：5日、10日、20日
-                price_5d = float(df.iloc[4]['close']) if len(df) >= 5 else float(df.iloc[-1]['close'])
+                # 多周期收益率：T+1开盘买入后持有 5/10/20 日收盘价
+                # idx=1 → T+1, idx=5 → T+5收盘, idx=10 → T+10收盘, idx=20 → T+20收盘
+                price_5d = float(df.iloc[5]['close']) if len(df) >= 6 else float(df.iloc[-1]['close'])
                 actual_pct_5d = round((price_5d - price_at_analysis) / price_at_analysis * 100, 2)
                 
                 actual_pct_10d = None
-                if len(df) >= 10:
-                    price_10d = float(df.iloc[9]['close'])
+                if len(df) >= 11:
+                    price_10d = float(df.iloc[10]['close'])
                     actual_pct_10d = round((price_10d - price_at_analysis) / price_at_analysis * 100, 2)
                 
                 actual_pct_20d = None
-                if len(df) >= 20:
-                    price_20d = float(df.iloc[19]['close'])
+                if len(df) >= 21:
+                    price_20d = float(df.iloc[20]['close'])
                     actual_pct_20d = round((price_20d - price_at_analysis) / price_at_analysis * 100, 2)
 
-                # 检查止损/止盈是否触发（在 5 日内的最低价/最高价）
-                lows_5d = df['low'].iloc[:5].astype(float)
-                highs_5d = df['high'].iloc[:5].astype(float)
+                # 检查止损/止盈是否触发（T+1起算的5个交易日内的最低价/最高价）
+                lows_5d = df['low'].iloc[1:6].astype(float)
+                highs_5d = df['high'].iloc[1:6].astype(float)
                 
                 hit_sl = 0
                 hit_tp = 0
@@ -137,10 +139,10 @@ class BacktestRunner:
         return filled
 
     def _get_prices_after(self, code: str, after_date: date, days: int = 10) -> Optional[pd.DataFrame]:
-        """从 stock_daily 获取指定日期（含当天）起的价格数据。
+        """从 stock_daily 获取分析日（含）起的价格数据。
         
-        第一条记录为分析日当天收盘价（买入基准），
-        后续 idx=4/9/19 分别对应 5/10/20 日后收益。
+        返回的 DataFrame 包含分析日本身（用于取T+1开盘价），
+        后续行从 idx=1 开始为 T+1, T+2, ... T+N。
         """
         try:
             sql = text("""
@@ -151,7 +153,8 @@ class BacktestRunner:
                 LIMIT :limit
             """)
             with self.db._engine.connect() as conn:
-                df = pd.read_sql(sql, conn, params={"code": code, "after_date": after_date, "limit": days})
+                # 多取1条，确保能取到 T+1 开盘价作为买入基准
+                df = pd.read_sql(sql, conn, params={"code": code, "after_date": after_date, "limit": days + 1})
             return df if not df.empty else None
         except Exception:
             return None
@@ -262,8 +265,17 @@ class BacktestRunner:
                 dedup_map[day_key] = r
         records = list(dedup_map.values())
 
-        # 按评分段位分组统计
-        buckets = {"85+": [], "70-84": [], "50-69": [], "<50": []}
+        # P1修复：按评分段位分组统计，细化到7档，精确定位评分买入阈值
+        # 原 4 档（最大区间跨资15分）→ 现 7 档（90+/85-89/80-84/75-79/70-74/60-69/<60）
+        buckets = {
+            "90+":   [],
+            "85-89": [],
+            "80-84": [],
+            "75-79": [],
+            "70-74": [],
+            "60-69": [],
+            "<60":   [],
+        }
         buy_records = []
 
         for r in records:
@@ -272,14 +284,20 @@ class BacktestRunner:
             if pct is None:
                 continue
 
-            if score >= 85:
-                buckets["85+"].append(r)
+            if score >= 90:
+                buckets["90+"].append(r)
+            elif score >= 85:
+                buckets["85-89"].append(r)
+            elif score >= 80:
+                buckets["80-84"].append(r)
+            elif score >= 75:
+                buckets["75-79"].append(r)
             elif score >= 70:
-                buckets["70-84"].append(r)
-            elif score >= 50:
-                buckets["50-69"].append(r)
+                buckets["70-74"].append(r)
+            elif score >= 60:
+                buckets["60-69"].append(r)
             else:
-                buckets["<50"].append(r)
+                buckets["<60"].append(r)
 
             # "买入"类建议的统计
             advice = r.operation_advice or ""
@@ -404,17 +422,47 @@ class BacktestRunner:
                 lines.append(f"### 💰 买入信号验证")
                 lines.append(f"- 买入信号总数: **{len(buy_records)}**")
                 lines.append(f"- 5日胜率: **{buy_win:.1f}%**")
-                lines.append(f"- 平均5日收益: **{buy_avg:+.2f}%**")
+                lines.append(f"- 平均T+1买入5日收益: **{buy_avg:+.2f}%**")
                 lines.append(f"- 夏普比率: **{buy_sharpe:.2f}**")
         else:
             lines.append("### 💰 买入信号验证")
             lines.append("*暂无买入信号记录*")
+
+        # === 4. P1新增：月度胜率时序分析 ===
+        lines.extend(["", "---", ""])
+        lines.append("### 📅 月度胜率时序（识别策略失效月份）")
+        lines.append("")
+        monthly: Dict[str, list] = {}
+        for r in records:
+            if r.actual_pct_5d is None or r.created_at is None:
+                continue
+            month_key = r.created_at.strftime("%Y-%m")
+            monthly.setdefault(month_key, []).append(r.actual_pct_5d)
+
+        if monthly:
+            lines.append("| 月份 | 信号数 | 平均收益 | 胜率 | 备注 |")
+            lines.append("|------|--------|---------|------|------|")
+            for month_key in sorted(monthly.keys()):
+                mpcts = monthly[month_key]
+                m_avg = sum(mpcts) / len(mpcts)
+                m_win = sum(1 for p in mpcts if p > 0) / len(mpcts) * 100
+                flag = ""
+                if m_win >= 65 and m_avg > 1.0:
+                    flag = "✅ 策略共振"
+                elif m_win <= 40 or m_avg < -1.0:
+                    flag = "⚠️ 策略失效"
+                lines.append(
+                    f"| {month_key} | {len(mpcts)} | {m_avg:+.2f}% | {m_win:.0f}% | {flag} |"
+                )
+        else:
+            lines.append("*暂无足够数据生成月度统计*")
 
         lines.extend([
             "",
             "---",
             "",
             "### 📌 指标说明",
+            "- **分桶口径**: 使用T+1开盘价为买入基准（P0修复，已消除前视偏差）",
             "- **夏普比率**: 风险调整后收益，计算公式 = (平均收益 - 无风险利率) / 收益标准差",
             "- **信息比率**: 相对基准的超额收益/跟踪误差，衡量主动管理能力",
             "- **Alpha**: 超额收益 = 个股收益 - 同期沪深300收益",

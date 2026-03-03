@@ -35,9 +35,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis, actionNow, executionDifficulty, executionNote, behavioralWarning, skillUsed } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null, executionDifficulty: null, executionNote: null, behavioralWarning: null, skillUsed: null };
 
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -51,6 +51,11 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       defenseMode: !!(dashboard?.defense_mode ?? dashboard?.defenseMode),
       scoreMomentumAdj: dashboard?.score_momentum_adj ?? dashboard?.scoreMomentumAdj ?? 0,
       positionDiagnosis: dashboard?.position_diagnosis ?? dashboard?.positionDiagnosis ?? null,
+      actionNow: dashboard?.action_now ?? null,
+      executionDifficulty: dashboard?.execution_difficulty ?? null,
+      executionNote: dashboard?.execution_note ?? null,
+      behavioralWarning: dashboard?.behavioral_warning ?? null,
+      skillUsed: dashboard?.skill_used ?? null,
     };
   }, [details?.rawResult]);
 
@@ -70,6 +75,11 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         isHistory={isHistory}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
+        actionNow={actionNow ?? undefined}
+        executionDifficulty={executionDifficulty ?? undefined}
+        executionNote={executionNote ?? undefined}
+        behavioralWarning={behavioralWarning ?? undefined}
+        skillUsed={skillUsed ?? undefined}
       />
 
       {/* 2. 作战计划 */}

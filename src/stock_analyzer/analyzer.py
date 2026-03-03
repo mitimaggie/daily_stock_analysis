@@ -402,6 +402,7 @@ class StockTrendAnalyzer:
             ScoringSystem.score_vol_anomaly(result, df)
             ScoringSystem.score_fibonacci_levels(result, df)
             ScoringSystem.score_vol_price_structure(result, df)
+            ScoringSystem.score_support_strength(result, df)
             ScoringSystem.detect_sequential_behavior(result, df)
             ScoringSystem.score_multi_signal_resonance(result, df)
             ScoringSystem.forecast_next_days(result, df)

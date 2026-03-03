@@ -1149,6 +1149,13 @@ class DatabaseManager:
     def _build_raw_result(result: Any) -> Dict[str, Any]:
         data = result.to_dict() if hasattr(result, "to_dict") else {}
         data.update({'data_sources': getattr(result, 'data_sources', ''), 'raw_response': getattr(result, 'raw_response', None)})
+        # P3: 从 dashboard 回填新字段到顶层（AI 输出在 dashboard 内，确保顶层也可读）
+        _db = data.get('dashboard') or {}
+        for _k in ('action_now', 'execution_difficulty', 'execution_note', 'behavioral_warning', 'skill_used'):
+            if not data.get(_k):
+                _v = _db.get(_k)
+                if _v:
+                    data[_k] = _v
         return data
 
     @staticmethod
