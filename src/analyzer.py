@@ -573,7 +573,10 @@ class GeminiAnalyzer:
         if _ideal_buy: _rr_hint_parts.append(f"理想买入价: {_ideal_buy:.2f}")
         if _stop_loss: _rr_hint_parts.append(f"止损价: {_stop_loss:.2f}")
         if _take_profit: _rr_hint_parts.append(f"目标价: {_take_profit:.2f}")
-        _rr_hint = "（量化锁点：" + "|".join(_rr_hint_parts) + "）" if _rr_hint_parts else "（量化未提供锁点，请自行估算）"
+        if ab_variant == 'llm_only':
+            _rr_hint = "（无量化锚点，请基于K线技术面自行估算价位）"
+        else:
+            _rr_hint = "（量化锁点：" + "|".join(_rr_hint_parts) + "）" if _rr_hint_parts else "（量化未提供锁点，请自行估算）"
         # R/R 周运算示例（指导而非硬要求）
         if _ideal_buy and _stop_loss and _take_profit and _ideal_buy > 0:
             _max_loss = round((_ideal_buy - _stop_loss) / _ideal_buy * 100, 1)
@@ -582,6 +585,7 @@ class GeminiAnalyzer:
             _rr_example = f"赔率展示：最大产出{_max_gain}%/最大下行{_max_loss}%=R/R比{_rr}"
         else:
             _rr_example = ""
+        _sniper_fallback = 'LLM自行估算' if ab_variant == 'llm_only' else '用量化锚点'
         battle_plan_rr = f"risk_reward: {{max_loss_pct: '{_rr_example or _rr_hint}', rr_ratio: 实际计算或\'N/A\'}}"
 
 
@@ -784,8 +788,8 @@ dashboard: {{
     {position_advice_protocol}
   }},
   intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
-  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or '用量化锚点'}, stop_loss: {_stop_loss or '用量化锚点'}, target: {_take_profit or '用量化锚点'} }}, {battle_plan_rr} }},
-  override_intel: {{ triggered: false, tier: "", reason: "无Tier-0/1风险事件", downgrade_to: "" }},
+  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, {battle_plan_rr} }},
+  override_intel: {{ triggered: false, tier: "", {'reason: "无Tier-0/1风险事件（若有请填写：监管/退市/实控人减持/业绩暴雷等，并在此说明为何选择了保守建议）"' if ab_variant == 'llm_only' else 'reason: "无Tier-0/1风险事件"'}, downgrade_to: "" }},
   counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"],
   action_now: "≤30字，直接说现在怎么操作（空仓：入场触发条件+价位+止损；持仓：加减仓触发价+止损线）",
   execution_difficulty: "低（条件已满足）或中（需等待确认）或高（逆势操作）",
