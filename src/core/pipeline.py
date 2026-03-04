@@ -363,6 +363,7 @@ class StockAnalysisPipeline:
         # === 技术面量化分析 ===
         tech_report = "数据不足，无法进行技术分析"
         tech_report_llm = "数据不足"
+        kline_narrative = ""
         trend_analysis_dict = {}
         trend_result_obj = None
         if daily_df is not None and not daily_df.empty:
@@ -503,6 +504,11 @@ class StockAnalysisPipeline:
                     logger.debug(f"[{code}] 资金面连续性检测跳过: {e}")
                 tech_report = self.trend_analyzer.format_analysis(trend_result)
                 tech_report_llm = self.trend_analyzer.format_for_llm(trend_result)
+                try:
+                    from src.stock_analyzer.kline_narrator import KlineNarrator
+                    kline_narrative = KlineNarrator.describe(trend_result, daily_df)
+                except Exception:
+                    kline_narrative = ""
                 trend_analysis_dict = trend_result.to_dict()
                 trend_analysis_dict['market_regime'] = regime.value
                 # 从量化结果回填板块数据（量化分析可能丰富了板块信息）
@@ -551,6 +557,7 @@ class StockAnalysisPipeline:
             'chip_note': chip_note,
             'technical_analysis_report': tech_report,
             'technical_analysis_report_llm': tech_report_llm,
+            'kline_narrative': kline_narrative,
             'trend_analysis': trend_analysis_dict,
             'trend_result': trend_result_obj,
             'daily_df': daily_df,

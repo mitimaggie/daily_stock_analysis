@@ -6,6 +6,7 @@ interface AiDiagnosisProps {
   intelligence?: Record<string, any>;
   counterArguments?: string[];
   positionAdvice?: { has_position?: string; no_position?: string };
+  defaultExpanded?: boolean;
 }
 
 /**
@@ -17,8 +18,9 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
   intelligence,
   counterArguments,
   positionAdvice,
+  defaultExpanded = false,
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const adviceText = positionAdvice?.has_position ?? positionAdvice?.no_position;
 
   const earningsOutlook = intelligence?.earnings_outlook ?? intelligence?.earningsOutlook;

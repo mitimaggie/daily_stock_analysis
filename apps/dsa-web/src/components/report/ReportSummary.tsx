@@ -1,12 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { AnalysisResult, AnalysisReport } from '../../types/analysis';
 import { ReportOverview } from './ReportOverview';
 import { TradeLog } from '../trade/TradeLog';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
-import { ReportDetails } from './ReportDetails';
 import { QuantAnalysis } from './QuantAnalysis';
-import { PositionDiagnosis } from './PositionDiagnosis';
 import { QuantVsAi } from './QuantVsAi';
 import { KeyPriceLevels } from './KeyPriceLevels';
 import { AiDiagnosis } from './AiDiagnosis';
@@ -21,9 +19,77 @@ interface ReportSummaryProps {
   onPositionChange?: (shares: number, costPrice: number) => void;
 }
 
+/** 持仓快照条：紧凑展示成本/浮盈/持仓天数 */
+const PositionSnapshotBar: React.FC<{
+  positionInfo: Record<string, any>;
+  currentPrice?: number;
+}> = ({ positionInfo, currentPrice }) => {
+  const costPrice = positionInfo.cost_price ?? positionInfo.costPrice ?? 0;
+  const holdingDays = positionInfo.holding_days ?? null;
+
+  if (!costPrice) return null;
+
+  const pnlPct = currentPrice && costPrice > 0
+    ? ((currentPrice - costPrice) / costPrice * 100)
+    : null;
+  const pnlColor = pnlPct == null ? 'text-white/40' : pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const pnlSign = pnlPct != null && pnlPct >= 0 ? '+' : '';
+
+  return (
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] px-4 py-2.5 flex items-center gap-4 flex-wrap">
+      <span className="text-[11px] text-white/30 font-medium tracking-wide uppercase">持仓</span>
+      <span className="text-[13px] text-white/70">成本 <span className="text-white/90 font-medium">{costPrice.toFixed(2)}</span></span>
+      {pnlPct != null && (
+        <span className={`text-[13px] font-medium ${pnlColor}`}>
+          {pnlSign}{pnlPct.toFixed(2)}%
+        </span>
+      )}
+      {holdingDays != null && (
+        <span className="text-[13px] text-white/50">持有 <span className="text-white/70">{holdingDays}</span> 天</span>
+      )}
+    </div>
+  );
+};
+
+/** 可折叠的量化数据面板 */
+const QuantPanel: React.FC<{
+  quantExtras: Record<string, any> | null;
+  quantVsAi: any;
+  skillUsed?: string;
+}> = ({ quantExtras, quantVsAi, skillUsed }) => {
+  const [open, setOpen] = useState(false);
+  if (!quantExtras && !quantVsAi) return null;
+
+  return (
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] overflow-hidden">
+      <button
+        type="button"
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition"
+        onClick={() => setOpen(v => !v)}
+      >
+        <span className="text-sm font-semibold text-white/60 flex items-center gap-1.5">
+          <span>📊</span> 量化数据
+        </span>
+        <span className="text-xs text-white/25">{open ? '▲ 收起' : '▼ 展开'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-white/[0.04] space-y-3 p-3">
+          {quantExtras && <QuantAnalysis data={quantExtras} />}
+          {quantVsAi && <QuantVsAi data={quantVsAi} skillUsed={skillUsed} />}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /**
- * 完整报告展示组件
- * 整合概览、量化分析、AI视角、策略、资讯、详情六个区域
+ * 报告展示组件 — AI优先布局
+ *
+ * 设计原则：
+ * - AI分析是主角，默认展开，置于页面核心位置
+ * - 持仓信息用紧凑快照条展示，不占大量空间
+ * - 量化数据折叠，需要时展开
+ * - 移除透明度追溯区（ReportDetails）和独立的 QuantVsAi 顶层展示
  */
 export const ReportSummary: React.FC<ReportSummaryProps> = ({
   data,
@@ -34,17 +100,26 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   totalCapital,
   onPositionChange,
 }) => {
-  // 兼容 AnalysisResult 和 AnalysisReport 两种数据格式
   const report: AnalysisReport = 'report' in data ? data.report : data;
   const queryId = 'queryId' in data ? data.queryId : report.meta.queryId;
 
   const { meta, summary, strategy, details } = report;
 
-  // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis, actionNow, executionDifficulty, executionNote, behavioralWarning, skillUsed, resonanceLevel, capitalConflictWarning } = useMemo(() => {
+  const {
+    quantExtras, intelligence, counterArguments, positionInfo,
+    oneSentence, dashboardHoldingStrategy, defenseMode,
+    scoreMomentumAdj, positionDiagnosis, actionNow,
+    executionDifficulty, executionNote, behavioralWarning,
+    skillUsed, resonanceLevel, capitalConflictWarning,
+  } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null, executionDifficulty: null, executionNote: null, behavioralWarning: null, skillUsed: null, resonanceLevel: null, capitalConflictWarning: null };
-
+    if (!raw) return {
+      quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null,
+      oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false,
+      scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null,
+      executionDifficulty: null, executionNote: null, behavioralWarning: null,
+      skillUsed: null, resonanceLevel: null, capitalConflictWarning: null,
+    };
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
     return {
@@ -68,10 +143,14 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   }, [details?.rawResult]);
 
   const hasPosition = !!positionInfo;
+  const positionAdvice =
+    (details?.rawResult as Record<string, any>)?.dashboard?.core_conclusion?.position_advice ??
+    (details?.rawResult as Record<string, any>)?.core_conclusion?.position_advice ??
+    undefined;
 
   return (
     <div className="space-y-3 animate-fade-in">
-      {/* 1. 概览区（Hero） */}
+      {/* 1. 股票概览（紧凑 Hero）*/}
       <ReportOverview
         meta={meta}
         summary={summary}
@@ -95,21 +174,24 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         capitalConflictWarning={capitalConflictWarning ?? undefined}
       />
 
-      {/* 2. 持仓诊断（有持仓时优先展示，紧跟决策区） */}
+      {/* 2. 持仓快照（有持仓时：紧凑一行，成本/浮盈/持有天数）*/}
       {positionInfo && (
-        <PositionDiagnosis
+        <PositionSnapshotBar
           positionInfo={positionInfo}
           currentPrice={meta.currentPrice}
-          suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
-          stopLoss={strategy?.stopLoss}
-          stopLossIntraday={strategy?.stopLossIntraday}
-          stopLossMid={strategy?.stopLossMid}
-          takeProfit={strategy?.takeProfit}
-          holdingStrategy={strategy?.holdingStrategy}
         />
       )}
 
-      {/* 3. 作战计划 */}
+      {/* 3. AI 分析（主角：默认展开）*/}
+      <AiDiagnosis
+        analysisSummary={summary.analysisSummary}
+        intelligence={intelligence}
+        counterArguments={counterArguments}
+        positionAdvice={positionAdvice}
+        defaultExpanded={true}
+      />
+
+      {/* 4. 操作计划（止损/止盈/仓位）*/}
       <ReportStrategy
         strategy={strategy}
         hasPositionInfo={hasPosition}
@@ -122,7 +204,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
       />
 
-      {/* 4. 盘中关键价位 */}
+      {/* 5. 关键价位（有时才显示）*/}
       {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (
         <KeyPriceLevels
           levels={strategy.keyPriceLevels}
@@ -135,30 +217,17 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
-      {/* 5. AI 诊断（折叠，默认只显示摘要） */}
-      <AiDiagnosis
-        analysisSummary={summary.analysisSummary}
-        intelligence={intelligence}
-        counterArguments={counterArguments}
-        positionAdvice={
-          (details?.rawResult as Record<string, any>)?.dashboard?.core_conclusion?.position_advice ??
-          (details?.rawResult as Record<string, any>)?.core_conclusion?.position_advice ??
-          undefined
-        }
+      {/* 6. 量化数据（折叠）*/}
+      <QuantPanel
+        quantExtras={quantExtras}
+        quantVsAi={summary.quantVsAi}
+        skillUsed={skillUsed ?? undefined}
       />
 
-      {/* 6. 量化诊断（默认折叠） */}
-      {quantExtras && <QuantAnalysis data={quantExtras} />}
-
-      {/* 7. 量化 vs AI 对比（默认折叠，严重分歧时自动展开） */}
-      {summary.quantVsAi && (
-        <QuantVsAi data={summary.quantVsAi} skillUsed={skillUsed ?? undefined} />
-      )}
-
-      {/* 8. 公告与披露 */}
+      {/* 7. 公告与资讯 */}
       <ReportNews stockCode={meta.stockCode} />
 
-      {/* 9. 交易日志 */}
+      {/* 8. 交易日志 */}
       <TradeLog
         stockCode={meta.stockCode}
         stockName={meta.stockName}
@@ -167,9 +236,6 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         queryId={queryId}
         currentPrice={meta.currentPrice}
       />
-
-      {/* 10. 透明度与追溯区 */}
-      <ReportDetails details={details} queryId={queryId} />
     </div>
   );
 };

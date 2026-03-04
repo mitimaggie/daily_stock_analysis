@@ -449,7 +449,12 @@ class GeminiAnalyzer:
         code = context.get('code', 'Unknown')
 
         # A. 技术面数据 (量化模型产出 - 使用精简版供 LLM)
-        tech_report = context.get('technical_analysis_report_llm') or context.get('technical_analysis_report', '无数据')
+        tech_report_llm = context.get('technical_analysis_report_llm') or context.get('technical_analysis_report', '无数据')
+        kline_narrative = context.get('kline_narrative', '')
+        if kline_narrative:
+            tech_report = f"{kline_narrative}\n\n【量化指标明细】\n{tech_report_llm}"
+        else:
+            tech_report = tech_report_llm
         
         # B. 基本面数据 (F10 - 精简格式)
         f10 = context.get('fundamental', {})
@@ -552,6 +557,9 @@ class GeminiAnalyzer:
                     pnl_pct = (current_price - cost_price) / cost_price * 100
                     pnl_label = "盈利" if pnl_pct >= 0 else "亏损"
                     pos_parts.append(f"当前价: {current_price:.2f}，浮动{pnl_label}: {abs(pnl_pct):.2f}%")
+            holding_days = position_info.get('holding_days')
+            if holding_days is not None and holding_days >= 0:
+                pos_parts.append(f"持仓天数: {holding_days}天")
             if pos_amount > 0:
                 pos_parts.append(f"持仓金额: {pos_amount/10000:.1f}万元")
             if total_capital > 0 and pos_amount > 0:

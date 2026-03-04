@@ -146,6 +146,12 @@ def _handle_async_analysis(
     try:
         # 提交任务（如果重复会抛出 DuplicateTaskError）
         position_info = request.position_info.model_dump() if request.position_info else None
+        if position_info is None:
+            try:
+                from src.services.portfolio_service import get_position_info_for_analysis
+                position_info = get_position_info_for_analysis(stock_code)
+            except Exception:
+                pass
         task_info = task_queue.submit_task(
             stock_code=stock_code,
             stock_name=None,  # 名称在分析过程中获取
@@ -196,6 +202,12 @@ def _handle_sync_analysis(
     try:
         service = AnalysisService()
         position_info = request.position_info.model_dump() if request.position_info else None
+        if position_info is None:
+            try:
+                from src.services.portfolio_service import get_position_info_for_analysis
+                position_info = get_position_info_for_analysis(stock_code)
+            except Exception:
+                pass
         result = service.analyze_stock(
             stock_code=stock_code,
             report_type=request.report_type,

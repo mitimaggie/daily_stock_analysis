@@ -99,6 +99,46 @@ def get_portfolio(code: str) -> Optional[Dict[str, Any]]:
         return record.to_dict() if record else None
 
 
+def get_position_info_for_analysis(code: str) -> Optional[Dict[str, Any]]:
+    """
+    获取适合注入分析流水线的持仓上下文。
+
+    在 get_portfolio 基础上额外计算：
+    - holding_days: 持仓天数（今日 - 买入日期）
+    - position_amount: 持仓市值估算（成本价 × 股数）
+
+    Returns:
+        position_info dict，可直接传给 pipeline/analyzer；若无持仓返回 None。
+    """
+    record = get_portfolio(code)
+    if not record:
+        return None
+
+    cost_price = float(record.get('cost_price') or 0)
+    shares = int(record.get('shares') or 0)
+
+    holding_days = None
+    entry_date_str = record.get('entry_date')
+    if entry_date_str:
+        try:
+            from datetime import date as _date
+            entry = _date.fromisoformat(entry_date_str)
+            holding_days = (_date.today() - entry).days
+        except Exception:
+            pass
+
+    position_amount = cost_price * shares if cost_price > 0 and shares > 0 else 0
+
+    return {
+        'cost_price': cost_price,
+        'shares': shares,
+        'position_amount': position_amount,
+        'holding_days': holding_days,
+        'entry_date': entry_date_str,
+        'notes': record.get('notes', ''),
+    }
+
+
 # ─────────────────────────────────────────────
 # 关注股 CRUD
 # ─────────────────────────────────────────────
