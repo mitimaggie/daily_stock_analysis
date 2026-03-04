@@ -871,6 +871,69 @@ class DatabaseManager:
                 return summary
             return None
 
+    def get_prediction_accuracy(self, code: str, days: int = 90) -> Optional[Dict[str, Any]]:
+        """
+        查询该股票历史预测准确率（仅统计 actual_pct_5d 已回填的记录）。
+        归一化：含"买入"→看多；含"卖出"/"减仓"/"清仓"→看空；其余→中性。
+        ≥3条记录才返回有效统计，否则返回 None。
+        """
+        from datetime import datetime as _dt, timedelta as _td
+        cutoff = _dt.now() - _td(days=days)
+        with self.get_session() as session:
+            rows = session.execute(
+                select(
+                    AnalysisHistory.operation_advice,
+                    AnalysisHistory.actual_pct_5d,
+                    AnalysisHistory.hit_stop_loss,
+                    AnalysisHistory.hit_take_profit,
+                )
+                .where(
+                    AnalysisHistory.code == code,
+                    AnalysisHistory.actual_pct_5d.isnot(None),
+                    AnalysisHistory.created_at >= cutoff,
+                )
+                .order_by(desc(AnalysisHistory.created_at))
+            ).fetchall()
+
+        if not rows or len(rows) < 3:
+            return None
+
+        bullish_hits, bullish_total, bullish_sum = 0, 0, 0.0
+        bearish_hits, bearish_total = 0, 0
+        all_returns = []
+
+        for row_adv, row_pct5d, _hit_sl, _hit_tp in rows:
+            adv_lower = (row_adv or "").lower()
+            ret = float(row_pct5d) if row_pct5d is not None else 0.0
+            all_returns.append(ret)
+
+            is_bullish = any(k in adv_lower for k in ("买入", "加仓", "逢低", "持有"))
+            is_bearish = any(k in adv_lower for k in ("卖出", "减仓", "清仓", "做空"))
+
+            if is_bullish:
+                bullish_total += 1
+                bullish_sum += ret
+                if ret > 0:
+                    bullish_hits += 1
+            elif is_bearish:
+                bearish_total += 1
+                if ret < 0:
+                    bearish_hits += 1
+
+        result: Dict[str, Any] = {
+            'total_records': len(rows),
+            'avg_5d_return': round(sum(all_returns) / len(all_returns), 2) if all_returns else 0.0,
+        }
+        if bullish_total >= 2:
+            result['bullish_win_rate'] = round(bullish_hits / bullish_total * 100, 1)
+            result['bullish_count'] = bullish_total
+            result['bullish_avg_return'] = round(bullish_sum / bullish_total, 2)
+        if bearish_total >= 2:
+            result['bearish_win_rate'] = round(bearish_hits / bearish_total * 100, 1)
+            result['bearish_count'] = bearish_total
+
+        return result
+
     def get_score_trend(self, code: str, days: int = 10) -> Dict[str, Any]:
         """
         获取近N日评分趋势，用于拐点检测和趋势分析。

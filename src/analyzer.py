@@ -551,6 +551,40 @@ class GeminiAnalyzer:
         else:
             data_availability_section = ""
 
+        # I5: 历史预测准确率段落——让 LLM 知道该股历史建议得失
+        _acc = context.get('prediction_accuracy')
+        if _acc and isinstance(_acc, dict) and _acc.get('total_records', 0) >= 3:
+            _acc_parts = [f"共测评{_acc['total_records']}次，近90日平均5日回报{_acc.get('avg_5d_return', 0):+.1f}%"]
+            if 'bullish_win_rate' in _acc:
+                _acc_parts.append(f"看多建议胜率: {_acc['bullish_win_rate']}% ({_acc.get('bullish_count',0)}次，平均{_acc.get('bullish_avg_return', 0):+.1f}%)")
+            if 'bearish_win_rate' in _acc:
+                _acc_parts.append(f"看空建议胜率: {_acc['bearish_win_rate']}% ({_acc.get('bearish_count',0)}次)")
+            prediction_accuracy_section = "\n## 📊 此股历史预测准确率（请作为置信度参考）\n" + "\n".join(f"- {p}" for p in _acc_parts) + "\n"
+        else:
+            prediction_accuracy_section = ""
+
+        # I3: 量化锁点提取（供 R/R 比计算和行动方案小组底层）
+        trend_result_obj = context.get('trend_result')
+        _ideal_buy = getattr(trend_result_obj, 'ideal_buy', None) if trend_result_obj else None
+        _stop_loss = getattr(trend_result_obj, 'stop_loss', None) if trend_result_obj else None
+        _take_profit = getattr(trend_result_obj, 'take_profit', None) if trend_result_obj else None
+        _current_price = context.get('price') or 0
+        _rr_hint_parts = []
+        if _ideal_buy: _rr_hint_parts.append(f"理想买入价: {_ideal_buy:.2f}")
+        if _stop_loss: _rr_hint_parts.append(f"止损价: {_stop_loss:.2f}")
+        if _take_profit: _rr_hint_parts.append(f"目标价: {_take_profit:.2f}")
+        _rr_hint = "（量化锁点：" + "|".join(_rr_hint_parts) + "）" if _rr_hint_parts else "（量化未提供锁点，请自行估算）"
+        # R/R 周运算示例（指导而非硬要求）
+        if _ideal_buy and _stop_loss and _take_profit and _ideal_buy > 0:
+            _max_loss = round((_ideal_buy - _stop_loss) / _ideal_buy * 100, 1)
+            _max_gain = round((_take_profit - _ideal_buy) / _ideal_buy * 100, 1)
+            _rr = round(_max_gain / _max_loss, 2) if _max_loss > 0 else None
+            _rr_example = f"赔率展示：最大产出{_max_gain}%/最大下行{_max_loss}%=R/R比{_rr}"
+        else:
+            _rr_example = ""
+        battle_plan_rr = f"risk_reward: {{max_loss_pct: '{_rr_example or _rr_hint}', rr_ratio: 实际计算或\'N/A\'}}"
+
+
         time_horizon_hint = "'短线(日内)' 或 '短线(1-3日)'" if is_intraday else "'短线(1-5日)' 或 '中线(1-4周)' 或 '长线(1-3月)'"
 
         # 持仓信息注入（仅持仓者视角时）
@@ -716,7 +750,7 @@ Step 4（{_has_pos_label}） - 结论：
         return f"""{header}
 {etf_constraint}
 
-基于以下数据，完成你的3项职责（舆情解读/基本面定性/综合结论）。{'**注意：本次分析为 A/B实验组（无量化）：不提供量化指标，请仅基于价格数据/新闻/基本面做出判断。**' if ab_variant == 'llm_only' else '技术面分析已由量化模型完成，不要重复。'}
+基于以下数据，完成你的3项职责（舆情解读/基本面定性/综合结论）。{'**注意：本次分析为 A/B实验组（无量化）：不提供量化指标，请仅基于价格数据/新闻/基本面做出判断。**' if ab_variant == 'llm_only' else '技术面量化分析已完成供参考，不要重复。如检测到Tier-0/Tier-1事件，可通过override_intel字段实现降级建议。'}
 
 ## 大盘环境（仓位滤网）
 {market_str}{reliability_section}
@@ -732,9 +766,9 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-{data_availability_section}
+{data_availability_section}{prediction_accuracy_section}
 ## JSON 输出协议
-{'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考（"量化 vs AI"双视角）。'}
+{'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
 
 stock_name, trend_prediction, time_horizon({time_horizon_hint}),
@@ -750,7 +784,8 @@ dashboard: {{
     {position_advice_protocol}
   }},
   intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
-  battle_plan: {{ sniper_points: {{ ideal_buy: 用量化锚点, stop_loss: 用量化锚点 }} }},
+  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or '用量化锚点'}, stop_loss: {_stop_loss or '用量化锚点'}, target: {_take_profit or '用量化锚点'} }}, {battle_plan_rr} }},
+  override_intel: {{ triggered: false, tier: "", reason: "无Tier-0/1风险事件", downgrade_to: "" }},
   counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"],
   action_now: "≤30字，直接说现在怎么操作（空仓：入场触发条件+价位+止损；持仓：加减仓触发价+止损线）",
   execution_difficulty: "低（条件已满足）或中（需等待确认）或高（逆势操作）",

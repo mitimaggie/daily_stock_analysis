@@ -610,6 +610,13 @@ class StockAnalysisPipeline:
         if daily_df is None or daily_df.empty:
             _missing_data.append("K线日线数据（无法进行任何技术分析，量化评分不可用）")
 
+        # 历史预测准确率（≥3条有效回填记录才统计）
+        prediction_accuracy = None
+        try:
+            prediction_accuracy = self.storage.get_prediction_accuracy(code, days=90)
+        except Exception as _pa_e:
+            logger.debug(f"[{code}] 历史准确率获取跳过: {_pa_e}")
+
         context = {
             'code': code,
             'stock_name': stock_name,
@@ -633,6 +640,7 @@ class StockAnalysisPipeline:
             'market_phase': get_market_phase(),
             'analysis_time': datetime.now().strftime('%H:%M'),
             'data_availability': _missing_data,
+            'prediction_accuracy': prediction_accuracy,
         }
         context = self._enhance_context(context)
         return context
