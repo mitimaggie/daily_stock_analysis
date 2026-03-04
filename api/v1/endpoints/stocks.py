@@ -197,3 +197,131 @@ def get_score_trend(
             status_code=500,
             detail={"error": "internal_error", "message": str(e)}
         )
+
+
+@router.get(
+    "/{stock_code}/last-skill",
+    summary="获取上次使用的AI框架",
+    description="查询该股票上一次分析使用的AI skill名称，用于框架切换提示"
+)
+def get_last_skill(stock_code: str):
+    """获取上次分析使用的AI框架，如果与本次不同则前端展示切换提示"""
+    try:
+        from sqlalchemy import text
+        from src.storage import DatabaseManager
+        db = DatabaseManager()
+        session = db.get_session()
+        try:
+            row = session.execute(text("""
+                SELECT json_extract(raw_result, '$.skill_used') as skill
+                FROM analysis_history
+                WHERE code = :code
+                  AND raw_result IS NOT NULL
+                  AND raw_result != 'null'
+                ORDER BY created_at DESC
+                LIMIT 2
+            """), {"code": stock_code}).fetchall()
+        finally:
+            session.close()
+        skills = [r[0] for r in row if r[0]]
+        return {
+            "stock_code": stock_code,
+            "last_skill": skills[0] if skills else None,
+            "prev_skill": skills[1] if len(skills) > 1 else None,
+        }
+    except Exception as e:
+        logger.error(f"获取上次AI框架失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "internal_error", "message": str(e)}
+        )
+
+
+@router.get(
+    "/{stock_code}/timeframe-winrates",
+    summary="获取多时间线历史胜率",
+    description="基于backtest_simulated数据，按当前信号的评分段+周线背景返回5/10/20日历史胜率"
+)
+def get_timeframe_winrates(
+    stock_code: str,
+    signal_score: int = Query(default=0, ge=0, le=100, description="当前信号评分"),
+    weekly_trend: str = Query(default="", description="周线趋势（多头/弱多头/震荡/弱空头/空头）"),
+    resonance_level: str = Query(default="", description="共振级别"),
+):
+    """
+    查询 backtest_simulated，按评分段+周线背景统计5/10/20日胜率。
+    用于在报告决策卡下方展示历史同类信号的多时间线胜率。
+    """
+    try:
+        from sqlalchemy import text
+        from src.storage import DatabaseManager
+        db = DatabaseManager()
+
+        # 确定评分段
+        if signal_score >= 85:
+            score_min, score_max = 85, 200
+        elif signal_score >= 78:
+            score_min, score_max = 78, 84
+        elif signal_score >= 75:
+            score_min, score_max = 75, 77
+        else:
+            score_min, score_max = 0, 74
+
+        # 按评分段+周线背景查询
+        session = db.get_session()
+        try:
+            rows = session.execute(text("""
+                SELECT
+                    COUNT(*) as n,
+                    ROUND(AVG(CASE WHEN actual_pct_5d > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) as wr5d,
+                    ROUND(AVG(actual_pct_5d), 2) as avg5d,
+                    ROUND(AVG(CASE WHEN actual_pct_10d > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) as wr10d,
+                    ROUND(AVG(actual_pct_10d), 2) as avg10d,
+                    ROUND(AVG(CASE WHEN actual_pct_20d > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) as wr20d,
+                    ROUND(AVG(actual_pct_20d), 2) as avg20d
+                FROM backtest_simulated
+                WHERE backtest_filled = 1
+                  AND actual_pct_5d IS NOT NULL
+                  AND actual_pct_10d IS NOT NULL
+                  AND actual_pct_20d IS NOT NULL
+                  AND signal_score BETWEEN :score_min AND :score_max
+                  AND (:weekly_trend = '' OR weekly_trend = :weekly_trend)
+            """), {"score_min": score_min, "score_max": score_max, "weekly_trend": weekly_trend}).fetchone()
+        finally:
+            session.close()
+
+        if not rows or rows[0] == 0:
+            return {
+                "stock_code": stock_code,
+                "signal_score": signal_score,
+                "weekly_trend": weekly_trend,
+                "n": 0,
+                "wr5d": None, "avg5d": None,
+                "wr10d": None, "avg10d": None,
+                "wr20d": None, "avg20d": None,
+                "best_horizon": None,
+            }
+
+        n, wr5d, avg5d, wr10d, avg10d, wr20d, avg20d = rows
+
+        # 找最优持股窗口（胜率最高的时间线）
+        winrates = {"5d": wr5d or 0, "10d": wr10d or 0, "20d": wr20d or 0}
+        best_horizon = max(winrates, key=winrates.get)
+
+        return {
+            "stock_code": stock_code,
+            "signal_score": signal_score,
+            "score_range": f"{score_min}-{score_max if score_max < 200 else '+'}",
+            "weekly_trend": weekly_trend,
+            "n": n,
+            "wr5d": wr5d, "avg5d": avg5d,
+            "wr10d": wr10d, "avg10d": avg10d,
+            "wr20d": wr20d, "avg20d": avg20d,
+            "best_horizon": best_horizon,
+        }
+    except Exception as e:
+        logger.error(f"获取多时间线胜率失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "internal_error", "message": str(e)}
+        )

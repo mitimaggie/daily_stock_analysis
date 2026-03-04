@@ -424,6 +424,7 @@ class StockTrendAnalyzer:
             if not is_etf_code:
                 ScoringSystem.detect_volume_spike_trap(result, df)  # 游资陷阱对 ETF 无意义
             ScoringSystem.score_weekly_trend(result, df)
+            ScoringSystem.apply_kdj_weekly_bonus(result)  # P4: 必须在weekly_trend计算后调用
             ScoringSystem.score_chart_patterns(result, df)
             ScoringSystem.score_vol_anomaly(result, df)
             ScoringSystem.score_fibonacci_levels(result, df)
@@ -457,6 +458,9 @@ class StockTrendAnalyzer:
             ResonanceDetector.check_resonance(result)
             # 统一应用所有修正因子（一次性 clamp，避免逐步截断信息损失）
             ScoringSystem.cap_adjustments(result)
+            # resonance_level 和 weekly_trend 现在均已就绪，重新判定 buy_signal
+            # （第387行的首次判定时 resonance_level 未设置，弱共振降级逻辑无法生效）
+            ScoringSystem.update_buy_signal(result)
             # 熊市评分硬上限：系统性风险环境下，单股评分不超过 70，避免误导追涨
             BEAR_SCORE_CAP = 70
             if market_regime == MarketRegime.BEAR and result.signal_score > BEAR_SCORE_CAP:

@@ -4,7 +4,24 @@ import type { QuantVsAi as QuantVsAiType } from '../../types/analysis';
 
 interface QuantVsAiProps {
   data: QuantVsAiType;
+  skillUsed?: string;
 }
+
+const SKILL_LABEL: Record<string, string> = {
+  druckenmiller: 'Druckenmiller',
+  lynch: 'Lynch',
+  buffett: 'Buffett',
+  soros: 'Soros',
+  default: '通用',
+};
+
+const SKILL_DESC: Record<string, string> = {
+  druckenmiller: '宏观流动性',
+  soros: '反身性情绪',
+  lynch: '成长股侦察',
+  buffett: '价值投资',
+  default: '综合',
+};
 
 /** 评分→颜色 */
 const scoreColor = (s: number | null | undefined): string => {
@@ -26,7 +43,7 @@ const scoreDirection = (s: number | null | undefined): string => {
 /**
  * 量化 vs AI 对比卡片
  */
-export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
+export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
   const { quantScore, quantAdvice, aiScore, aiAdvice, divergenceReason, divergenceAlert } = data;
 
   // 分歧度（优先用后端计算值）
@@ -45,7 +62,12 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
         onClick={() => setExpanded(!expanded)}
       >
         <h3 className="text-sm font-semibold text-white/70 flex items-center gap-1.5">
-          <span>⚖️</span> 量化 vs AI
+          <span>⚖️</span> 技术面 vs AI研判
+          {skillUsed && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-violet-500/20 bg-violet-500/5 text-violet-400/80 font-mono font-normal">
+              {SKILL_LABEL[skillUsed] ?? skillUsed} · {SKILL_DESC[skillUsed] ?? 'AI'}
+            </span>
+          )}
           {hasSevereDivergence && (
             <span className="text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold animate-pulse">
               ⚠️ 严重分歧 {divergence}分
@@ -81,7 +103,10 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data }) => {
           <tr className="text-white/40 border-b border-white/[0.06]">
             <th className="text-left py-1.5 font-medium w-16"></th>
             <th className="text-center py-1.5 font-medium">量化模型</th>
-            <th className="text-center py-1.5 font-medium">AI 研判</th>
+            <th className="text-center py-1.5 font-medium">
+              AI 研判
+              {skillUsed && <span className="text-[10px] text-violet-400/60 font-mono font-normal ml-1">({SKILL_LABEL[skillUsed] ?? skillUsed})</span>}
+            </th>
           </tr>
         </thead>
         <tbody>

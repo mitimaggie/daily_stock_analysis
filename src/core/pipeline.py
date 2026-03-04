@@ -685,8 +685,8 @@ class StockAnalysisPipeline:
             except Exception:
                 pass
 
-            # 层 3: Perplexity 实时搜索（仅量价异常或无任何缓存时触发）
-            if not search_content and not fast_mode and self.search_service and _price_anomaly:
+            # 层 3: Perplexity 实时搜索（无缓存时每次触发，fast_mode 除外）
+            if not search_content and not fast_mode and self.search_service:
                 sleep_time = random.uniform(2.0, 5.0)
                 time.sleep(sleep_time)
 
@@ -839,6 +839,15 @@ class StockAnalysisPipeline:
                 battle['sniper_points'] = sniper
                 dashboard['battle_plan'] = battle
                 result.dashboard = dashboard
+                # P3: 资金面与量化信号冲突检测
+                _cf_signal = trend.get('capital_flow_signal', '') or ''
+                _sig_score = trend.get('signal_score', 0) or 0
+                _is_tech_bullish = _sig_score >= 78
+                _is_cf_outflow = any(kw in _cf_signal for kw in ('流出', '净流出', '持续流出'))
+                if _is_tech_bullish and _is_cf_outflow:
+                    dashboard['capital_conflict_warning'] = f"技术面看多（{_sig_score}分）但主力资金净流出，信号存在矛盾，需谨慎"
+                else:
+                    dashboard.pop('capital_conflict_warning', None)
                 # 仓位
                 if trend.get('suggested_position_pct') is not None:
                     # 写入 dashboard 供报告使用

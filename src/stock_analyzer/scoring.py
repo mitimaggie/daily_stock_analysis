@@ -313,6 +313,30 @@ class ScoringSystem:
         return score
     
     @staticmethod
+    def apply_kdj_weekly_bonus(result: TrendAnalysisResult):
+        """P4-KDJ: 超卖金叉+周线背景组合加分（必须在 score_weekly_trend 之后调用）
+        
+        回测支撑（2026-03）:
+        - 超卖金叉+多头周线: 20日胜率84.6%, avg+3.57% → +8分
+        - 超卖金叉+弱多头周线: 20日胜率69.2%, avg+2.55% → +5分
+        - 普通金叉+多头周线: 20日胜率60%, avg+4.21% → +3分
+        """
+        _kdj = getattr(result, 'kdj_status', None)
+        _weekly = str(getattr(result, 'weekly_trend', '') or '')
+        _kdj_bonus = 0
+        if _kdj == KDJStatus.GOLDEN_CROSS_OVERSOLD:
+            if '多头' in _weekly and '弱多头' not in _weekly:
+                _kdj_bonus = 8
+            elif '弱多头' in _weekly:
+                _kdj_bonus = 5
+        elif _kdj == KDJStatus.GOLDEN_CROSS:
+            if '多头' in _weekly and '弱多头' not in _weekly:
+                _kdj_bonus = 3
+        if _kdj_bonus > 0:
+            result.signal_score = min(100, result.signal_score + _kdj_bonus)
+            result.score_breakdown['kdj_weekly_bonus'] = _kdj_bonus
+
+    @staticmethod
     def check_valuation(result: TrendAnalysisResult, valuation: Union[ValuationSnapshot, dict, None] = None):
         """估值安全检查：PE/PB/PEG 评分 + 估值降档"""
         if valuation is None:
@@ -3227,20 +3251,85 @@ class ScoringSystem:
 
     @staticmethod
     def update_buy_signal(result: TrendAnalysisResult):
-        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）"""
+        """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）
+        
+        阈值校准依据（2026-03，7353条回测 + 495条真实记录）:
+        - 60-74分：纯量化平均5日收益 -0.10%~+0.24%，无统计优势，归为持有
+        - 75-77分：真实系统谨慎买入5日胜率21.4%，avg-1.02%，负期望，改为持有
+        - 78-84分：avg5d +0.78%，具备操作价值，给买入
+        - 85-94分：avg5d +0.80%，真实系统对应 +5%，维持强烈买入
+        - 95+分：最高置信度信号，维持激进买入
+        
+        弱共振降级规则（2026-03，回测支撑）:
+        - 弱共振+周线非多头/弱多头：5日胜率46.8%，avg-0.36%，降一级
+        - 弱共振+周线多头/弱多头：5日胜率71.9%，avg+4.36%，不降级
+        
+        KDJ+周线组合加分规则（2026-03，回测支撑，在calculate_base_score中执行）:
+        - 超卖金叉+多头周线：+8分（20日胜率84.6%，avg+3.57%）
+        - 超卖金叉+弱多头周线：+5分（20日胜率69.2%，avg+2.55%）
+        - 普通金叉+多头周线：+3分（20日胜率60%，avg+4.21%）
+        """
         score = result.signal_score
         
         if score >= 95:
             result.buy_signal = BuySignal.AGGRESSIVE_BUY
         elif score >= 85:
             result.buy_signal = BuySignal.STRONG_BUY
-        elif score >= 70:
+        elif score >= 78:
             result.buy_signal = BuySignal.BUY
-        elif score >= 60:
-            result.buy_signal = BuySignal.CAUTIOUS_BUY
-        elif score >= 50:
+        elif score >= 55:
             result.buy_signal = BuySignal.HOLD
         elif score >= 35:
             result.buy_signal = BuySignal.REDUCE
         else:
             result.buy_signal = BuySignal.SELL
+        
+        # 弱共振+非多头周线 → 降级（回测数据支撑，2026-03）
+        # 85-89分+弱共振+震荡：5日胜率41.7%，avg-0.76%，降两级→HOLD
+        # 78-84分+弱共振+震荡：5日胜率46.8%，avg-0.36%，降一级→HOLD
+        resonance = getattr(result, 'resonance_level', '') or ''
+        weekly_val = str(getattr(result, 'weekly_trend', '') or '')
+        score = result.signal_score or 0
+        is_bull_weekly = any(kw in weekly_val for kw in ('多头', '弱多头'))
+        if '弱共振' in resonance and not is_bull_weekly:
+            if score >= 85:
+                # 85+分弱共振+非多头：负期望，直接降至HOLD
+                _DOWNGRADE = {
+                    BuySignal.AGGRESSIVE_BUY: BuySignal.HOLD,
+                    BuySignal.STRONG_BUY: BuySignal.HOLD,
+                    BuySignal.BUY: BuySignal.HOLD,
+                    BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
+                }
+            else:
+                # 78-84分弱共振+非多头：降一级
+                _DOWNGRADE = {
+                    BuySignal.AGGRESSIVE_BUY: BuySignal.STRONG_BUY,
+                    BuySignal.STRONG_BUY: BuySignal.BUY,
+                    BuySignal.BUY: BuySignal.HOLD,
+                    BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
+                }
+            result.buy_signal = _DOWNGRADE.get(result.buy_signal, result.buy_signal)
+        
+        # 信号分歧+非多头周线+78+分 → 降至HOLD（回测数据支撑，2026-03）
+        # 信号分歧+多头周线：胜率52.1%，avg+0.94%，保留
+        # 信号分歧+非多头：胜率37-42%，avg-0.3%~-3.3%，负/低期望，降为HOLD
+        if '信号分歧' in resonance and not is_bull_weekly and score >= 78:
+            _DIVERGENCE_DOWNGRADE = {
+                BuySignal.AGGRESSIVE_BUY: BuySignal.HOLD,
+                BuySignal.STRONG_BUY: BuySignal.HOLD,
+                BuySignal.BUY: BuySignal.HOLD,
+                BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
+            }
+            result.buy_signal = _DIVERGENCE_DOWNGRADE.get(result.buy_signal, result.buy_signal)
+        
+        # 中度共振做多+非多头周线+78+分 → 降至HOLD（回测数据支撑，2026-03）
+        # 中度共振做多+多头周线：胜率50-56%，avg+0.57%~+1.4%，保留
+        # 中度共振做多+非多头：85-89分胜率21.7%，avg-0.79%；78-84分胜率39.4%，avg-0.31%，均负期望
+        if '中度共振做多' in resonance and not is_bull_weekly and score >= 78:
+            _MED_RESONANCE_DOWNGRADE = {
+                BuySignal.AGGRESSIVE_BUY: BuySignal.HOLD,
+                BuySignal.STRONG_BUY: BuySignal.HOLD,
+                BuySignal.BUY: BuySignal.HOLD,
+                BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
+            }
+            result.buy_signal = _MED_RESONANCE_DOWNGRADE.get(result.buy_signal, result.buy_signal)

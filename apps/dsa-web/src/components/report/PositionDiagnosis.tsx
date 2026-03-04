@@ -14,6 +14,8 @@ interface PositionDiagnosisProps {
   currentPrice?: number;
   suggestedPositionPct?: number;
   stopLoss?: string;
+  stopLossIntraday?: string;
+  stopLossMid?: string;
   takeProfit?: string;
   holdingStrategy?: HoldingStrategy;
 }
@@ -39,6 +41,8 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
   currentPrice,
   suggestedPositionPct,
   stopLoss,
+  stopLossIntraday,
+  stopLossMid,
   takeProfit,
   holdingStrategy: hs,
 }) => {
@@ -214,14 +218,48 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
           </div>
         )}
 
-        {/* 所有量化锚点参考（折叠展示） */}
-        {hasPosition && hs && (hs.stopLossShort || hs.trailingStop || hs.stopLossMid) && (
+        {/* P3: 止损3档参考（按持仓意图选择） */}
+        {(stopLossIntraday || stopLoss || hs?.stopLossShort || stopLossMid || hs?.stopLossMid) && (
           <div className="border-t border-white/5 pt-2">
-            <div className="text-[10px] text-muted mb-1.5">全部锚点参考</div>
+            <div className="text-[10px] text-white/25 mb-1.5">止损参考 <span className="text-white/15">— 按你的持仓意图选择</span></div>
+            <div className="space-y-1">
+              {stopLossIntraday && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-white/30">日内离场</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-white/60">{stopLossIntraday}</span>
+                    <span className="text-[9px] text-white/20">今天操作用</span>
+                  </div>
+                </div>
+              )}
+              {(stopLoss || hs?.stopLossShort) && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-white/50 font-medium">短线止损 ←主推</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-danger/80 font-semibold">{stopLoss ?? hs?.stopLossShort?.toFixed(2)}</span>
+                    <span className="text-[9px] text-white/20">持股3-5天用</span>
+                  </div>
+                </div>
+              )}
+              {(stopLossMid || hs?.stopLossMid) && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-white/30">中线止损</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-white/50">{stopLossMid ?? hs?.stopLossMid?.toFixed(2)}</span>
+                    <span className="text-[9px] text-white/20">持股10天+用</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 所有量化锚点参考（止盈目标） */}
+        {hasPosition && hs && (hs.targetShort || hs.targetMid) && (
+          <div className="border-t border-white/5 pt-2">
+            <div className="text-[10px] text-muted mb-1.5">止盈目标</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px]">
               {hs.trailingStop ? <div className="flex justify-between"><span className="text-white/30">保利线</span><span className="font-mono text-white/50">{hs.trailingStop.toFixed(2)}</span></div> : null}
-              {hs.stopLossShort ? <div className="flex justify-between"><span className="text-white/30">短线止损</span><span className="font-mono text-white/50">{hs.stopLossShort.toFixed(2)}</span></div> : null}
-              {hs.stopLossMid ? <div className="flex justify-between"><span className="text-white/30">中线止损</span><span className="font-mono text-white/50">{hs.stopLossMid.toFixed(2)}</span></div> : null}
               {hs.targetShort ? <div className="flex justify-between"><span className="text-white/30">短线目标</span><span className="font-mono text-white/50">{hs.targetShort.toFixed(2)}</span></div> : null}
               {hs.targetMid ? <div className="flex justify-between"><span className="text-white/30">中线目标</span><span className="font-mono text-white/50">{hs.targetMid.toFixed(2)}</span></div> : null}
             </div>

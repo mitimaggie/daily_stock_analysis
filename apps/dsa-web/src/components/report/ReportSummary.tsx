@@ -41,9 +41,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // 从 rawResult 中提取 dashboard 数据（量化分析 + AI视角）
-  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis, actionNow, executionDifficulty, executionNote, behavioralWarning, skillUsed } = useMemo(() => {
+  const { quantExtras, intelligence, counterArguments, positionInfo, oneSentence, dashboardHoldingStrategy, defenseMode, scoreMomentumAdj, positionDiagnosis, actionNow, executionDifficulty, executionNote, behavioralWarning, skillUsed, resonanceLevel, capitalConflictWarning } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
-    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null, executionDifficulty: null, executionNote: null, behavioralWarning: null, skillUsed: null };
+    if (!raw) return { quantExtras: null, intelligence: null, counterArguments: null, positionInfo: null, oneSentence: null, dashboardHoldingStrategy: null, defenseMode: false, scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null, executionDifficulty: null, executionNote: null, behavioralWarning: null, skillUsed: null, resonanceLevel: null, capitalConflictWarning: null };
 
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -62,6 +62,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       executionNote: dashboard?.execution_note ?? null,
       behavioralWarning: dashboard?.behavioral_warning ?? null,
       skillUsed: dashboard?.skill_used ?? null,
+      resonanceLevel: (dashboard?.quant_extras ?? dashboard?.quantExtras)?.resonance_level ?? null,
+      capitalConflictWarning: dashboard?.capital_conflict_warning ?? null,
     };
   }, [details?.rawResult]);
 
@@ -89,6 +91,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         executionNote={executionNote ?? undefined}
         behavioralWarning={behavioralWarning ?? undefined}
         skillUsed={skillUsed ?? undefined}
+        resonanceLevel={resonanceLevel ?? undefined}
+        capitalConflictWarning={capitalConflictWarning ?? undefined}
       />
 
       {/* 2. 持仓诊断（有持仓时优先展示，紧跟决策区） */}
@@ -98,6 +102,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           currentPrice={meta.currentPrice}
           suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct}
           stopLoss={strategy?.stopLoss}
+          stopLossIntraday={strategy?.stopLossIntraday}
+          stopLossMid={strategy?.stopLossMid}
           takeProfit={strategy?.takeProfit}
           holdingStrategy={strategy?.holdingStrategy}
         />
@@ -146,7 +152,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
 
       {/* 7. 量化 vs AI 对比（默认折叠，严重分歧时自动展开） */}
       {summary.quantVsAi && (
-        <QuantVsAi data={summary.quantVsAi} />
+        <QuantVsAi data={summary.quantVsAi} skillUsed={skillUsed ?? undefined} />
       )}
 
       {/* 8. 公告与披露 */}

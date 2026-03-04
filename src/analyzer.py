@@ -728,9 +728,10 @@ dashboard: {{
 
 ### 输出质量规则（违反则重新生成）：
 1. **one_sentence** 必须含具体数字。✅"PEG=0.68+量化57分+板块+0.17%，但顶背离+缺口未回补，等78.5支撑确认" ❌"基本面良好建议关注"
-2. **analysis_summary** 禁止出现：MACD/KDJ/RSI/均线/趋势/评分等量化词汇（这些已在量化报告里）
-3. **counter_arguments** 不得为空数组，最少2条，每条引用具体数字或事件
-4. **catalysts/risk_alerts** 每条必须有具体公司名/数字/事件，禁止行业通稿泛化
+2. **one_sentence vs action_now 职责严格分离**：one_sentence 只描述"当前市场判断是什么"（基本面/情绪/趋势等），action_now 只说"现在具体做什么操作"（精确到价位/止损/数量）。**两者内容绝对不得重复**，禁止把操作指令写进 one_sentence，也禁止把市场判断写进 action_now。
+3. **analysis_summary** 禁止出现：MACD/KDJ/RSI/均线/趋势/评分等量化词汇（这些已在量化报告里）
+4. **counter_arguments** 不得为空数组，最少2条，每条引用具体数字或事件
+5. **catalysts/risk_alerts** 每条必须有具体公司名/数字/事件，禁止行业通稿泛化
 示例 counter_arguments（看多时）：["若Q4净利润增速跌破15%，PEG估值支撑失效", "家电以旧换新政策若退出，终端需求将骤降10-15%"]
 
 开始分析：

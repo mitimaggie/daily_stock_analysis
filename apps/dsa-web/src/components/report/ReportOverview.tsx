@@ -2,10 +2,9 @@ import type React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ReportMeta, ReportSummary as ReportSummaryType } from '../../types/analysis';
 import { ScoreGauge } from '../common';
-import { formatDateTime } from '../../utils/format';
 import apiClient from '../../api';
 import { scoreTrendApi } from '../../api/scoreTrend';
-import type { ScoreTrend } from '../../api/scoreTrend';
+import type { ScoreTrend, TimeframeWinrates } from '../../api/scoreTrend';
 
 interface ReportOverviewProps {
   meta: ReportMeta;
@@ -26,6 +25,8 @@ interface ReportOverviewProps {
   executionNote?: string;
   behavioralWarning?: string;
   skillUsed?: string;
+  resonanceLevel?: string;
+  capitalConflictWarning?: string;
 }
 
 /**
@@ -37,6 +38,14 @@ const SKILL_LABEL: Record<string, string> = {
   buffett: 'Buffett',
   soros: 'Soros',
   default: '通用',
+};
+
+const SKILL_DESC: Record<string, string> = {
+  druckenmiller: '宏观流动性框架',
+  soros: '反身性情绪框架',
+  lynch: '成长股侦察框架',
+  buffett: '价值投资框架',
+  default: '综合框架',
 };
 
 const DIFFICULTY_COLOR: Record<string, string> = {
@@ -54,7 +63,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   positionAmount,
   shares,
   totalCapital,
-  scoreMomentumAdj = 0,
+  scoreMomentumAdj: _scoreMomentumAdj = 0,
   onRefresh,
   isRefreshing = false,
   onPositionChange,
@@ -63,23 +72,31 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   executionNote,
   behavioralWarning,
   skillUsed,
+  resonanceLevel,
+  capitalConflictWarning,
 }) => {
   // 内联持仓编辑状态
   const [editingPosition, setEditingPosition] = useState(false);
   const [editShares, setEditShares] = useState('');
   const [editCost, setEditCost] = useState('');
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const [sceneExpanded, setSceneExpanded] = useState(false);
   // 盘中自动刷新价格
   const [livePrice, setLivePrice] = useState<number | undefined>(meta.currentPrice ?? undefined);
   const [liveChangePct, setLiveChangePct] = useState<number | undefined>(meta.changePct ?? undefined);
   const [lastUpdate, setLastUpdate] = useState<string>('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [scoreTrend, setScoreTrend] = useState<ScoreTrend | null>(null);
+  const [timeframeWr, setTimeframeWr] = useState<TimeframeWinrates | null>(null);
+  const [prevSkill, setPrevSkill] = useState<string | null>(null);
 
   useEffect(() => {
     setLivePrice(meta.currentPrice ?? undefined);
     setLiveChangePct(meta.changePct ?? undefined);
     setLastUpdate('');
     setScoreTrend(null);
+    setTimeframeWr(null);
+    setPrevSkill(null);
   }, [meta.stockCode, meta.currentPrice, meta.changePct]);
 
   const fetchScoreTrend = useCallback(async () => {
@@ -92,9 +109,42 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
     }
   }, [meta.stockCode]);
 
+  const fetchTimeframeWr = useCallback(async () => {
+    if (!meta.stockCode || !summary.sentimentScore) return;
+    try {
+      const res = await scoreTrendApi.getTimeframeWinrates(
+        meta.stockCode,
+        summary.sentimentScore,
+      );
+      if (res?.n > 0) setTimeframeWr(res);
+    } catch {
+      // 静默失败
+    }
+  }, [meta.stockCode, summary.sentimentScore]);
+
+  const fetchLastSkill = useCallback(async () => {
+    if (!meta.stockCode || !skillUsed) return;
+    try {
+      const res = await scoreTrendApi.getLastSkill(meta.stockCode);
+      if (res?.prev_skill && res.prev_skill !== skillUsed) {
+        setPrevSkill(res.prev_skill);
+      }
+    } catch {
+      // 静默失败
+    }
+  }, [meta.stockCode, skillUsed]);
+
   useEffect(() => {
     fetchScoreTrend();
   }, [fetchScoreTrend]);
+
+  useEffect(() => {
+    fetchTimeframeWr();
+  }, [fetchTimeframeWr]);
+
+  useEffect(() => {
+    fetchLastSkill();
+  }, [fetchLastSkill]);
 
   useEffect(() => {
     const isTrading = () => {
@@ -145,21 +195,17 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
 
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4 space-y-3">
-      {/* 第一行：股票名 + 价格 + 评分 */}
+      {/* 第一行：股票名 + 价格 + 评分（紧凑 header） */}
       <div className="flex items-center justify-between">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[15px] font-bold text-white">{meta.stockName || meta.stockCode}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[14px] font-bold text-white">{meta.stockName || meta.stockCode}</span>
+          <span className="text-[11px] text-white/25 font-mono">{meta.stockCode}</span>
           {displayPrice != null && (
-            <>
-              <span className={`text-[15px] font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
-                {displayPrice.toFixed(2)}
-              </span>
-              <span className={`text-[12px] font-mono ${getPriceChangeColor(displayChangePct)}`}>
-                {formatChangePct(displayChangePct)}
-              </span>
-            </>
+            <span className={`text-[14px] font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
+              {displayPrice.toFixed(2)}
+              <span className="text-[11px] ml-1">{formatChangePct(displayChangePct)}</span>
+            </span>
           )}
-          <span className="text-[11px] text-white/20">{meta.stockCode} · {formatDateTime(meta.createdAt)}</span>
           {lastUpdate && <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>}
         </div>
         <div className="flex items-center gap-2">
@@ -171,64 +217,138 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               className="p-1.5 rounded-lg hover:bg-white/[0.06] text-white/30 hover:text-white/60 transition-colors disabled:opacity-40"
               title="刷新分析"
             >
-              <svg
-                className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
           )}
+          {/* 评分 + 趋势 */}
           <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-white/25 font-mono">技术面</span>
             <ScoreGauge score={summary.sentimentScore} size="xs" showLabel={false} />
+            {/* P1: 操作阈值标签 */}
+            {summary.sentimentScore != null && (
+              summary.sentimentScore >= 78
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">可操作</span>
+                : summary.sentimentScore >= 55
+                  ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-white/[0.06] text-white/35 border border-white/10">观望</span>
+                  : <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-red-500/10 text-red-400/80 border border-red-500/20">规避</span>
+            )}
+            {/* P0: 共振级别 badge */}
+            {resonanceLevel && (
+              resonanceLevel.includes('中度共振做多') || resonanceLevel.includes('强共振做多')
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">🔥共振</span>
+                : resonanceLevel.includes('强共振做空')
+                  ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-red-500/20 text-red-300 border border-red-500/30">强空</span>
+                  : resonanceLevel.includes('做空')
+                    ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-red-500/10 text-red-400/70 border border-red-500/20">空头共振</span>
+                    : resonanceLevel.includes('分歧')
+                      ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400 border border-amber-500/25">⚡分歧</span>
+                      : null
+            )}
             {meta.scoreChange != null && meta.scoreChange !== 0 && (
               <span className={`text-[11px] font-mono font-semibold ${meta.scoreChange > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
                 {meta.scoreChange > 0 ? '▲' : '▼'}{Math.abs(meta.scoreChange)}
               </span>
             )}
-            {scoreMomentumAdj !== 0 && (
-              <span className={`text-[10px] px-1 py-0.5 rounded ${scoreMomentumAdj > 0 ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                惯性{scoreMomentumAdj > 0 ? '+' : ''}{scoreMomentumAdj}
-              </span>
-            )}
-            {/* 评分趋势信号 */}
             {scoreTrend && (() => {
               const { consecutive_up: up, consecutive_down: dn, inflection, trend_direction: dir } = scoreTrend;
               if (inflection) {
                 const isBull = inflection.includes('看多');
-                return (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${isBull ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/15 text-red-400 border border-red-500/20'}`}>
-                    {isBull ? '↗' : '↘'} {inflection}
-                  </span>
-                );
+                return <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${isBull ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/15 text-red-400 border border-red-500/20'}`}>{isBull ? '↗' : '↘'} {inflection}</span>;
               }
-              if (up >= 3) {
-                return (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/15">
-                    连升{up}日
-                  </span>
-                );
-              }
-              if (dn >= 3) {
-                return (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/15">
-                    连降{dn}日
-                  </span>
-                );
-              }
-              if (dir === 'improving' && up >= 2) {
-                return <span className="text-[10px] text-emerald-400/70 font-mono">↑↑</span>;
-              }
-              if (dir === 'declining' && dn >= 2) {
-                return <span className="text-[10px] text-red-400/70 font-mono">↓↓</span>;
-              }
+              if (up >= 3) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/15">连升{up}日</span>;
+              if (dn >= 3) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/15">连降{dn}日</span>;
+              if (dir === 'improving' && up >= 2) return <span className="text-[10px] text-emerald-400/70 font-mono">↑↑</span>;
+              if (dir === 'declining' && dn >= 2) return <span className="text-[10px] text-red-400/70 font-mono">↓↓</span>;
               return null;
             })()}
           </div>
         </div>
       </div>
+
+      {/* ★ 核心决策卡（立即行动 + 一句话结论） */}
+      {(actionNow || oneSentence) && (
+        <div className={`rounded-lg p-3 border ${
+          actionNow
+            ? 'border-cyan-500/30 bg-cyan-500/[0.06]'
+            : 'border-white/[0.08] bg-white/[0.03]'
+        }`}>
+          {actionNow && (
+            <div className="mb-2">
+              <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-mono tracking-wider">今日操作</span>
+                {skillUsed && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-violet-500/25 bg-violet-500/[0.08] text-violet-300/80 font-mono">
+                    {SKILL_LABEL[skillUsed] ?? skillUsed} · {SKILL_DESC[skillUsed] ?? 'AI研判'}
+                    {prevSkill && <span className="ml-1 text-amber-400/70">⚡切换自 {SKILL_LABEL[prevSkill] ?? prevSkill}</span>}
+                  </span>
+                )}
+                {executionDifficulty && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ml-auto ${DIFFICULTY_COLOR[executionDifficulty] ?? 'text-white/40 bg-white/5 border-white/10'}`}>
+                    难度{executionDifficulty}
+                  </span>
+                )}
+              </div>
+              <p className="text-[14px] text-white font-semibold leading-snug">{actionNow}</p>
+              {executionNote && <p className="text-[11px] text-white/45 mt-1 leading-relaxed">{executionNote}</p>}
+            </div>
+          )}
+          {oneSentence && (
+            <p className={`text-[13px] leading-relaxed ${
+              actionNow ? 'text-white/55 border-t border-white/[0.07] pt-2 mt-1' : 'text-white/80'
+            }`}>{oneSentence}</p>
+          )}
+        </div>
+      )}
+
+      {/* ⚠️ 心理陷阱预警（紧跟决策卡） */}
+      {behavioralWarning && (
+        <div className="rounded-lg px-3 py-2 border border-amber-500/20 bg-amber-500/5 text-[12px] text-amber-300/90 leading-relaxed">
+          ⚠️ {behavioralWarning}
+        </div>
+      )}
+      {/* P3-新: 信号分歧警告（回测数据：分歧状态5日胜率43%，20日39%，低于随机基准） */}
+      {resonanceLevel && resonanceLevel.includes('分歧') && (
+        <div className="rounded-lg px-3 py-2 border border-amber-500/25 bg-amber-500/[0.06] text-[12px] text-amber-300/85 leading-relaxed">
+          ⚡ 当前多空信号存在分歧，历史数据显示此状态5日胜率43%、20日胜率39%，低于基准水平。建议等待信号方向明朗后再操作。
+        </div>
+      )}
+      {/* P3: 资金面与量化信号冲突提示 */}
+      {capitalConflictWarning && (
+        <div className="rounded-lg px-3 py-2 border border-orange-500/25 bg-orange-500/[0.06] text-[12px] text-orange-300/85 leading-relaxed">
+          ⚠️ {capitalConflictWarning}
+        </div>
+      )}
+      {/* P2: 多时间线胜率（只在有操作意义的信号下展示，n>=20才显示） */}
+      {timeframeWr && timeframeWr.n >= 20 && summary.sentimentScore != null && summary.sentimentScore >= 75 && (
+        <div className="rounded-lg px-3 py-2.5 border border-white/[0.07] bg-white/[0.025]">
+          <div className="text-[10px] text-white/25 mb-2 font-mono">
+            历史同类信号 <span className="text-white/40">n={timeframeWr.n}</span>
+            {timeframeWr.weekly_trend && <span className="ml-1 text-white/20">· {timeframeWr.weekly_trend}</span>}
+          </div>
+          <div className="flex gap-3">
+            {[
+              { label: '5日', wr: timeframeWr.wr5d, key: '5d' },
+              { label: '10日', wr: timeframeWr.wr10d, key: '10d' },
+              { label: '20日', wr: timeframeWr.wr20d, key: '20d' },
+            ].map(({ label, wr, key }) => {
+              const isBest = timeframeWr.best_horizon === key;
+              const isGood = (wr ?? 0) >= 55;
+              const isPoor = (wr ?? 0) < 45;
+              return (
+                <div key={key} className={`flex-1 text-center rounded p-1.5 ${isBest ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-white/[0.03]'}`}>
+                  <div className="text-[9px] text-white/30 mb-0.5">{label}胜率</div>
+                  <div className={`text-[13px] font-bold font-mono ${isBest ? 'text-emerald-400' : isGood ? 'text-white/70' : isPoor ? 'text-red-400/70' : 'text-white/50'}`}>
+                    {wr != null ? `${wr}%` : '-'}
+                  </div>
+                  {isBest && <div className="text-[8px] text-emerald-400/60 mt-0.5">最优</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 持仓成本 & 浮盈亏（有持仓时显示，支持内联编辑） */}
       {hasPositionInfo && costPrice != null && costPrice > 0 && (() => {
@@ -291,177 +411,154 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         );
       })()}
 
-      {/* 评分历史折线图（有数据时显示） */}
-      {scoreTrend && scoreTrend.scores.length >= 3 && (() => {
-        const scores = scoreTrend.scores;
-        const W = 120, H = 28, PAD = 2;
-        const vals = scores.map(s => s.score);
-        const minV = Math.max(0, Math.min(...vals) - 5);
-        const maxV = Math.min(100, Math.max(...vals) + 5);
-        const range = maxV - minV || 1;
-        const pts = vals.map((v, i) => {
-          const x = PAD + (i / (vals.length - 1)) * (W - PAD * 2);
-          const y = H - PAD - ((v - minV) / range) * (H - PAD * 2);
-          return `${x.toFixed(1)},${y.toFixed(1)}`;
-        }).join(' ');
-        const lastScore = vals[vals.length - 1];
-        const firstScore = vals[0];
-        const improving = lastScore > firstScore;
-        const lineColor = improving ? '#34d399' : lastScore < firstScore ? '#f87171' : '#94a3b8';
-        const dir = scoreTrend.trend_direction;
-        return (
-          <div className="flex items-center gap-3">
-            <svg width={W} height={H} className="flex-none overflow-visible">
-              <polyline
-                points={pts}
-                fill="none"
-                stroke={lineColor}
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                opacity="0.85"
-              />
-              {/* 最后一个点高亮 */}
-              {(() => {
-                const [lx, ly] = pts.split(' ').pop()!.split(',').map(Number);
-                return <circle cx={lx} cy={ly} r="2.5" fill={lineColor} />;
-              })()}
-            </svg>
-            <div className="flex items-center gap-1.5 text-[10px] font-mono">
-              <span className="text-white/25">{scores[0].date.slice(5)}</span>
-              <span className="text-white/20">→</span>
-              <span className="text-white/25">{scores[scores.length - 1].date.slice(5)}</span>
-              <span className={`ml-1 ${dir === 'improving' ? 'text-emerald-400' : dir === 'declining' ? 'text-red-400' : 'text-white/35'}`}>
-                {dir === 'improving' ? '↗' : dir === 'declining' ? '↘' : '→'}
-                {scoreTrend.avg_score.toFixed(0)}均
-              </span>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* 操作建议 + 趋势预测（紧凑两行） */}
-      <div className="grid grid-cols-2 gap-x-4 text-[13px]">
-        <div>
-          <span className="text-white/30 text-[11px]">操作建议</span>
-          <p className="text-white/90 leading-snug mt-0.5">{summary.operationAdvice || '暂无'}</p>
-        </div>
-        <div>
-          <span className="text-white/30 text-[11px]">趋势预测</span>
-          <p className="text-white/90 leading-snug mt-0.5">{summary.trendPrediction || '暂无'}</p>
-        </div>
+      {/* 操作建议摘要（紧凑单行） */}
+      <div className="flex items-center gap-3 text-[12px] text-white/50 flex-wrap">
+        {summary.operationAdvice && (
+          <span>建议：<span className="text-white/75">{summary.operationAdvice}</span></span>
+        )}
+        <button
+          type="button"
+          onClick={() => setDetailExpanded(!detailExpanded)}
+          className="ml-auto text-[10px] text-white/25 hover:text-white/50 transition-colors"
+        >
+          {detailExpanded ? '收起详情 ▲' : '更多详情 ▼'}
+        </button>
       </div>
 
-      {/* 分割线 */}
-      <div className="border-t border-white/5" />
+      {/* 详情折叠区（评分趋势 + 趋势预测 + 场景识别 + 持仓建议） */}
+      {detailExpanded && (
+        <div className="space-y-3 pt-1">
 
-      {/* 一句话核心结论 */}
-      <p className="text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap text-left">
-        {oneSentence || summary.analysisSummary || '暂无分析结论'}
-      </p>
+          {/* 评分历史折线图 */}
+          {scoreTrend && scoreTrend.scores.length >= 3 && (() => {
+            const scores = scoreTrend.scores;
+            const W = 120, H = 28, PAD = 2;
+            const vals = scores.map(s => s.score);
+            const minV = Math.max(0, Math.min(...vals) - 5);
+            const maxV = Math.min(100, Math.max(...vals) + 5);
+            const range = maxV - minV || 1;
+            const pts = vals.map((v, i) => {
+              const x = PAD + (i / (vals.length - 1)) * (W - PAD * 2);
+              const y = H - PAD - ((v - minV) / range) * (H - PAD * 2);
+              return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            const lastScore = vals[vals.length - 1];
+            const firstScore = vals[0];
+            const improving = lastScore > firstScore;
+            const lineColor = improving ? '#34d399' : lastScore < firstScore ? '#f87171' : '#94a3b8';
+            const dir = scoreTrend.trend_direction;
+            return (
+              <div className="flex items-center gap-3">
+                <svg width={W} height={H} className="flex-none overflow-visible">
+                  <polyline points={pts} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+                  {(() => {
+                    const [lx, ly] = pts.split(' ').pop()!.split(',').map(Number);
+                    return <circle cx={lx} cy={ly} r="2.5" fill={lineColor} />;
+                  })()}
+                </svg>
+                <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                  <span className="text-white/25">{scores[0].date.slice(5)}</span>
+                  <span className="text-white/20">→</span>
+                  <span className="text-white/25">{scores[scores.length - 1].date.slice(5)}</span>
+                  <span className={`ml-1 ${dir === 'improving' ? 'text-emerald-400' : dir === 'declining' ? 'text-red-400' : 'text-white/35'}`}>
+                    {dir === 'improving' ? '↗' : dir === 'declining' ? '↘' : '→'}
+                    {scoreTrend.avg_score.toFixed(0)}均
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
-      {/* 立即行动卡片（actionNow 有值时显示） */}
-      {actionNow && (
-        <div className="border-t border-white/5 pt-3">
-          <div className="rounded-lg p-3 border border-cyan-500/20 bg-cyan-500/5 space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-400 font-mono">立即行动</span>
-              {executionDifficulty && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${DIFFICULTY_COLOR[executionDifficulty] ?? 'text-white/40 bg-white/5 border-white/10'}`}>
-                  操作难度：{executionDifficulty}
-                </span>
-              )}
-              {skillUsed && skillUsed !== 'default' && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded border border-violet-500/20 bg-violet-500/5 text-violet-400 font-mono ml-auto">
-                  {SKILL_LABEL[skillUsed] ?? skillUsed} 框架
-                </span>
-              )}
+          {/* 趋势预测 */}
+          {summary.trendPrediction && (
+            <div className="text-[12px]">
+              <span className="text-white/30 text-[11px]">趋势预测 </span>
+              <span className="text-white/70">{summary.trendPrediction}</span>
             </div>
-            <p className="text-[13px] text-white/90 leading-relaxed font-medium">{actionNow}</p>
-            {executionNote && (
-              <p className="text-[11px] text-white/50 leading-relaxed">{executionNote}</p>
-            )}
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* 心理陷阱预警（behavioralWarning 有值时显示） */}
-      {behavioralWarning && (
-        <div className={`rounded-lg px-3 py-2 border border-amber-500/20 bg-amber-500/5 text-[12px] text-amber-300/90 leading-relaxed ${actionNow ? '' : 'border-t border-white/5 mt-2 pt-0'}`}>
-          {behavioralWarning}
-        </div>
-      )}
+          {/* 场景识别（可折叠） */}
+          {summary.positionAdvice?.tradeAdvice?.scenarioId &&
+            summary.positionAdvice.tradeAdvice.scenarioId !== 'none' && (
+            <>
+              <button
+                type="button"
+                onClick={() => setSceneExpanded(!sceneExpanded)}
+                className="text-[11px] text-white/30 hover:text-white/55 transition-colors text-left"
+              >
+                {sceneExpanded ? '▲ 收起场景识别' : '▼ 场景识别'}
+                {summary.positionAdvice.tradeAdvice.scenarioLabel
+                  ? ` · ${summary.positionAdvice.tradeAdvice.scenarioLabel}`
+                  : ''}
+              </button>
+              {sceneExpanded && (() => {
+                const ta = summary.positionAdvice!.tradeAdvice!;
+                const isPositive = !ta.scenarioId?.startsWith('E');
+                const confColor = ta.scenarioConfidence === '高' ? 'text-emerald-400' : ta.scenarioConfidence === '中' ? 'text-amber-400' : 'text-white/40';
+                const borderColor = isPositive ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5';
+                const isIntraday = ta.turnoverPercentileConfidence === '盘中折算估算' || (ta.scenarioLabel?.includes('盘中') ?? false);
+                const tpDisplay = ta.turnoverPercentile !== undefined ? `${Math.round(ta.turnoverPercentile * 100)}%分位` : '';
+                return (
+                  <div className={`rounded-lg p-3 border ${borderColor} space-y-2`}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${isPositive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                        场景{ta.scenarioId}
+                      </span>
+                      <span className="text-[12px] text-white/80 font-medium">{ta.scenarioLabel}</span>
+                      <span className={`text-[10px] ml-auto ${confColor}`}>置信度: {ta.scenarioConfidence}</span>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {tpDisplay && (
+                        <span className="text-[11px] text-white/40">
+                          换手率历史分位: <span className="font-mono text-white/60">{tpDisplay}</span>
+                        </span>
+                      )}
+                      {ta.turnoverPercentileConfidence && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isIntraday ? 'border-amber-500/30 text-amber-400/70 bg-amber-500/5' : 'border-emerald-500/20 text-emerald-400/60 bg-emerald-500/5'}`}>
+                          {ta.turnoverPercentileConfidence}
+                        </span>
+                      )}
+                    </div>
+                    {(ta.expectedReturn20d || ta.winRate) && (
+                      <div className="flex gap-4 text-[11px]">
+                        {ta.expectedReturn20d && (
+                          <span className="text-white/50">20日预期: <span className={`font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>{ta.expectedReturn20d}</span></span>
+                        )}
+                        {ta.winRate && (
+                          <span className="text-white/50">历史胜率: <span className="font-mono text-white/70">{ta.winRate}</span></span>
+                        )}
+                      </div>
+                    )}
+                    {(hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty) && (
+                      <p className="text-[12px] text-white/70 leading-relaxed">
+                        {hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
+          )}
 
-      {/* 场景识别卡片（有场景时展示） */}
-      {summary.positionAdvice?.tradeAdvice?.scenarioId && summary.positionAdvice.tradeAdvice.scenarioId !== 'none' && (() => {
-        const ta = summary.positionAdvice!.tradeAdvice!;
-        const isPositive = !ta.scenarioId?.startsWith('E');
-        const confColor = ta.scenarioConfidence === '高' ? 'text-emerald-400' : ta.scenarioConfidence === '中' ? 'text-amber-400' : 'text-white/40';
-        const borderColor = isPositive ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5';
-        const isIntraday = ta.turnoverPercentileConfidence === '盘中折算估算' || (ta.scenarioLabel?.includes('盘中') ?? false);
-        const tpDisplay = ta.turnoverPercentile !== undefined ? `${Math.round(ta.turnoverPercentile * 100)}%分位` : '';
-        return (
-          <div className={`border-t border-white/5 pt-3`}>
-            <div className={`rounded-lg p-3 border ${borderColor} space-y-2`}>
-              {/* 场景标题行 */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${isPositive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
-                  场景{ta.scenarioId}
-                </span>
-                <span className="text-[12px] text-white/80 font-medium">{ta.scenarioLabel}</span>
-                <span className={`text-[10px] ml-auto ${confColor}`}>置信度: {ta.scenarioConfidence}</span>
-              </div>
-              {/* 换手率分位 + 数据来源标注 */}
-              <div className="flex items-center gap-3 flex-wrap">
-                {tpDisplay && (
-                  <span className="text-[11px] text-white/40">
-                    换手率历史分位: <span className="font-mono text-white/60">{tpDisplay}</span>
-                  </span>
-                )}
-                {ta.turnoverPercentileConfidence && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isIntraday ? 'border-amber-500/30 text-amber-400/70 bg-amber-500/5' : 'border-emerald-500/20 text-emerald-400/60 bg-emerald-500/5'}`}>
-                    {ta.turnoverPercentileConfidence}
-                  </span>
-                )}
-              </div>
-              {/* 预期收益 + 胜率 */}
-              {(ta.expectedReturn20d || ta.winRate) && (
-                <div className="flex gap-4 text-[11px]">
-                  {ta.expectedReturn20d && (
-                    <span className="text-white/50">20日预期: <span className={`font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>{ta.expectedReturn20d}</span></span>
-                  )}
-                  {ta.winRate && (
-                    <span className="text-white/50">历史胜率: <span className="font-mono text-white/70">{ta.winRate}</span></span>
-                  )}
+          {/* 持仓建议兜底（无场景时） */}
+          {(!summary.positionAdvice?.tradeAdvice?.scenarioId || summary.positionAdvice?.tradeAdvice?.scenarioId === 'none') &&
+            (hasPositionInfo ? summary.positionAdvice?.hasPosition : summary.positionAdvice?.noPosition) && (
+            <div className="space-y-2">
+              {hasPositionInfo && summary.positionAdvice?.hasPosition && (
+                <div className="flex gap-2 items-start text-[13px]">
+                  <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">策略</span>
+                  <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
                 </div>
               )}
-              {/* 操作建议 */}
-              {(hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty) && (
-                <p className="text-[12px] text-white/70 leading-relaxed">
-                  {hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty}
-                </p>
+              {!hasPositionInfo && summary.positionAdvice?.noPosition && (
+                <div className="flex gap-2 items-start text-[13px]">
+                  <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
+                  <p className="text-white/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
+                </div>
               )}
             </div>
-          </div>
-        );
-      })()}
+          )}
 
-      {/* 持仓建议：兜底展示（无场景时显示）*/}
-      {(!summary.positionAdvice?.tradeAdvice?.scenarioId || summary.positionAdvice?.tradeAdvice?.scenarioId === 'none') &&
-        (hasPositionInfo ? summary.positionAdvice?.hasPosition : summary.positionAdvice?.noPosition) && (
-        <div className="border-t border-white/5 pt-3 space-y-2">
-          {hasPositionInfo && summary.positionAdvice?.hasPosition && (
-            <div className="flex gap-2 items-start text-[13px]">
-              <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">策略</span>
-              <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
-            </div>
-          )}
-          {!hasPositionInfo && summary.positionAdvice?.noPosition && (
-            <div className="flex gap-2 items-start text-[13px]">
-              <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
-              <p className="text-white/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
-            </div>
-          )}
         </div>
       )}
     </div>
