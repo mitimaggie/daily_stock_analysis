@@ -598,6 +598,16 @@ class GeminiAnalyzer:
                     )
 
             position_section = "\n\n## 用户持仓信息（针对持仓者给出建议）\n" + "\n".join(f"- {p}" for p in pos_parts)
+            sector_warn = (position_info or {}).get('sector_concentration_warning')
+            if sector_warn:
+                position_section += f"\n- {sector_warn}"
+
+        # 空仓者若有板块集中度风险，也需在 prompt 中体现
+        if not has_position and position_info and position_info.get('sector_concentration_warning'):
+            position_section = (
+                "\n\n## 组合风险提示（空仓者）\n"
+                f"- {position_info['sector_concentration_warning']}"
+            )
 
         # JSON 输出协议：持仓者只需 has_position，空仓者只需 no_position
         if has_position:

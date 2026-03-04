@@ -139,6 +139,87 @@ def get_position_info_for_analysis(code: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def get_portfolio_sector_risk(current_code: str) -> Optional[Dict[str, Any]]:
+    """
+    计算持仓组合的板块集中度风险，并判断当前股票是否处于集中板块中。
+
+    思路：
+    1. 从 portfolio 表获取所有持仓股票代码
+    2. 对每只股票，查询最近一条 analysis_history 中的 sector_context，提取板块名
+    3. 按板块分组，统计各板块持股数
+    4. 返回当前股票所在板块 + 同板块其他持仓 + 集中度告警
+
+    Returns:
+        {
+            'current_sector': '白酒Ⅱ',
+            'portfolio_sector_map': {'白酒Ⅱ': ['000858', '600519'], ...},
+            'same_sector_peers': ['600519'],        # 同板块其他持仓（不含自己）
+            'concentration_warning': '⚠️ 已持有同板块 1 只: 600519',  # 或 None
+        }
+        若无持仓或无板块数据返回 None。
+    """
+    try:
+        from sqlalchemy import text as _text
+        db = DatabaseManager.get_instance()
+
+        # 1. 获取所有持仓代码
+        with db.get_session() as session:
+            rows = session.execute(_text("SELECT code FROM portfolio")).fetchall()
+        all_codes = [r[0] for r in rows]
+        if not all_codes:
+            return None
+
+        # 2. 对每只股票取最近一条 sector_context
+        sector_map: Dict[str, str] = {}  # code -> sector_name
+        with db.get_session() as session:
+            for code in all_codes:
+                row = session.execute(_text(
+                    "SELECT json_extract(context_snapshot, '$.sector_context') "
+                    "FROM analysis_history "
+                    "WHERE code=:code AND context_snapshot IS NOT NULL "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ), {"code": code}).fetchone()
+                if row and row[0]:
+                    import json as _json
+                    sc = _json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                    sname = sc.get('sector_name') if isinstance(sc, dict) else None
+                    if sname:
+                        sector_map[code] = sname
+
+        if not sector_map:
+            return None
+
+        # 3. 按板块分组
+        portfolio_sector_map: Dict[str, list] = {}
+        for code, sector in sector_map.items():
+            portfolio_sector_map.setdefault(sector, []).append(code)
+
+        # 4. 当前股票的板块
+        current_sector = sector_map.get(current_code)
+
+        same_sector_peers = []
+        concentration_warning = None
+        if current_sector:
+            peers = [c for c in portfolio_sector_map.get(current_sector, []) if c != current_code]
+            same_sector_peers = peers
+            if peers:
+                concentration_warning = (
+                    f"⚠️ 板块集中风险: 已持有同属「{current_sector}」板块的 {len(peers)} 只股票: "
+                    f"{', '.join(peers)}。同板块持仓集中，面临板块系统性风险。"
+                )
+
+        return {
+            'current_sector': current_sector,
+            'portfolio_sector_map': portfolio_sector_map,
+            'same_sector_peers': same_sector_peers,
+            'concentration_warning': concentration_warning,
+        }
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).debug(f"get_portfolio_sector_risk({current_code}) failed: {e}")
+        return None
+
+
 # ─────────────────────────────────────────────
 # 关注股 CRUD
 # ─────────────────────────────────────────────

@@ -79,6 +79,19 @@ class AnalysisService:
             # 确定报告类型
             rt = ReportType.FULL if report_type == "detailed" else ReportType.SIMPLE
             
+            # 注入板块集中度风险（从持仓组合中计算）
+            try:
+                from src.services.portfolio_service import get_portfolio_sector_risk
+                sector_risk = get_portfolio_sector_risk(stock_code)
+                if sector_risk and sector_risk.get('concentration_warning'):
+                    if position_info is None:
+                        position_info = {}
+                    position_info = dict(position_info)
+                    position_info['sector_concentration_warning'] = sector_risk['concentration_warning']
+                    position_info['portfolio_sector_map'] = sector_risk.get('portfolio_sector_map', {})
+            except Exception as _e:
+                logger.debug(f"板块集中度计算失败: {_e}")
+
             # 执行分析
             result = pipeline.process_single_stock(
                 code=stock_code,
