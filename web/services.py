@@ -273,7 +273,7 @@ class AnalysisService:
         try:
             # 延迟导入避免循环依赖
             from src.config import get_config
-            from main import StockAnalysisPipeline
+            from src.core.pipeline import StockAnalysisPipeline
             
             logger.info(f"[AnalysisService] 开始分析股票: {code}")
             

@@ -12,7 +12,7 @@ A股自选股智能分析系统 - 配置管理模块
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
 
@@ -181,11 +181,6 @@ class Config:
     retry_base_delay: float = 1.0
     retry_max_delay: float = 30.0
     
-    # === WebUI 配置（已废弃，保留兼容旧 .env）===
-    webui_enabled: bool = False
-    webui_host: str = "127.0.0.1"
-    webui_port: int = 8000
-    
     # === 机器人配置 ===
     bot_enabled: bool = True              # 是否启用机器人功能
     bot_command_prefix: str = "/"         # 命令前缀
@@ -216,7 +211,7 @@ class Config:
     discord_bot_status: str = "A股智能分析 | /help"  # 机器人状态信息
     
     # 单例实例存储
-    _instance: Optional['Config'] = None
+    _instance: ClassVar[Optional['Config']] = None
     
     @classmethod
     def get_instance(cls) -> 'Config':
@@ -368,6 +363,7 @@ class Config:
             log_dir=os.getenv('LOG_DIR', './logs'),
             log_level=os.getenv('LOG_LEVEL', 'INFO'),
             max_workers=int(os.getenv('MAX_WORKERS', '1')),
+            fast_mode=os.getenv('FAST_MODE', 'false').lower() == 'true',
             debug=os.getenv('DEBUG', 'false').lower() == 'true',
             http_proxy=os.getenv('HTTP_PROXY'),
             https_proxy=os.getenv('HTTPS_PROXY'),
@@ -376,9 +372,6 @@ class Config:
             chip_schedule_time=os.getenv('CHIP_SCHEDULE_TIME', '16:00'),
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
             analysis_timeout_seconds=int(os.getenv('ANALYSIS_TIMEOUT_SECONDS', '180')),
-            webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',
-            webui_host=os.getenv('WEBUI_HOST', '127.0.0.1'),
-            webui_port=int(os.getenv('WEBUI_PORT', '8000')),
             # 机器人配置
             bot_enabled=os.getenv('BOT_ENABLED', 'true').lower() == 'true',
             bot_command_prefix=os.getenv('BOT_COMMAND_PREFIX', '/'),

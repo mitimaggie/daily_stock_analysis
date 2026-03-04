@@ -600,7 +600,6 @@ class StockAnalysisPipeline:
         skip_analysis: bool = False,
         single_stock_notify: bool = False,
         report_type: ReportType = ReportType.SIMPLE,
-        skip_data_fetch: bool = False,
         market_overview_override: Optional[str] = None,
         position_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
@@ -1265,10 +1264,6 @@ class StockAnalysisPipeline:
             sector = None
             if r.dashboard and isinstance(r.dashboard, dict):
                 sector = r.dashboard.get('sector_name')
-            if not sector:
-                # 尝试从 market_snapshot 获取
-                snap = r.market_snapshot or {}
-                sector = snap.get('sector_name')
             if sector:
                 sector_map.setdefault(sector, []).append(r.name or r.code)
 
@@ -1301,7 +1296,6 @@ class StockAnalysisPipeline:
         total_position = 0
         for r in results:
             # 从 dashboard 中获取量化建议仓位
-            trend = getattr(r, 'market_snapshot', {}) or {}
             pos = 0
             if r.dashboard and isinstance(r.dashboard, dict):
                 core = r.dashboard.get('core_conclusion', {})
@@ -1452,7 +1446,6 @@ class StockAnalysisPipeline:
                     skip_analysis=dry_run, 
                     single_stock_notify=single_stock_notify and send_notification, 
                     report_type=report_type, 
-                    skip_data_fetch=True,
                     market_overview_override=market_overview_once
                 ): code for code in valid_stocks
             }
