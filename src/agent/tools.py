@@ -9,12 +9,21 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+_shared_mgr = None
+
+
+def _get_mgr():
+    global _shared_mgr
+    if _shared_mgr is None:
+        from data_provider.base import DataFetcherManager
+        _shared_mgr = DataFetcherManager()
+    return _shared_mgr
+
 
 def get_realtime_quote(stock_code: str) -> Dict[str, Any]:
     """获取股票实时行情（价格、涨跌幅、成交量等）"""
     try:
-        from data_provider.base import DataFetcherManager
-        mgr = DataFetcherManager()
+        mgr = _get_mgr()
         q = mgr.get_realtime_quote(stock_code)
         if not q:
             return {"error": f"无法获取 {stock_code} 实时行情"}
@@ -40,8 +49,7 @@ def get_realtime_quote(stock_code: str) -> Dict[str, Any]:
 def get_daily_history(stock_code: str, days: int = 60) -> Dict[str, Any]:
     """获取股票近N日历史K线数据摘要（均线、趋势、成交量变化）"""
     try:
-        from data_provider.base import DataFetcherManager
-        mgr = DataFetcherManager()
+        mgr = _get_mgr()
         df, source = mgr.get_daily_data(stock_code, days=days)
         if df is None or df.empty:
             return {"error": f"无法获取 {stock_code} 历史数据"}
@@ -89,8 +97,7 @@ def get_daily_history(stock_code: str, days: int = 60) -> Dict[str, Any]:
 def get_chip_distribution(stock_code: str) -> Dict[str, Any]:
     """获取股票筹码分布（获利盘比例、平均成本、集中度）"""
     try:
-        from data_provider.base import DataFetcherManager
-        mgr = DataFetcherManager()
+        mgr = _get_mgr()
         chip = mgr.get_chip_distribution(stock_code)
         if not chip:
             return {"error": f"无法获取 {stock_code} 筹码数据（可能未启用或缓存未就绪）"}
@@ -184,8 +191,7 @@ def search_stock_news(stock_code: str, stock_name: str = "") -> Dict[str, Any]:
 def get_stock_name(stock_code: str) -> str:
     """根据股票代码获取股票名称"""
     try:
-        from data_provider.base import DataFetcherManager
-        mgr = DataFetcherManager()
+        mgr = _get_mgr()
         # 尝试通过实时行情获取名称
         q = mgr.get_realtime_quote(stock_code)
         if q and getattr(q, 'name', None):

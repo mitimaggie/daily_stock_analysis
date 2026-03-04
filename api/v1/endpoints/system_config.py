@@ -61,7 +61,7 @@ CONFIG_SCHEMA = {
     },
     "数据源": {
         "ENABLE_REALTIME_QUOTE": {"label": "启用实时行情", "type": "boolean", "default": "true"},
-        "REALTIME_SOURCE_PRIORITY": {"label": "数据源优先级", "type": "text", "default": "tencent,akshare_sina,efinance,akshare_em"},
+        "REALTIME_SOURCE_PRIORITY": {"label": "数据源优先级", "type": "text", "default": "tencent,akshare_sina,akshare_em"},
         "ENABLE_CHIP_DISTRIBUTION": {"label": "启用筹码分布", "type": "boolean", "default": "true"},
         "ENABLE_MARGIN_HISTORY": {"label": "启用融资余额历史", "type": "boolean", "default": "true", "description": "获取个股近期融资余额趋势，已优化为批量缓存，开销可接受"},
     },

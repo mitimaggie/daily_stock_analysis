@@ -125,7 +125,7 @@ class BaseFetcher(ABC):
 
 
 class DataFetcherManager:
-    def __init__(self, fetchers: Optional[List[BaseFetcher]] = None):
+    def __init__(self):
         self._fetchers: List[BaseFetcher] = []
         self._chip_cache = {} 
         self._stock_name_cache = {}
