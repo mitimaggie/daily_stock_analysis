@@ -224,6 +224,57 @@ class StockAnalysisPipeline:
             pass
         return 'default'
 
+    def _get_macro_intel(self, save_to_db: bool = False, portfolio_sectors: list = None) -> Optional[str]:
+        """
+        获取宏观情报文本（含6大维度）。先查 news_intel DB 缓存（TTL=4h），命中则复用；
+        未命中则调用 Perplexity，结果落库。
+        """
+        MACRO_CODE = "__MACRO__"
+        MACRO_TTL_HOURS = 4
+
+        # 1. 查缓存
+        try:
+            items = self.storage.get_recent_news(MACRO_CODE, days=1, limit=1, provider="perplexity")
+            if items:
+                from datetime import timedelta
+                cutoff = datetime.now() - timedelta(hours=MACRO_TTL_HOURS)
+                fresh = [n for n in items if getattr(n, "fetched_at", None) and n.fetched_at >= cutoff]
+                if fresh:
+                    logger.info("🌐 [宏观情报] 命中缓存，复用已有宏观研报")
+                    return getattr(fresh[0], "snippet", None) or getattr(fresh[0], "title", None)
+        except Exception as e:
+            logger.debug(f"[宏观情报] 缓存读取失败: {e}")
+
+        # 2. 缓存未命中，调用 Perplexity
+        if not self.search_service:
+            logger.debug("[宏观情报] search_service 未配置，跳过")
+            return None
+        if not getattr(self.search_service, 'provider', None):
+            return None
+
+        try:
+            logger.info("🌐 [宏观情报] 调用 Perplexity 获取6维宏观研报...")
+            resp = self.search_service.search_macro_context(portfolio_sectors=portfolio_sectors)
+            if resp and getattr(resp, 'success', False) and resp.results:
+                content = resp.results[0].snippet or resp.results[0].title or ""
+                if content and save_to_db:
+                    try:
+                        self.storage.save_news_intel(
+                            MACRO_CODE, "宏观情报", dimension="macro_context",
+                            query="宏观6维研报", response=resp,
+                            query_context={"query_source": "macro_batch"}
+                        )
+                    except Exception as _e:
+                        logger.debug(f"[宏观情报] 落库跳过: {_e}")
+                logger.info("🌐 [宏观情报] 获取成功，已注入全批次")
+                return content
+            else:
+                reason = getattr(resp, 'error', '未知') if resp else '响应为空'
+                logger.warning(f"🌐 [宏观情报] Perplexity 返回失败: {reason}")
+        except Exception as e:
+            logger.warning(f"🌐 [宏观情报] 搜索异常: {e}")
+        return None
+
     def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6,
                                   limit: int = 5, provider: str = None,
                                   min_count: int = 1) -> str:
@@ -303,13 +354,17 @@ class StockAnalysisPipeline:
         # === 预获取共享数据（每类数据只获取一次，供量化分析和 LLM context 共用）===
         fast_mode = getattr(self.config, 'fast_mode', False)
 
+        # 数据可用性追踪：记录各模块获取失败，后续注入 LLM prompt 告知缺口
+        _missing_data: list = []
+
         # F10 基本面数据（只获取一次）
         fundamental_data = FundamentalData()
         if not fast_mode:
             try:
                 fundamental_data = get_fundamental_data(code)
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning(f"[{code}] F10基本面数据获取失败: {_e}")
+                _missing_data.append("F10基本面/财务数据（接口失败，PE/PB/营收/利润均不可用）")
 
         # 补充估值：从实时行情注入 PE/PB/总市值（写入 fundamental_data.valuation dict，供 LLM context 使用）
         if quote:
@@ -359,6 +414,7 @@ class StockAnalysisPipeline:
             sector_context = self.fetcher_manager.get_stock_sector_context(code, stock_pct_chg=_stock_pct)
         except Exception as e:
             logger.debug(f"[{code}] 板块上下文获取失败: {e}")
+            _missing_data.append("板块相对强弱（无法判断个股vs板块强弱）")
 
         # === 技术面量化分析 ===
         tech_report = "数据不足，无法进行技术分析"
@@ -426,8 +482,9 @@ class StockAnalysisPipeline:
                         pe_hist = get_pe_history(code)
                         if pe_hist:
                             _val_snap.pe_history = pe_hist
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug(f"[{code}] 行业PE/PE历史获取失败: {_e}")
+                    _missing_data.append("行业PE中位数/PE历史分位（相对估值无法判断）")
                 # 资金面数据（如有）+ 融资余额历史（P3情绪极端检测）
                 _capital_flow = None
                 try:
@@ -448,8 +505,9 @@ class StockAnalysisPipeline:
                         _avg_amount = (daily_df['close'] * daily_df['volume']).tail(20).mean()
                         if _avg_amount > 0:
                             _capital_flow.daily_avg_amount = round(_avg_amount / 10000, 2)  # 转为万元
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.warning(f"[{code}] 资金流向数据获取失败: {_e}")
+                    _missing_data.append("资金流向/主力净流入（无法判断机构买卖意图）")
                 # 行情附加数据（换手率、52周高低、市值）
                 _quote_extra = None
                 if quote:
@@ -507,8 +565,10 @@ class StockAnalysisPipeline:
                 try:
                     from src.stock_analyzer.kline_narrator import KlineNarrator
                     kline_narrative = KlineNarrator.describe(trend_result, daily_df)
-                except Exception:
+                except Exception as _e:
                     kline_narrative = ""
+                    logger.debug(f"[{code}] K线叙事生成失败: {_e}")
+                    _missing_data.append("K线形态叙事（无法用文字描述K线形态）")
                 trend_analysis_dict = trend_result.to_dict()
                 trend_analysis_dict['market_regime'] = regime.value
                 # 从量化结果回填板块数据（量化分析可能丰富了板块信息）
@@ -528,6 +588,7 @@ class StockAnalysisPipeline:
             history_summary = self.storage.get_last_analysis_summary(code)
         except Exception as e:
             logger.debug(f"[{code}] 获取历史摘要失败: {e}")
+            _missing_data.append("历史分析记忆（无法参考上次判断")
 
         # 当日/昨日 K 线（供推送中的「当日行情」快照用）
         today_row = {}
@@ -544,6 +605,10 @@ class StockAnalysisPipeline:
                     yesterday_row = {k: prev[k] for k in keys if k in prev.index}
             except Exception:
                 pass
+
+        # 日线数据缺失时，技术分析全部不可用
+        if daily_df is None or daily_df.empty:
+            _missing_data.append("K线日线数据（无法进行任何技术分析，量化评分不可用）")
 
         context = {
             'code': code,
@@ -567,6 +632,7 @@ class StockAnalysisPipeline:
             'is_intraday': is_market_intraday(),
             'market_phase': get_market_phase(),
             'analysis_time': datetime.now().strftime('%H:%M'),
+            'data_availability': _missing_data,
         }
         context = self._enhance_context(context)
         return context
@@ -610,6 +676,7 @@ class StockAnalysisPipeline:
         market_overview_override: Optional[str] = None,
         position_info: Optional[Dict[str, Any]] = None,
         ab_variant: str = 'standard',
+        macro_intel: Optional[str] = None,
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
@@ -707,7 +774,13 @@ class StockAnalysisPipeline:
                 logger.info(f"🔎 [{stock_name}] 无缓存新闻，调用 Perplexity 搜索 (延迟 {sleep_time:.1f}s)...")
                 try:
                     if hasattr(self.search_service, 'search_comprehensive_intel'):
-                        resp = self.search_service.search_comprehensive_intel(code, stock_name)
+                        _sec_name = (context.get('sector_context') or {}).get('sector_name') if isinstance(context.get('sector_context'), dict) else None
+                        _intraday = context.get('is_intraday', False)
+                        resp = self.search_service.search_comprehensive_intel(
+                            code, stock_name,
+                            sector_name=_sec_name,
+                            is_intraday=_intraday,
+                        )
                     elif hasattr(self.search_service, 'search_stock_news'):
                         resp = self.search_service.search_stock_news(code, stock_name)
                     else:
@@ -774,6 +847,17 @@ class StockAnalysisPipeline:
                         logger.info(f"📊 [{stock_name}] 大盘环境已注入（滤网）: 成交额{vol}亿 | {idx_str}")
                 except Exception as e:
                     logger.warning(f"[{stock_name}] 获取大盘数据微瑕: {e}")
+
+            # 宏观情报注入：批量路径由 run() 预取传入；单股 API 路径从 DB 缓存读取（TTL=4h）
+            _macro = macro_intel
+            if _macro is None:
+                try:
+                    _macro = self._get_macro_intel(save_to_db=True)
+                except Exception:
+                    pass
+            if _macro:
+                macro_prefix = "\n\n---\n## 宏观环境情报（Perplexity）\n"
+                market_overview = (market_overview or "") + macro_prefix + _macro
 
             # 分析前延迟（可配置，用于等待数据落定或降低 API 压力）
             delay = getattr(self.config, 'analysis_delay', 0) or 0
@@ -1407,7 +1491,7 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.error(f"[{code}] 数据预取异常: {e}")
 
-        # === 阶段1.5：保存今日指数数据（供 Beta 计算） ===
+        # === 阶段1.5：保存今日指数数据（供 Beta 计算） + 宏观情报预取 ===
         if self._market_monitor:
             try:
                 snap = self._market_monitor.get_market_snapshot()
@@ -1420,6 +1504,23 @@ class StockAnalysisPipeline:
                             self.storage.save_index_daily(name, close_val, pct)
             except Exception as e:
                 logger.debug(f"保存指数日线跳过: {e}")
+
+        # 宏观情报：全批次只取一次，结果落库缓存（TTL=4h），所有股票共享
+        # 注入持仓板块，让宏观研报聚焦相关传导
+        _portfolio_sectors: list = []
+        try:
+            from src.services.portfolio_service import list_portfolio
+            _portfolio = list_portfolio()
+            if _portfolio:
+                _seen = set()
+                for _h in _portfolio:
+                    _sn = (_h.get('sector_name') or _h.get('sector_context', {}) or {}).get('sector_name', '') if isinstance(_h, dict) else ''
+                    if _sn and _sn not in _seen:
+                        _portfolio_sectors.append(_sn)
+                        _seen.add(_sn)
+        except Exception as _pe:
+            logger.debug(f"[宏观情报] 获取持仓板块失败(降级为通用查询): {_pe}")
+        macro_intel_once: Optional[str] = self._get_macro_intel(save_to_db=True, portfolio_sectors=_portfolio_sectors or None)
 
         # === 阶段二：并发分析 ===
         # 预取实时行情（批量预热，可选）
@@ -1462,7 +1563,8 @@ class StockAnalysisPipeline:
                     skip_analysis=dry_run, 
                     single_stock_notify=single_stock_notify and send_notification, 
                     report_type=report_type, 
-                    market_overview_override=market_overview_once
+                    market_overview_override=market_overview_once,
+                    macro_intel=macro_intel_once,
                 ): code for code in valid_stocks
             }
             

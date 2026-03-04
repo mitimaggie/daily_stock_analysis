@@ -543,6 +543,14 @@ class GeminiAnalyzer:
 
 {news_context}"""
 
+        # 数据可用性警告段落（若有数据模块获取失败，明确告知 LLM，让其降低相关维度置信度）
+        _missing = context.get('data_availability') or []
+        if _missing:
+            _items = "\n".join(f"- {m}" for m in _missing)
+            data_availability_section = f"\n## ⚠️ 数据缺失提示（请降低以下维度的置信度）\n{_items}\n"
+        else:
+            data_availability_section = ""
+
         time_horizon_hint = "'短线(日内)' 或 '短线(1-3日)'" if is_intraday else "'短线(1-5日)' 或 '中线(1-4周)' 或 '长线(1-3月)'"
 
         # 持仓信息注入（仅持仓者视角时）
@@ -724,7 +732,7 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-
+{data_availability_section}
 ## JSON 输出协议
 {'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考（"量化 vs AI"双视角）。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
