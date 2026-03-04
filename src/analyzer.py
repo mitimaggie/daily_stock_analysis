@@ -732,7 +732,7 @@ Step 4（{_has_pos_label}） - 结论：
 stock_name, trend_prediction, time_horizon({time_horizon_hint}),
 analysis_summary(格式固定为3句话：①明确的方向性结论（多/空/观望）及核心理由，必须引用具体数字；②基本面/行业/舆情中最关键的支撑或压制因素；③明确的操作建议，含具体触发条件或价位。**禁止重复量化报告中的MACD/KDJ/RSI等技术指标描述，禁止使用"公司具有护城河"等泛化表述**),
 risk_warning,
-sentiment_score(0-100), operation_advice("买入"/"持有"/"卖出"/"观望"),
+sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望") — 你是持仓者，请根据分析给出适当建议' if has_position else 'operation_advice("买入"/"观望"/"等待") — 你是空仓者，禁止输出减仓/清仓/持有'},
 llm_score(同sentiment_score), llm_advice(同operation_advice),
 llm_reasoning(与量化分歧原因，无分歧写"与量化结论一致"),
 confidence_reasoning(判断置信度，如"舆情充分置信度高"或"缺少关键数据置信度低"),

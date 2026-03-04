@@ -112,7 +112,7 @@ class AnalysisService:
                 def _run_pair():
                     try:
                         import time
-                        time.sleep(3)  # 错开 3 秒，避免并发冲击 API
+                        time.sleep(120)  # 错开 120 秒，等主分析批次完成后再启动，避免并发冲击 Gemini API
                         pair_pipeline = StockAnalysisPipeline(
                             config=config,
                             query_id=f"{query_id}_ab",
