@@ -38,6 +38,7 @@ class AnalysisService:
         query_id: Optional[str] = None,
         send_notification: bool = True,
         position_info: Optional[Dict[str, Any]] = None,
+        ab_variant: str = "standard",
     ) -> Optional[Dict[str, Any]]:
         """
         执行股票分析
@@ -85,12 +86,38 @@ class AnalysisService:
                 single_stock_notify=send_notification,
                 report_type=rt,
                 position_info=position_info,
+                ab_variant=ab_variant,
             )
             
             if result is None:
                 logger.warning(f"分析股票 {stock_code} 返回空结果")
                 return None
-            
+
+            # A/B 自动配对：standard 分析完后，后台异步触发一次 llm_only 对照实验
+            if ab_variant == 'standard' and getattr(config, 'ab_auto_pair', False):
+                import threading
+                def _run_pair():
+                    try:
+                        import time
+                        time.sleep(3)  # 错开 3 秒，避免并发冲击 API
+                        pair_pipeline = StockAnalysisPipeline(
+                            config=config,
+                            query_id=f"{query_id}_ab",
+                            query_source="ab_auto"
+                        )
+                        pair_pipeline.process_single_stock(
+                            code=stock_code,
+                            skip_analysis=False,
+                            single_stock_notify=False,
+                            report_type=rt,
+                            position_info=position_info,
+                            ab_variant='llm_only',
+                        )
+                        logger.info(f"[AB] llm_only 配对分析完成: {stock_code}")
+                    except Exception as e:
+                        logger.warning(f"[AB] llm_only 配对分析失败: {stock_code}: {e}")
+                threading.Thread(target=_run_pair, daemon=True, name=f"ab_pair_{stock_code}").start()
+
             # 构建响应
             return self._build_analysis_response(result, query_id)
             

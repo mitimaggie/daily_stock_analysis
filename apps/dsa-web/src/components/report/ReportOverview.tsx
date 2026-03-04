@@ -1,7 +1,6 @@
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ReportMeta, ReportSummary as ReportSummaryType } from '../../types/analysis';
-import { ScoreGauge } from '../common';
 import apiClient from '../../api';
 import { scoreTrendApi } from '../../api/scoreTrend';
 import type { ScoreTrend, TimeframeWinrates } from '../../api/scoreTrend';
@@ -222,47 +221,33 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               </svg>
             </button>
           )}
-          {/* 评分 + 趋势 */}
+          {/* 操作建议 badge（替代评分，散户只关心做什么） */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-white/25 font-mono">技术面</span>
-            <ScoreGauge score={summary.sentimentScore} size="xs" showLabel={false} />
-            {/* P1: 操作阈值标签 */}
-            {summary.sentimentScore != null && (
-              summary.sentimentScore >= 78
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">可操作</span>
-                : summary.sentimentScore >= 55
-                  ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-white/[0.06] text-white/35 border border-white/10">观望</span>
-                  : <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-red-500/10 text-red-400/80 border border-red-500/20">规避</span>
-            )}
-            {/* P0: 共振级别 badge */}
+            {summary.operationAdvice && (() => {
+              const adv = summary.operationAdvice;
+              const isBuy = adv.includes('买入') || adv.includes('吸纳');
+              const isSell = adv.includes('卖出') || adv.includes('减仓');
+              const colorClass = isBuy
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/35'
+                : isSell
+                  ? 'bg-red-500/15 text-red-300 border-red-500/30'
+                  : 'bg-white/[0.07] text-white/50 border-white/10';
+              return (
+                <span className={`text-[11px] px-2 py-0.5 rounded font-mono font-semibold border ${colorClass}`}>
+                  {adv}
+                </span>
+              );
+            })()}
+            {/* 共振信号（重要信号保留） */}
             {resonanceLevel && (
               resonanceLevel.includes('中度共振做多') || resonanceLevel.includes('强共振做多')
                 ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">🔥共振</span>
                 : resonanceLevel.includes('强共振做空')
                   ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-red-500/20 text-red-300 border border-red-500/30">强空</span>
-                  : resonanceLevel.includes('做空')
-                    ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-red-500/10 text-red-400/70 border border-red-500/20">空头共振</span>
-                    : resonanceLevel.includes('分歧')
-                      ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400 border border-amber-500/25">⚡分歧</span>
-                      : null
+                  : resonanceLevel.includes('分歧')
+                    ? <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400 border border-amber-500/25">⚡分歧</span>
+                    : null
             )}
-            {meta.scoreChange != null && meta.scoreChange !== 0 && (
-              <span className={`text-[11px] font-mono font-semibold ${meta.scoreChange > 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
-                {meta.scoreChange > 0 ? '▲' : '▼'}{Math.abs(meta.scoreChange)}
-              </span>
-            )}
-            {scoreTrend && (() => {
-              const { consecutive_up: up, consecutive_down: dn, inflection, trend_direction: dir } = scoreTrend;
-              if (inflection) {
-                const isBull = inflection.includes('看多');
-                return <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${isBull ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/15 text-red-400 border border-red-500/20'}`}>{isBull ? '↗' : '↘'} {inflection}</span>;
-              }
-              if (up >= 3) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/15">连升{up}日</span>;
-              if (dn >= 3) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/15">连降{dn}日</span>;
-              if (dir === 'improving' && up >= 2) return <span className="text-[10px] text-emerald-400/70 font-mono">↑↑</span>;
-              if (dir === 'declining' && dn >= 2) return <span className="text-[10px] text-red-400/70 font-mono">↓↓</span>;
-              return null;
-            })()}
           </div>
         </div>
       </div>

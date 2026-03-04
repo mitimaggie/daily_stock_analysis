@@ -167,6 +167,7 @@ class AnalysisHistory(Base):
     macd_status_val = Column(String(32), nullable=True)  # MACD 状态
     buy_signal_val = Column(String(32), nullable=True)   # 买卖信号
     trend_status_val = Column(String(32), nullable=True) # 趋势状态
+    ab_variant = Column(String(16), nullable=True, default='standard')  # A/B实验分组: 'standard'|'llm_only'
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -374,6 +375,7 @@ class DatabaseManager:
                 'macd_status_val':        'VARCHAR(32)',
                 'buy_signal_val':         'VARCHAR(32)',
                 'trend_status_val':       'VARCHAR(32)',
+                'ab_variant':             "VARCHAR(16) DEFAULT 'standard'",
             },
         }
         with self._engine.connect() as conn:
@@ -526,7 +528,7 @@ class DatabaseManager:
             ).scalars().all()
             return list(results)
 
-    def save_analysis_history(self, result: Any, query_id: str, report_type: str, news_content: Optional[str], context_snapshot: Optional[Dict] = None, save_snapshot: bool = True) -> int:
+    def save_analysis_history(self, result: Any, query_id: str, report_type: str, news_content: Optional[str], context_snapshot: Optional[Dict] = None, save_snapshot: bool = True, ab_variant: str = 'standard') -> int:
         if result is None: return 0
         sniper_points = self._extract_sniper_points(result)
         raw_result = self._build_raw_result(result)
@@ -550,6 +552,7 @@ class DatabaseManager:
             take_profit=sniper_points.get("take_profit"), created_at=datetime.now(),
             signal_score_val=_signal_score_val, capital_flow_score_val=_cf_score_val,
             macd_status_val=_macd_status, buy_signal_val=_buy_signal, trend_status_val=_trend_status,
+            ab_variant=ab_variant,
         )
         with self.get_session() as session:
             try:

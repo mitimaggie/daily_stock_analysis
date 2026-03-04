@@ -609,13 +609,21 @@ class StockAnalysisPipeline:
         report_type: ReportType = ReportType.SIMPLE,
         market_overview_override: Optional[str] = None,
         position_info: Optional[Dict[str, Any]] = None,
+        ab_variant: str = 'standard',
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
             context = self._prepare_stock_context(code)
             if not context: return None
             stock_name = context['stock_name']
-            self._log(f"[{code}] {stock_name} 开始分析")
+            self._log(f"[{code}] {stock_name} 开始分析 (variant={ab_variant})")
+
+            # A/B 实验：llm_only 变体移除量化评分/信号结论，但保留 K 线叙事（让 LLM 自行解读走势）
+            if ab_variant == 'llm_only':
+                context['technical_analysis_report_llm'] = ''   # 去掉 RSI/MACD 数值 + 评分 + 买卖信号结论
+                context['trend_analysis'] = {}                  # 去掉量化 signal_score/buy_signal
+                context['technical_analysis_report'] = ''       # 去掉结构化技术报告
+                # kline_narrative 保留：让 LLM 自己读 K 线故事，不给它预算好的结论
             
             if skip_analysis:
                 logger.info(f"[{code}] Dry-run 模式，跳过 AI 分析")
@@ -795,6 +803,7 @@ class StockAnalysisPipeline:
                     use_light_model=use_light,
                     position_info=position_info,
                     skill=_selected_skill,
+                    ab_variant=ab_variant,
                 )
             try:
                 with ThreadPoolExecutor(max_workers=1) as ex:
@@ -1218,7 +1227,7 @@ class StockAnalysisPipeline:
             try:
                 # 每只股票用独立的 query_id（batch_id + code），确保 WebUI 历史记录能正确定位
                 per_stock_query_id = f"{self.query_id}_{code}" if self.query_id else None
-                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None)
+                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None, ab_variant=ab_variant)
             except Exception as e:
                 logger.error(f"保存分析历史失败: {e}")
             

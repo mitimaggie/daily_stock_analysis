@@ -68,7 +68,12 @@ class AnalyzeRequest(BaseModel):
         None,
         description="用户持仓信息（可选）"
     )
-    
+    ab_variant: str = Field(
+        "standard",
+        description="A/B实验分组: 'standard'(量化+LLM) | 'llm_only'(纯LLM，无量化数据)",
+        pattern="^(standard|llm_only)$"
+    )
+
     class Config:
         json_schema_extra = {
             "example": {

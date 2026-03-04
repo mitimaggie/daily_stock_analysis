@@ -45,9 +45,9 @@ class Config:
 
     # === AI 分析配置 ===
     gemini_api_key: Optional[str] = None
-    gemini_model: str = "gemini-3-flash-preview"  # 主模型（默认 3 Flash 控成本；3 Pro 更贵）
-    gemini_model_fallback: str = "gemini-2.5-flash"  # 备选模型（API 失败时回退）
-    gemini_model_when_cached: Optional[str] = "gemini-3-flash-preview"  # 命中舆情缓存时用的模型，默认与主模型一致（3 Flash）
+    gemini_model: str = "gemini-3-pro-preview"  # 主模型（3 Pro Preview，最强推理能力）
+    gemini_model_fallback: str = "gemini-3-flash-preview"  # 备选模型（API 失败时回退）
+    gemini_model_when_cached: Optional[str] = "gemini-3-flash-preview"  # 命中舆情缓存时用的轻量模型，节省成本
     gemini_temperature: float = 0.2  # 温度参数（0.0-2.0，低温减少幻觉，默认0.2）
 
     # Gemini API 请求配置（防止 429 限流）
@@ -114,6 +114,9 @@ class Config:
 
     # 分析间隔时间（秒）- 用于避免API限流
     analysis_delay: float = 0.0  # 个股分析与大盘分析之间的延迟
+
+    # A/B 实验自动配对：每次 standard 分析完后，在后台自动触发一次 llm_only 配对分析（积累对比数据）
+    ab_auto_pair: bool = True  # 默认开启，积累足够数据后可关闭
 
     # 消息长度限制（字节）- 超长自动分批发送
     feishu_max_bytes: int = 20000  # 飞书限制约 20KB，默认 20000 字节
@@ -319,8 +322,8 @@ class Config:
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
             gemini_api_key=os.getenv('GEMINI_API_KEY'),
-            gemini_model=os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview'),
-            gemini_model_fallback=os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash'),
+            gemini_model=os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview'),
+            gemini_model_fallback=os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-3-flash-preview'),
             gemini_model_when_cached=os.getenv('GEMINI_MODEL_WHEN_CACHED', 'gemini-3-flash-preview').strip() or 'gemini-3-flash-preview',
             gemini_temperature=float(os.getenv('GEMINI_TEMPERATURE', '0.2')),
             gemini_request_delay=float(os.getenv('GEMINI_REQUEST_DELAY', '2.0')),

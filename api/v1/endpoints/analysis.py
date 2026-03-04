@@ -158,6 +158,7 @@ def _handle_async_analysis(
             report_type=request.report_type,
             force_refresh=request.force_refresh,
             position_info=position_info,
+            ab_variant=request.ab_variant,
         )
         
         # 返回 202 Accepted
@@ -215,6 +216,7 @@ def _handle_sync_analysis(
             query_id=query_id,
             send_notification=False,
             position_info=position_info,
+            ab_variant=request.ab_variant,
         )
 
         if result is None:
@@ -584,3 +586,50 @@ def _build_analysis_report(
         today_snapshot=today_snapshot,
         details=details
     )
+
+
+@router.get("/ab_compare")
+async def ab_compare(
+    code: Optional[str] = Query(None, description="按股票代码筛选（可选）"),
+    days: int = Query(90, description="回看天数"),
+):
+    """
+    A/B 实验对比：量化+LLM(standard) vs 纯LLM(llm_only) 的胜率/建议分布
+    """
+    from src.storage import DatabaseManager
+    from sqlalchemy import text as _text
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        where = f"backtest_filled=1 AND actual_pct_5d IS NOT NULL AND ab_variant IS NOT NULL AND created_at >= datetime('now', '-{int(days)} days')"
+        if code:
+            where += f" AND code = '{code}'"
+        rows = session.execute(_text(f"""
+            SELECT
+                ab_variant,
+                COUNT(*) as n,
+                ROUND(AVG(actual_pct_5d), 2) as avg_5d,
+                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d > 1 THEN 1 ELSE 0 END) / COUNT(*), 1) as win_rate,
+                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d <= -3 THEN 1 ELSE 0 END) / COUNT(*), 1) as big_loss_rate
+            FROM analysis_history
+            WHERE {where}
+            GROUP BY ab_variant
+        """)).fetchall()
+
+        total_rows = session.execute(_text(f"""
+            SELECT ab_variant, COUNT(*) as n
+            FROM analysis_history
+            WHERE ab_variant IS NOT NULL AND created_at >= datetime('now', '-{int(days)} days')
+            GROUP BY ab_variant
+        """)).fetchall()
+
+    backtest_data = {r[0]: {"n": r[1], "avg_5d": r[2], "win_rate": r[3], "big_loss_rate": r[4]} for r in rows}
+    total_data = {r[0]: r[1] for r in total_rows}
+
+    return {
+        "days": days,
+        "code_filter": code,
+        "backtest": backtest_data,
+        "total_analyses": total_data,
+        "note": "standard=量化+LLM 现有框架；llm_only=纯LLM无量化数据。backtest数据需等5个交易日后自动回填。",
+    }

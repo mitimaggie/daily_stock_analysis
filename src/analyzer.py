@@ -312,6 +312,7 @@ class GeminiAnalyzer:
         use_light_model: bool = False,
         position_info: Optional[Dict[str, Any]] = None,
         skill: str = "default",
+        ab_variant: str = "standard",
     ) -> AnalysisResult:
         """
         执行分析
@@ -342,7 +343,7 @@ class GeminiAnalyzer:
                 system_prompt = self.PROMPT_TRADER
 
             # 2. 构建 User Prompt (注入 F10, 记忆, 以及新增的大盘数据)
-            prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill)
+            prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill, ab_variant=ab_variant)
             
             response_text = ""
             
@@ -445,16 +446,20 @@ class GeminiAnalyzer:
             raise last_err
         raise RuntimeError("无可用 AI 模型")
 
-    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default") -> str:
+    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default", ab_variant: str = "standard") -> str:
         code = context.get('code', 'Unknown')
 
         # A. 技术面数据 (量化模型产出 - 使用精简版供 LLM)
-        tech_report_llm = context.get('technical_analysis_report_llm') or context.get('technical_analysis_report', '无数据')
+        tech_report_llm = context.get('technical_analysis_report_llm') or ''
         kline_narrative = context.get('kline_narrative', '')
-        if kline_narrative:
+        if kline_narrative and tech_report_llm:
             tech_report = f"{kline_narrative}\n\n【量化指标明细】\n{tech_report_llm}"
-        else:
+        elif kline_narrative:
+            tech_report = kline_narrative  # llm_only: 只有叙事，无量化指标
+        elif tech_report_llm:
             tech_report = tech_report_llm
+        else:
+            tech_report = context.get('technical_analysis_report', '无数据')
         
         # B. 基本面数据 (F10 - 精简格式)
         f10 = context.get('fundamental', {})
@@ -637,9 +642,9 @@ class GeminiAnalyzer:
 ## 量化模型参考信息
 - 当前市场形态：{_regime_label or '未知'}（{_score_str}供参考）{_volatility_hint}"""
 
-        # Layer C: Skill 步骤框架注入（只在 trader 角色时注入）
+        # Layer C: Skill 步骤框架注入（只在 trader 角色时注入；llm_only 变体不注入，让 LLM 完全自主推理）
         skill_section = ""
-        if role not in ('macro', 'researcher') and skill != 'default':
+        if role not in ('macro', 'researcher') and skill != 'default' and ab_variant != 'llm_only':
             _has_pos_label = "持仓者" if has_position else "空仓者"
             if skill == 'druckenmiller':
                 if has_position:
@@ -693,7 +698,7 @@ Step 4（{_has_pos_label}） - 结论：
         return f"""{header}
 {etf_constraint}
 
-基于以下数据，完成你的3项职责（舆情解读/基本面定性/综合结论）。技术面分析已由量化模型完成，不要重复。
+基于以下数据，完成你的3项职责（舆情解读/基本面定性/综合结论）。{'**注意：本次分析为 A/B实验组（无量化）：不提供量化指标，请仅基于价格数据/新闻/基本面做出判断。**' if ab_variant == 'llm_only' else '技术面分析已由量化模型完成，不要重复。'}
 
 ## 大盘环境（仓位滤网）
 {market_str}{reliability_section}
@@ -701,7 +706,7 @@ Step 4（{_has_pos_label}） - 结论：
 ## 历史回溯
 {history_str}
 
-## 量化技术面（已完成，不得篡改）
+## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else '量化技术面（已完成，不得篡改）'}
 {tech_report}
 
 ## 基本面 (F10)
@@ -711,7 +716,7 @@ Step 4（{_has_pos_label}） - 结论：
 {news_section}
 
 ## JSON 输出协议
-最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考（"量化 vs AI"双视角）。
+{'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考（"量化 vs AI"双视角）。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
 
 stock_name, trend_prediction, time_horizon({time_horizon_hint}),

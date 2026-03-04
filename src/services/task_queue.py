@@ -53,6 +53,7 @@ class TaskInfo:
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     report_type: str = "detailed"
+    ab_variant: str = "standard"
     created_at: datetime = field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -200,6 +201,7 @@ class AnalysisTaskQueue:
         report_type: str = "detailed",
         force_refresh: bool = False,
         position_info: Optional[Dict[str, Any]] = None,
+        ab_variant: str = "standard",
     ) -> TaskInfo:
         """
         提交分析任务
@@ -231,6 +233,7 @@ class AnalysisTaskQueue:
                 status=TaskStatus.PENDING,
                 message="任务已加入队列",
                 report_type=report_type,
+                ab_variant=ab_variant,
             )
             
             # 注册任务
@@ -245,6 +248,7 @@ class AnalysisTaskQueue:
                 report_type,
                 force_refresh,
                 position_info,
+                ab_variant,
             )
             self._futures[task_id] = future
             
@@ -328,6 +332,7 @@ class AnalysisTaskQueue:
         report_type: str,
         force_refresh: bool,
         position_info: Optional[Dict[str, Any]] = None,
+        ab_variant: str = "standard",
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -366,6 +371,7 @@ class AnalysisTaskQueue:
                 query_id=task_id,
                 send_notification=False,
                 position_info=position_info,
+                ab_variant=ab_variant,
             )
             
             if result:
