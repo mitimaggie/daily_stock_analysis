@@ -600,6 +600,24 @@ class GeminiAnalyzer:
         else:
             ic_quality_guard_section = ""
 
+        # 行业敞口守卫（集中风险时注入）
+        _sex = context.get('sector_exposure')
+        if _sex and isinstance(_sex, dict) and _sex.get('concentration_level') in ('concentrated', 'highly_concentrated'):
+            _sec_breakdown = _sex.get('sector_breakdown', {})
+            _sec_lines = "; ".join(
+                f"{s}({d['pct']}%: {', '.join(d['stocks'])})"
+                for s, d in sorted(_sec_breakdown.items(), key=lambda x: -x[1]['pct'])
+            )
+            sector_exposure_section = (
+                f"\n## 🏭 行业敞口守卫（Sector Exposure Guard）\n"
+                f"- 组合行业分布：{_sec_lines if _sec_lines else '数据不足'}\n"
+                f"- {_sex.get('concentration_desc', '')}\n"
+                f"- **执行要求**：如分析建议加仓该股且与最重仓行业一致，需额外注明行业集中风险，"
+                f"建议将单笔仓位上限降低20%，以控制行业系统性风险。\n"
+            )
+        else:
+            sector_exposure_section = ""
+
         # P2b: 宏观 Regime 覆盖层（Gemini flash 分类结果）
         _mac_regime = context.get('macro_regime')
         if _mac_regime and isinstance(_mac_regime, dict) and _mac_regime.get('regime'):
@@ -880,7 +898,7 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
+{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{sector_exposure_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
 ## JSON 输出协议
 {'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：

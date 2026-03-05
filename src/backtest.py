@@ -218,6 +218,7 @@ class BacktestRunner:
                 if record:
                     _alpha_5d = round(actual_pct - benchmark_pct_5d, 2) if benchmark_pct_5d is not None else None
                     _alpha_10d = round(actual_pct_10d - benchmark_pct_10d, 2) if actual_pct_10d and benchmark_pct_10d else None
+                    _alpha_20d = round(actual_pct_20d - benchmark_pct_20d, 2) if actual_pct_20d and benchmark_pct_20d else None
 
                     record.actual_pct_1d = actual_pct_1d
                     record.actual_pct_3d = actual_pct_3d
@@ -226,6 +227,7 @@ class BacktestRunner:
                     record.actual_pct_20d = actual_pct_20d
                     record.alpha_5d = _alpha_5d
                     record.alpha_10d = _alpha_10d
+                    record.alpha_20d = _alpha_20d
                     record.hit_stop_loss = hit_sl
                     record.hit_take_profit = hit_tp
                     record.backtest_filled = 1
@@ -240,7 +242,7 @@ class BacktestRunner:
                             'benchmark_pct_20d': benchmark_pct_20d,
                             'alpha_5d': _alpha_5d,
                             'alpha_10d': _alpha_10d,
-                            'alpha_20d': round(actual_pct_20d - benchmark_pct_20d, 2) if actual_pct_20d and benchmark_pct_20d else None,
+                            'alpha_20d': _alpha_20d,
                         }
                         record.raw_result = json.dumps(raw, ensure_ascii=False)
                     except Exception:
@@ -328,6 +330,10 @@ class BacktestRunner:
             "",
         ]
 
+        # A股实际交易成本（正常活跃市场单笔小中盘）
+        # 印花税0.1%(卖出单边) + 双边佣金0.03%*2 + 双边冲击成本0.1%*2 = 0.36%
+        TRADE_COST_RT = 0.1 + 0.03 * 2 + 0.1 * 2  # round-trip cost
+
         # === 1. 整体业绩摘要：以买入信号为核心，附全量参考 ===
         buy_pcts_all = [r.actual_pct_5d for r in buy_records if r.actual_pct_5d is not None]
         all_pcts = [r.actual_pct_5d for r in records if r.actual_pct_5d is not None]
@@ -337,6 +343,12 @@ class BacktestRunner:
             buy_avg = sum(buy_pcts_all) / len(buy_pcts_all)
             buy_win = sum(1 for p in buy_pcts_all if p > 0) / len(buy_pcts_all) * 100
 
+            # 净收益（扣除交易成本）
+            buy_pcts_net = [p - TRADE_COST_RT for p in buy_pcts_all]
+            buy_avg_net = sum(buy_pcts_net) / len(buy_pcts_net)
+            buy_win_net = sum(1 for p in buy_pcts_net if p > 0) / len(buy_pcts_net) * 100
+            buy_sharpe_net = self._calc_sharpe_ratio(buy_pcts_net)
+
             # 全量对比（参考）
             all_avg = sum(all_pcts) / len(all_pcts) if all_pcts else 0.0
             all_win = sum(1 for p in all_pcts if p > 0) / len(all_pcts) * 100 if all_pcts else 0.0
@@ -344,14 +356,16 @@ class BacktestRunner:
             lines.extend([
                 "### 🎯 核心业绩指标（买入信号）",
                 "",
-                "| 指标 | 买入信号 | 全量参考 | 说明 |",
-                "|------|---------|---------|------|",
-                f"| 平均5日收益 | **{buy_avg:+.2f}%** | {all_avg:+.2f}% | 买入信号持有5日的平均收益 |",
-                f"| 胜率 | **{buy_win:.1f}%** | {all_win:.1f}% | 盈利交易占比 |",
-                f"| 夏普比率 | **{buy_sharpe:.2f}** | - | 风险调整后收益，>1优秀 |",
-                f"| 信息比率 | **{buy_ir:.2f}** | - | 相对基准的超额收益/跟踪误差 |",
-                f"| 最大回撤 | **{buy_dd:.2f}%** | - | 峰谷最大跌幅 |",
-                f"| 卡玛比率 | **{buy_calmar:.2f}** | - | 年化收益/最大回撤，>2优秀 |",
+                f"> 💰 **A股交易成本假设**：印花税0.1%+双边佣金0.06%+双边冲击0.2% = **{TRADE_COST_RT:.2f}%/笔**（round-trip）",
+                "",
+                "| 指标 | 毛收益(理论) | 净收益(实际) | 全量参考 | 说明 |",
+                "|------|---------|---------|---------|------|",
+                f"| 平5日收益 | {buy_avg:+.2f}% | **{buy_avg_net:+.2f}%** | {all_avg:+.2f}% | 买入信号持有5日 |",
+                f"| 胜率 | {buy_win:.1f}% | **{buy_win_net:.1f}%** | {all_win:.1f}% | 盈利交易占比 |",
+                f"| 夏普比率 | {buy_sharpe:.2f} | **{buy_sharpe_net:.2f}** | - | 毛/净夏普，>1优秀 |",
+                f"| 信息比率 | **{buy_ir:.2f}** | - | - | 相对基准的超额收益/跟踪误差 |",
+                f"| 最大回撤 | **{buy_dd:.2f}%** | - | - | 峰谷最大跌幅 |",
+                f"| 卡玛比率 | **{buy_calmar:.2f}** | - | - | 年化收益/最大回撤，>2优秀 |",
                 "",
                 "---",
                 "",
@@ -396,18 +410,8 @@ class BacktestRunner:
             avg_pct = sum(pcts) / len(pcts)
             win_rate = sum(1 for p in pcts if p > 0) / len(pcts) * 100
             
-            # Alpha计算（超额收益 = 个股收益 - 基准收益）
-            alphas = []
-            for r in bucket_records:
-                if r.actual_pct_5d is not None and r.raw_result:
-                    try:
-                        import json
-                        raw = json.loads(r.raw_result)
-                        alpha_5d = raw.get('backtest_metrics', {}).get('alpha_5d')
-                        if alpha_5d is not None:
-                            alphas.append(alpha_5d)
-                    except Exception:
-                        pass
+            # Alpha计算（直接读取 DB 列 alpha_5d，已在回填时写入）
+            alphas = [r.alpha_5d for r in bucket_records if r.alpha_5d is not None]
             avg_alpha = sum(alphas) / len(alphas) if alphas else 0.0
             
             # 夏普比率（段位内）

@@ -164,6 +164,7 @@ class AnalysisHistory(Base):
     actual_pct_20d = Column(Float, nullable=True)  # 20个交易日后实际收益率(%)
     alpha_5d = Column(Float, nullable=True)          # 5日超额收益(vs沪深300)(%)
     alpha_10d = Column(Float, nullable=True)         # 10日超额收益(vs沪深300)(%)
+    alpha_20d = Column(Float, nullable=True)         # 20日超额收益(vs沪深300)(%)
     hit_stop_loss = Column(Integer)      # 5日内是否触发止损 (0/1)
     hit_take_profit = Column(Integer)    # 5日内是否触发止盈 (0/1)
     backtest_filled = Column(Integer, default=0)  # 是否已回填 (0/1)
@@ -275,6 +276,7 @@ class Portfolio(Base):
     last_signal = Column(String(20), default='')         # "hold"/"reduce"/"stop_loss"/"add"
     last_signal_reason = Column(Text, default='')
     last_monitored_at = Column(DateTime, nullable=True)
+    sector_name = Column(String(64), nullable=True)       # 行业/板块（自动从分析中同步）
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -292,6 +294,7 @@ class Portfolio(Base):
             'last_signal': self.last_signal,
             'last_signal_reason': self.last_signal_reason,
             'last_monitored_at': self.last_monitored_at.isoformat() if self.last_monitored_at else None,
+            'sector_name': self.sector_name,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -372,6 +375,9 @@ class DatabaseManager:
     def _migrate_schema(self):
         """自动检测并补齐旧表缺失的列（轻量级迁移）"""
         migrations = {
+            'portfolio': {
+                'sector_name': 'VARCHAR(64)',
+            },
             'analysis_history': {
                 'actual_pct_1d':          'FLOAT',
                 'actual_pct_3d':          'FLOAT',
@@ -380,6 +386,7 @@ class DatabaseManager:
                 'actual_pct_20d':         'FLOAT',
                 'alpha_5d':               'FLOAT',
                 'alpha_10d':              'FLOAT',
+                'alpha_20d':              'FLOAT',
                 'hit_stop_loss':          'INTEGER',
                 'hit_take_profit':        'INTEGER',
                 'backtest_filled':        'INTEGER DEFAULT 0',

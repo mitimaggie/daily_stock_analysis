@@ -250,3 +250,111 @@ def calculate_portfolio_drawdown(
     except Exception as e:
         logger.warning(f"[MaxDD] 计算失败: {e}")
         return None
+
+
+def calculate_sector_exposure(portfolio: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """计算组合行业敞口，检测行业集中风险。
+
+    Returns:
+        dict with keys:
+          sector_breakdown: {sector_name: {'stocks': [...], 'pct': float, 'value': float}}
+          max_sector: 最重仓行业
+          max_sector_pct: 最重仓行业占比(%)
+          concentration_level: 'normal' / 'concentrated' / 'highly_concentrated'
+          concentration_desc: 预警文字
+          unknown_pct: 未知行业占比(%)
+    """
+    try:
+        if not portfolio:
+            return None
+
+        # 计算每个持仓的市值
+        sector_values: Dict[str, Dict] = {}
+        total_value = 0.0
+        unknown_value = 0.0
+
+        for holding in portfolio:
+            code = holding.get('code')
+            name = holding.get('name') or code
+            cost_price = float(holding.get('cost_price') or 0)
+            shares = int(holding.get('shares') or 0)
+            sector = holding.get('sector_name') or None
+
+            position_value = cost_price * shares
+            if position_value <= 0:
+                continue
+
+            total_value += position_value
+
+            if not sector:
+                unknown_value += position_value
+                sector = "__unknown__"
+
+            if sector not in sector_values:
+                sector_values[sector] = {'stocks': [], 'value': 0.0}
+            sector_values[sector]['stocks'].append({'code': code, 'name': name, 'value': position_value})
+            sector_values[sector]['value'] += position_value
+
+        if total_value <= 0:
+            return None
+
+        # 计算比例
+        sector_breakdown = {}
+        for s, data in sector_values.items():
+            if s == "__unknown__":
+                continue
+            sector_breakdown[s] = {
+                'stocks': [f"{h['name']}({h['code']})" for h in data['stocks']],
+                'pct': round(data['value'] / total_value * 100, 1),
+                'value': round(data['value'], 0),
+            }
+
+        unknown_pct = round(unknown_value / total_value * 100, 1) if total_value > 0 else 0.0
+
+        # 找最重仓行业
+        if not sector_breakdown:
+            return {
+                'sector_breakdown': {},
+                'max_sector': None,
+                'max_sector_pct': 0.0,
+                'concentration_level': 'normal',
+                'concentration_desc': f'⚠️ 所有持仓均未识别行业({unknown_pct:.0f}%未知)，无法评估敞口',
+                'unknown_pct': unknown_pct,
+            }
+
+        max_sector = max(sector_breakdown, key=lambda s: sector_breakdown[s]['pct'])
+        max_pct = sector_breakdown[max_sector]['pct']
+
+        if max_pct >= 50:
+            level = 'highly_concentrated'
+            desc = (
+                f"🔴 行业高度集中：{max_sector}占比{max_pct:.0f}%，"
+                f"超过机构风险上限(30%)！建议分散至少2个不同行业。"
+            )
+        elif max_pct >= 30:
+            level = 'concentrated'
+            desc = (
+                f"⚠️ 行业集中：{max_sector}占比{max_pct:.0f}%，"
+                f"建议控制单行业敞口在30%以内。"
+            )
+        else:
+            level = 'normal'
+            desc = f"✅ 行业分散正常，最大单行业({max_sector})占比{max_pct:.0f}%。"
+
+        if unknown_pct > 20:
+            desc += f" ({unknown_pct:.0f}%持仓行业未知，建议分析后完善。)"
+
+        result = {
+            'sector_breakdown': sector_breakdown,
+            'max_sector': max_sector,
+            'max_sector_pct': max_pct,
+            'concentration_level': level,
+            'concentration_desc': desc,
+            'unknown_pct': unknown_pct,
+        }
+        logger.info(f"[SectorExposure] 最大行业={max_sector} {max_pct:.0f}% level={level}")
+        return result
+
+    except Exception as e:
+        logger.warning(f"[SectorExposure] 计算失败: {e}")
+        return None

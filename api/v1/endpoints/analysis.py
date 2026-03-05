@@ -880,12 +880,23 @@ async def ic_analysis(
         return "❌ 不稳定 (ICIR<0.3)，IC均值被高方差稀释，策略可靠性存疑"
 
     # 5. 当前 ICGuard 状态（近21日，与pipeline注入一致）
-    recent_rows_21d = [r for r in rows if True]  # rows already filtered by `days`
-    _guard_rows = recent_rows_21d[-103:] if len(recent_rows_21d) >= 5 else []
+    from datetime import date as _date, timedelta as _td
+    _cutoff_21d = (_date.today() - _td(days=21)).isoformat()
+    with db.get_session() as _s21:
+        _guard_rows = _s21.execute(_text(f"""
+            SELECT sentiment_score, actual_pct_5d
+            FROM analysis_history
+            WHERE backtest_filled=1
+              AND actual_pct_5d IS NOT NULL
+              AND sentiment_score IS NOT NULL
+              AND ab_variant = '{_variant}'
+              AND created_at >= '{_cutoff_21d}'
+        """)).fetchall()
+    _MIN_IC_SAMPLES = 20
     current_ic_guard = None
-    if _guard_rows:
-        _sc21 = [float(r[2]) for r in _guard_rows]
-        _rt21 = [float(r[3]) for r in _guard_rows]
+    if len(_guard_rows) >= _MIN_IC_SAMPLES:
+        _sc21 = [float(r[0]) for r in _guard_rows]
+        _rt21 = [float(r[1]) for r in _guard_rows]
         _n21 = len(_guard_rows)
         _mx21 = sum(_sc21) / _n21
         _my21 = sum(_rt21) / _n21

@@ -33,9 +33,10 @@ from src.storage import DatabaseManager
 
 # ─── 当前权重（基准） ───────────────────────────────────────────────────
 CURRENT_WEIGHTS = {
-    'bull':     {'trend': 30, 'bias': 12, 'volume': 10, 'support': 5,  'macd': 20, 'rsi': 10, 'kdj': 13},
-    'sideways': {'trend': 18, 'bias': 20, 'volume': 10, 'support': 12, 'macd': 15, 'rsi': 10, 'kdj': 15},
-    'bear':     {'trend': 13, 'bias': 17, 'volume': 15, 'support': 13, 'macd': 14, 'rsi': 13, 'kdj': 15},
+    # P3权重优化（2026-03）：基于2694个历史样本穷举回测，与scoring.py REGIME_WEIGHTS保持同步
+    'bull':     {'trend': 32, 'bias': 10, 'volume': 8,  'support': 5,  'macd': 25, 'rsi': 10, 'kdj': 10},
+    'sideways': {'trend': 18, 'bias': 18, 'volume': 10, 'support': 12, 'macd': 18, 'rsi': 12, 'kdj': 12},
+    'bear':     {'trend': 12, 'bias': 16, 'volume': 14, 'support': 14, 'macd': 16, 'rsi': 14, 'kdj': 14},
 }
 
 # 权重搜索的股票池（代表性+多样性）

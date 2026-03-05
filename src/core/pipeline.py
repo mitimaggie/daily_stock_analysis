@@ -348,7 +348,8 @@ class StockAnalysisPipeline:
                     ORDER BY created_at ASC
                 """)).fetchall()
 
-            if not rows or len(rows) < 5:
+            if not rows or len(rows) < 20:
+                logger.debug(f"[ICGuard] 样本不足({len(rows) if rows else 0}<20)，跳过守卫")
                 return None
 
             scores = [float(r[0]) for r in rows]
@@ -807,6 +808,7 @@ class StockAnalysisPipeline:
         macro_regime: Optional[Dict[str, Any]] = None,
         max_dd_guard: Optional[Dict[str, Any]] = None,
         ic_quality_guard: Optional[Dict[str, Any]] = None,
+        sector_exposure: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
@@ -824,6 +826,8 @@ class StockAnalysisPipeline:
                 context['max_dd_guard'] = max_dd_guard
             if ic_quality_guard:
                 context['ic_quality_guard'] = ic_quality_guard
+            if sector_exposure:
+                context['sector_exposure'] = sector_exposure
 
             # A/B 实验：llm_only 变体移除量化评分/信号结论，但保留 K 线叙事（让 LLM 自行解读走势）
             if ab_variant == 'llm_only':
@@ -1458,6 +1462,18 @@ class StockAnalysisPipeline:
                 except Exception:
                     pass
                 self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None, ab_variant=ab_variant, sector_name=_sector_name_save)
+                # 同步 sector_name 到持仓表（供行业敞口分析使用）
+                if _sector_name_save and position_info:
+                    try:
+                        from src.storage import Portfolio
+                        from sqlalchemy import select as _select
+                        with self.storage.get_session() as _ps:
+                            _holding = _ps.execute(_select(Portfolio).where(Portfolio.code == code)).scalar_one_or_none()
+                            if _holding and _holding.sector_name != _sector_name_save:
+                                _holding.sector_name = _sector_name_save
+                                _ps.commit()
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error(f"保存分析历史失败: {e}")
             
@@ -1701,6 +1717,15 @@ class StockAnalysisPipeline:
         except Exception as _icge:
             logger.debug(f"[ICGuard] 计算跳过: {_icge}")
 
+        # 行业敞口守卫 — 检测组合行业集中风险
+        sector_exposure_once: Optional[Dict[str, Any]] = None
+        try:
+            if _portfolio:
+                from src.services.portfolio_risk_service import calculate_sector_exposure
+                sector_exposure_once = calculate_sector_exposure(_portfolio)
+        except Exception as _see:
+            logger.debug(f"[SectorExposure] 计算跳过: {_see}")
+
         # === 阶段二：并发分析 ===
         # 预取实时行情（批量预热，可选）
         if valid_stocks and hasattr(self.fetcher_manager, 'prefetch_realtime_quotes'):
@@ -1748,6 +1773,7 @@ class StockAnalysisPipeline:
                     macro_regime=macro_regime_once,
                     max_dd_guard=max_dd_guard_once,
                     ic_quality_guard=ic_quality_guard_once,
+                    sector_exposure=sector_exposure_once,
                 ): code for code in valid_stocks
             }
             
