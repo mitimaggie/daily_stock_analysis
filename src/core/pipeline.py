@@ -750,6 +750,7 @@ class StockAnalysisPipeline:
         macro_intel: Optional[str] = None,
         portfolio_beta: Optional[Dict[str, Any]] = None,
         macro_regime: Optional[Dict[str, Any]] = None,
+        max_dd_guard: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
@@ -758,11 +759,13 @@ class StockAnalysisPipeline:
             stock_name = context['stock_name']
             self._log(f"[{code}] {stock_name} 开始分析 (variant={ab_variant})")
 
-            # P2a-2/P2b: 注入组合Beta和宏观Regime到context（供analyzer.py渲染到prompt）
+            # P2a-2/P2b/P3b: 注入组合Beta/Regime/MaxDD到context（供analyzer.py渲染到prompt）
             if portfolio_beta:
                 context['portfolio_beta'] = portfolio_beta
             if macro_regime:
                 context['macro_regime'] = macro_regime
+            if max_dd_guard:
+                context['max_dd_guard'] = max_dd_guard
 
             # A/B 实验：llm_only 变体移除量化评分/信号结论，但保留 K 线叙事（让 LLM 自行解读走势）
             if ab_variant == 'llm_only':
@@ -1624,6 +1627,15 @@ class StockAnalysisPipeline:
         except Exception as _be:
             logger.debug(f"[Beta] 计算跳过: {_be}")
 
+        # P3a: 组合 MaxDD 检查（全批次一次，决定保守等级）
+        max_dd_guard_once: Optional[Dict[str, Any]] = None
+        try:
+            if _portfolio:
+                from src.services.portfolio_risk_service import calculate_portfolio_drawdown
+                max_dd_guard_once = calculate_portfolio_drawdown(_portfolio)
+        except Exception as _dde:
+            logger.debug(f"[MaxDD] 计算跳过: {_dde}")
+
         # === 阶段二：并发分析 ===
         # 预取实时行情（批量预热，可选）
         if valid_stocks and hasattr(self.fetcher_manager, 'prefetch_realtime_quotes'):
@@ -1669,6 +1681,7 @@ class StockAnalysisPipeline:
                     macro_intel=macro_intel_once,
                     portfolio_beta=portfolio_beta_once,
                     macro_regime=macro_regime_once,
+                    max_dd_guard=max_dd_guard_once,
                 ): code for code in valid_stocks
             }
             

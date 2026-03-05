@@ -157,7 +157,11 @@ class AnalysisHistory(Base):
     stop_loss = Column(Float)
     take_profit = Column(Float)
     # 回测字段（由 --backtest 回填）
+    actual_pct_1d = Column(Float, nullable=True)   # 1个交易日后实际收益率(%)
+    actual_pct_3d = Column(Float, nullable=True)   # 3个交易日后实际收益率(%)
     actual_pct_5d = Column(Float)        # 5个交易日后实际收益率(%)
+    actual_pct_10d = Column(Float, nullable=True)  # 10个交易日后实际收益率(%)
+    actual_pct_20d = Column(Float, nullable=True)  # 20个交易日后实际收益率(%)
     hit_stop_loss = Column(Integer)      # 5日内是否触发止损 (0/1)
     hit_take_profit = Column(Integer)    # 5日内是否触发止盈 (0/1)
     backtest_filled = Column(Integer, default=0)  # 是否已回填 (0/1)
@@ -367,7 +371,11 @@ class DatabaseManager:
         """自动检测并补齐旧表缺失的列（轻量级迁移）"""
         migrations = {
             'analysis_history': {
+                'actual_pct_1d':          'FLOAT',
+                'actual_pct_3d':          'FLOAT',
                 'actual_pct_5d':          'FLOAT',
+                'actual_pct_10d':         'FLOAT',
+                'actual_pct_20d':         'FLOAT',
                 'hit_stop_loss':          'INTEGER',
                 'hit_take_profit':        'INTEGER',
                 'backtest_filled':        'INTEGER DEFAULT 0',

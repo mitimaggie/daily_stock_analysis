@@ -592,44 +592,289 @@ def _build_analysis_report(
 async def ab_compare(
     code: Optional[str] = Query(None, description="按股票代码筛选（可选）"),
     days: int = Query(90, description="回看天数"),
+    min_samples: int = Query(30, description="统计显著性最低样本数（低于此返回insufficient_data=true）"),
 ):
     """
-    A/B 实验对比：量化+LLM(standard) vs 纯LLM(llm_only) 的胜率/建议分布
+    A/B 实验对比：量化+LLM(standard) vs 纯LLM(llm_only) 的胜率/收益率 + LLM增量价值评估。
+
+    收口逻辑（min_samples=30守卡）：
+    - 每个变体样本 ≥ 30 才给出 llm_incremental_value 判断
+    - 低于 30 时返回 insufficient_data=true，不给出结论
     """
     from src.storage import DatabaseManager
     from sqlalchemy import text as _text
 
     db = DatabaseManager.get_instance()
     with db.get_session() as session:
-        where = f"backtest_filled=1 AND actual_pct_5d IS NOT NULL AND ab_variant IS NOT NULL AND created_at >= datetime('now', '-{int(days)} days')"
-        if code:
-            where += f" AND code = '{code}'"
-        rows = session.execute(_text(f"""
+        _days = int(days)
+        _code_filter = f" AND code = '{code}'" if code else ""
+
+        # 1. 回测数据（已回填5日涨跌）——按变体和买入方向分组
+        backtest_rows = session.execute(_text(f"""
             SELECT
                 ab_variant,
+                operation_advice,
                 COUNT(*) as n,
-                ROUND(AVG(actual_pct_5d), 2) as avg_5d,
-                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d > 1 THEN 1 ELSE 0 END) / COUNT(*), 1) as win_rate,
-                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d <= -3 THEN 1 ELSE 0 END) / COUNT(*), 1) as big_loss_rate
+                ROUND(AVG(actual_pct_5d), 3) as avg_5d,
+                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) as win_rate_positive,
+                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d > 1 THEN 1 ELSE 0 END) / COUNT(*), 1) as win_rate_1pct,
+                ROUND(100.0 * SUM(CASE WHEN actual_pct_5d <= -3 THEN 1 ELSE 0 END) / COUNT(*), 1) as big_loss_rate,
+                ROUND(AVG(sentiment_score), 1) as avg_score
             FROM analysis_history
-            WHERE {where}
-            GROUP BY ab_variant
+            WHERE backtest_filled=1 AND actual_pct_5d IS NOT NULL
+              AND ab_variant IS NOT NULL
+              AND created_at >= datetime('now', '-{_days} days')
+              {_code_filter}
+            GROUP BY ab_variant, operation_advice
+            ORDER BY ab_variant, n DESC
         """)).fetchall()
 
+        # 2. 总样本数（含未回填）
         total_rows = session.execute(_text(f"""
             SELECT ab_variant, COUNT(*) as n
             FROM analysis_history
-            WHERE ab_variant IS NOT NULL AND created_at >= datetime('now', '-{int(days)} days')
+            WHERE ab_variant IS NOT NULL
+              AND created_at >= datetime('now', '-{_days} days')
+              {_code_filter}
             GROUP BY ab_variant
         """)).fetchall()
 
-    backtest_data = {r[0]: {"n": r[1], "avg_5d": r[2], "win_rate": r[3], "big_loss_rate": r[4]} for r in rows}
+        # 3. 评分与实际收益相关性（IC分析）
+        ic_rows = session.execute(_text(f"""
+            SELECT
+                ab_variant,
+                ROUND(
+                    (COUNT(*) * SUM(sentiment_score * actual_pct_5d) - SUM(sentiment_score) * SUM(actual_pct_5d)) /
+                    (SQRT((COUNT(*) * SUM(sentiment_score * sentiment_score) - SUM(sentiment_score) * SUM(sentiment_score)) *
+                          (COUNT(*) * SUM(actual_pct_5d * actual_pct_5d) - SUM(actual_pct_5d) * SUM(actual_pct_5d))) + 1e-9),
+                    4
+                ) as ic,
+                COUNT(*) as n
+            FROM analysis_history
+            WHERE backtest_filled=1 AND actual_pct_5d IS NOT NULL
+              AND sentiment_score IS NOT NULL
+              AND ab_variant IS NOT NULL
+              AND created_at >= datetime('now', '-{_days} days')
+              {_code_filter}
+            GROUP BY ab_variant
+        """)).fetchall()
+
+    # 聚合回测数据（按变体汇总 bullish 建议子集）
+    _BULLISH_ADVICES = ("买入", "加仓", "逢低")
+    variant_stats: dict = {}
+    for row in backtest_rows:
+        variant, advice, n, avg5d, wr_pos, wr_1, big_loss, avg_sc = row
+        if variant not in variant_stats:
+            variant_stats[variant] = {"total_bt": 0, "bullish": {}, "all": {}}
+        variant_stats[variant]["all"].setdefault("n", 0)
+        variant_stats[variant]["all"]["n"] += n
+        # 聚合看多信号
+        is_bullish = any(k in (advice or "") for k in _BULLISH_ADVICES)
+        if is_bullish:
+            vs = variant_stats[variant]["bullish"]
+            vs["n"] = vs.get("n", 0) + n
+            vs["avg_5d_sum"] = vs.get("avg_5d_sum", 0) + (avg5d or 0) * n
+            vs["win_sum"] = vs.get("win_sum", 0) + (wr_1 or 0) * n / 100
+            vs["big_loss_sum"] = vs.get("big_loss_sum", 0) + (big_loss or 0) * n / 100
+
     total_data = {r[0]: r[1] for r in total_rows}
+    ic_data = {r[0]: {"ic": r[1], "n": r[2]} for r in ic_rows}
+
+    # 整理各变体摘要
+    variant_summary: dict = {}
+    for variant, vs in variant_stats.items():
+        bull = vs["bullish"]
+        bull_n = bull.get("n", 0)
+        variant_summary[variant] = {
+            "total_analyses": total_data.get(variant, 0),
+            "backtest_n": vs["all"].get("n", 0),
+            "bullish_n": bull_n,
+            "insufficient_data": bull_n < min_samples,
+            "bullish_avg_5d": round(bull["avg_5d_sum"] / bull_n, 3) if bull_n > 0 else None,
+            "bullish_win_rate_1pct": round(bull["win_sum"] / bull_n * 100, 1) if bull_n > 0 else None,
+            "bullish_big_loss_rate": round(bull["big_loss_sum"] / bull_n * 100, 1) if bull_n > 0 else None,
+            "ic": ic_data.get(variant, {}).get("ic"),
+        }
+
+    # LLM 增量价值判断
+    std = variant_summary.get("standard", {})
+    llm = variant_summary.get("llm_only", {})
+    insufficient = std.get("insufficient_data", True) or llm.get("insufficient_data", True)
+
+    llm_incremental: dict = {"insufficient_data": insufficient}
+    if not insufficient:
+        delta_return = round((std.get("bullish_avg_5d") or 0) - (llm.get("bullish_avg_5d") or 0), 3)
+        delta_wr = round((std.get("bullish_win_rate_1pct") or 0) - (llm.get("bullish_win_rate_1pct") or 0), 1)
+        delta_ic = round((std.get("ic") or 0) - (llm.get("ic") or 0), 4)
+        llm_adds_value = delta_return > 0 and delta_wr > 0
+        llm_incremental = {
+            "insufficient_data": False,
+            "delta_bullish_avg_5d": delta_return,
+            "delta_win_rate_1pct": delta_wr,
+            "delta_ic": delta_ic,
+            "verdict": "✅ 量化+LLM框架优于纯LLM" if llm_adds_value else "❌ 纯LLM表现不弱于量化+LLM，建议扩大样本再评估",
+            "recommendation": (
+                "维持standard框架，量化信号有正贡献" if llm_adds_value
+                else "考虑扩大llm_only实验比例至50%，继续收集数据"
+            ),
+            "min_samples_met": min_samples,
+        }
 
     return {
         "days": days,
+        "min_samples": min_samples,
         "code_filter": code,
-        "backtest": backtest_data,
-        "total_analyses": total_data,
-        "note": "standard=量化+LLM 现有框架；llm_only=纯LLM无量化数据。backtest数据需等5个交易日后自动回填。",
+        "variant_summary": variant_summary,
+        "llm_incremental_value": llm_incremental,
+        "raw_by_advice": [
+            {"variant": r[0], "advice": r[1], "n": r[2], "avg_5d": r[3],
+             "win_rate_positive": r[4], "win_rate_1pct": r[5], "big_loss_rate": r[6]}
+            for r in backtest_rows
+        ],
+        "note": (
+            "standard=量化+LLM；llm_only=纯LLM无量化数据。"
+            f"llm_incremental_value需每变体≥{min_samples}条回填样本才给结论。"
+            "backtest需5个交易日后自动回填。"
+        ),
+    }
+
+
+@router.get("/ic_analysis")
+async def ic_analysis(
+    days: int = Query(180, description="回看天数"),
+    variant: str = Query("standard", description="A/B变体：standard 或 llm_only"),
+    window_days: int = Query(14, description="滚动IC窗口（天），默认14天双周"),
+):
+    """
+    IC稳定性分析：滚动窗口IC时间序列 + ICIR + IC t-stat + IC衰减分析。
+
+    ICIR = IC.mean() / IC.std()
+    IC t-stat = IC.mean() / (IC.std() / sqrt(n_periods))  —— 判断IC是否显著异于0
+    IC衰减：1d/3d/5d/10d持有期分别计算IC，分析信号半衰期
+    """
+    import math
+    from src.storage import DatabaseManager
+    from sqlalchemy import text as _text
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        _days = int(days)
+        _variant = variant.replace("'", "")
+
+        # 取所有回填完整的样本（含多周期）
+        rows = session.execute(_text(f"""
+            SELECT
+                date(created_at) as trade_date,
+                strftime('%Y-W%W', created_at) as week_label,
+                sentiment_score,
+                actual_pct_5d,
+                actual_pct_1d,
+                actual_pct_3d,
+                actual_pct_10d,
+                actual_pct_20d
+            FROM analysis_history
+            WHERE backtest_filled=1
+              AND actual_pct_5d IS NOT NULL
+              AND sentiment_score IS NOT NULL
+              AND ab_variant = '{_variant}'
+              AND created_at >= datetime('now', '-{_days} days')
+            ORDER BY created_at ASC
+        """)).fetchall()
+
+    if not rows:
+        return {
+            "variant": variant, "days": days, "n_total": 0,
+            "error": "无回填样本，请等待5个交易日后数据自动回填",
+        }
+
+    # 辅助：计算两个序列的Pearson相关
+    def pearson_ic(xs, ys):
+        n = len(xs)
+        if n < 5:
+            return None
+        mx = sum(xs) / n
+        my = sum(ys) / n
+        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        denom = (
+            math.sqrt(sum((x - mx) ** 2 for x in xs)) *
+            math.sqrt(sum((y - my) ** 2 for y in ys))
+        )
+        return round(num / denom, 4) if denom > 1e-9 else None
+
+    # 1. 全样本 IC（各持有期）
+    scores_all = [float(r[2]) for r in rows]
+    decay_ic = {}
+    for hold_label, col_idx in [("1d", 4), ("3d", 5), ("5d", 3), ("10d", 6), ("20d", 7)]:
+        valid_pairs = [(float(r[2]), float(r[col_idx])) for r in rows if r[col_idx] is not None]
+        if valid_pairs:
+            sc = [p[0] for p in valid_pairs]
+            rt = [p[1] for p in valid_pairs]
+            decay_ic[hold_label] = {"ic": pearson_ic(sc, rt), "n": len(valid_pairs)}
+        else:
+            decay_ic[hold_label] = {"ic": None, "n": 0, "note": "待回填或数据不足"}
+
+    # 2. 滚动窗口 IC 时间序列（按 window_days 天分组）
+    from collections import defaultdict
+    week_buckets: dict = defaultdict(lambda: {"scores": [], "ret5d": []})
+    for r in rows:
+        wk = r[1]  # week_label
+        if r[2] is not None and r[3] is not None:
+            week_buckets[wk]["scores"].append(float(r[2]))
+            week_buckets[wk]["ret5d"].append(float(r[3]))
+
+    rolling_ic_series = []
+    for wk in sorted(week_buckets.keys()):
+        sc = week_buckets[wk]["scores"]
+        rt = week_buckets[wk]["ret5d"]
+        ic_val = pearson_ic(sc, rt)
+        rolling_ic_series.append({"week": wk, "ic": ic_val, "n": len(sc)})
+
+    # 3. ICIR + t-stat（仅使用样本≥5的周）
+    valid_ics = [p["ic"] for p in rolling_ic_series if p["ic"] is not None and p["n"] >= 5]
+    icir = None
+    ic_tstat = None
+    ic_mean = None
+    ic_std = None
+    if len(valid_ics) >= 3:
+        ic_mean = round(sum(valid_ics) / len(valid_ics), 4)
+        var = sum((x - ic_mean) ** 2 for x in valid_ics) / (len(valid_ics) - 1)
+        ic_std = round(math.sqrt(var), 4)
+        if ic_std > 1e-9:
+            icir = round(ic_mean / ic_std, 3)
+            ic_tstat = round(ic_mean / (ic_std / math.sqrt(len(valid_ics))), 3)
+
+    # ICIR 解读
+    def icir_verdict(ir):
+        if ir is None:
+            return "样本期数不足（需≥3期），无法评估"
+        if ir >= 1.5:
+            return "✅ 极强稳定 (ICIR≥1.5)，信号质量机构级别"
+        if ir >= 0.8:
+            return "✅ 稳定可用 (ICIR 0.8-1.5)，符合量化策略上线标准"
+        if ir >= 0.5:
+            return "⚠️ 中等稳定 (ICIR 0.5-0.8)，可用但需持续监控IC衰减"
+        if ir >= 0.3:
+            return "⚠️ 弱稳定 (ICIR 0.3-0.5)，信号噪声较大，建议组合多因子"
+        return "❌ 不稳定 (ICIR<0.3)，IC均值被高方差稀释，策略可靠性存疑"
+
+    return {
+        "variant": variant,
+        "days": days,
+        "n_total": len(rows),
+        "n_valid_periods": len(valid_ics),
+        "overall": {
+            "ic_mean": ic_mean,
+            "ic_std": ic_std,
+            "icir": icir,
+            "ic_tstat": ic_tstat,
+            "icir_verdict": icir_verdict(icir),
+            "ic_tstat_significant": (abs(ic_tstat) > 1.96) if ic_tstat else None,
+        },
+        "ic_decay": decay_ic,
+        "rolling_ic_series": rolling_ic_series,
+        "note": (
+            f"ICIR={icir}：IC.mean/IC.std，衡量信号跨时间稳定性。"
+            "IC衰减分析显示信号在不同持有期的有效性。"
+            f"t-stat>1.96表示IC均值在95%置信区间内显著非零。"
+        ),
     }

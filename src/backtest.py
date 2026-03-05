@@ -89,16 +89,22 @@ class BacktestRunner:
                 if price_at_analysis <= 0:
                     continue
 
-                # 多周期收益率：T+1开盘买入后持有 5/10/20 日收盘价
-                # idx=1 → T+1, idx=5 → T+5收盘, idx=10 → T+10收盘, idx=20 → T+20收盘
+                # 多周期收益率：T+1开盘买入后持有 1/3/5/10/20 日收盘价
+                # idx=1 → T+1, idx=3 → T+3收盘, idx=5 → T+5收盘, idx=10 → T+10收盘, idx=20 → T+20收盘
+                price_1d = float(df.iloc[1]['close']) if len(df) >= 2 else None
+                actual_pct_1d = round((price_1d - price_at_analysis) / price_at_analysis * 100, 2) if price_1d else None
+
+                price_3d = float(df.iloc[3]['close']) if len(df) >= 4 else None
+                actual_pct_3d = round((price_3d - price_at_analysis) / price_at_analysis * 100, 2) if price_3d else None
+
                 price_5d = float(df.iloc[5]['close']) if len(df) >= 6 else float(df.iloc[-1]['close'])
                 actual_pct_5d = round((price_5d - price_at_analysis) / price_at_analysis * 100, 2)
-                
+
                 actual_pct_10d = None
                 if len(df) >= 11:
                     price_10d = float(df.iloc[10]['close'])
                     actual_pct_10d = round((price_10d - price_at_analysis) / price_at_analysis * 100, 2)
-                
+
                 actual_pct_20d = None
                 if len(df) >= 21:
                     price_20d = float(df.iloc[20]['close'])
@@ -124,6 +130,8 @@ class BacktestRunner:
                 # 实际生产中应添加新字段：actual_pct_10d, actual_pct_20d, benchmark_pct_5d等
                 self._update_record(
                     record.id, actual_pct_5d, hit_sl, hit_tp,
+                    actual_pct_1d=actual_pct_1d,
+                    actual_pct_3d=actual_pct_3d,
                     actual_pct_10d=actual_pct_10d,
                     actual_pct_20d=actual_pct_20d,
                     benchmark_pct_5d=benchmark_pct_5d,
@@ -196,31 +204,32 @@ class BacktestRunner:
             return None
 
     def _update_record(self, record_id: int, actual_pct: float, hit_sl: int, hit_tp: int,
+                      actual_pct_1d: Optional[float] = None,
+                      actual_pct_3d: Optional[float] = None,
                       actual_pct_10d: Optional[float] = None,
                       actual_pct_20d: Optional[float] = None,
                       benchmark_pct_5d: Optional[float] = None,
                       benchmark_pct_10d: Optional[float] = None,
                       benchmark_pct_20d: Optional[float] = None):
-        """更新单条回测记录（含多周期数据）
-        
-        注：多周期数据暂存在 raw_result JSON 中，避免频繁修改表结构
-        """
+        """更新单条回测记录（含多周期数据），写入独立列供 IC 分析使用"""
         with self.db.get_session() as session:
             try:
                 record = session.get(AnalysisHistory, record_id)
                 if record:
+                    record.actual_pct_1d = actual_pct_1d
+                    record.actual_pct_3d = actual_pct_3d
                     record.actual_pct_5d = actual_pct
+                    record.actual_pct_10d = actual_pct_10d
+                    record.actual_pct_20d = actual_pct_20d
                     record.hit_stop_loss = hit_sl
                     record.hit_take_profit = hit_tp
                     record.backtest_filled = 1
-                    
-                    # 扩展回测数据存入 raw_result（JSON格式，灵活扩展）
+
+                    # alpha 数据仍存入 raw_result（备查）
                     try:
                         import json
                         raw = json.loads(record.raw_result) if record.raw_result else {}
-                        backtest_ext = {
-                            'actual_pct_10d': actual_pct_10d,
-                            'actual_pct_20d': actual_pct_20d,
+                        raw['backtest_metrics'] = {
                             'benchmark_pct_5d': benchmark_pct_5d,
                             'benchmark_pct_10d': benchmark_pct_10d,
                             'benchmark_pct_20d': benchmark_pct_20d,
@@ -228,11 +237,10 @@ class BacktestRunner:
                             'alpha_10d': round(actual_pct_10d - benchmark_pct_10d, 2) if actual_pct_10d and benchmark_pct_10d else None,
                             'alpha_20d': round(actual_pct_20d - benchmark_pct_20d, 2) if actual_pct_20d and benchmark_pct_20d else None,
                         }
-                        raw['backtest_metrics'] = backtest_ext
                         record.raw_result = json.dumps(raw, ensure_ascii=False)
                     except Exception:
-                        pass  # raw_result 更新失败不影响主流程
-                    
+                        pass
+
                     session.commit()
             except Exception as e:
                 session.rollback()

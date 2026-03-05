@@ -563,6 +563,27 @@ class GeminiAnalyzer:
         else:
             prediction_accuracy_section = ""
 
+        # P3b: 组合 MaxDD 保守覆盖层
+        _mdd = context.get('max_dd_guard')
+        if _mdd and isinstance(_mdd, dict) and _mdd.get('guard_level', 'normal') != 'normal':
+            _gl = _mdd['guard_level']
+            _dd_pct = _mdd.get('drawdown_pct', 0)
+            _port_pct = _mdd.get('portfolio_return_pct', 0)
+            _guard_desc = _mdd.get('guard_desc', '')
+            _override_rule = {
+                'caution':   '仓位上限降至正常的50%，止损点收紧至1.5%内，买入信号需量化+舆情双重确认',
+                'defensive': '所有"买入"建议→改为"观望等待企稳"；所有"加仓"→改为"维持当前仓位"；止损线优先',
+                'halt':      '**所有新建仓操作暂停**。仅允许止损/减仓。已持仓若浮亏>个股止损线，立即止损。',
+            }.get(_gl, '')
+            max_dd_guard_section = (
+                f"\n## 🛡️ 组合回撤保护（MaxDD Guard）\n"
+                f"- 当前状态: **{_gl.upper()}** | 组合浮盈{_port_pct:+.1f}% | 距峰值回撤{_dd_pct:+.1f}%\n"
+                f"- {_guard_desc}\n"
+                f"- **覆盖规则（优先级高于其他所有信号）**: {_override_rule}\n"
+            )
+        else:
+            max_dd_guard_section = ""
+
         # P2b: 宏观 Regime 覆盖层（Gemini flash 分类结果）
         _mac_regime = context.get('macro_regime')
         if _mac_regime and isinstance(_mac_regime, dict) and _mac_regime.get('regime'):
@@ -839,7 +860,7 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
+{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
 ## JSON 输出协议
 {'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
