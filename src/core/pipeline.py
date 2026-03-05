@@ -339,18 +339,20 @@ class StockAnalysisPipeline:
             with self.storage.get_session() as session:
                 from sqlalchemy import text as _text
                 rows = session.execute(_text("""
-                    SELECT sentiment_score, actual_pct_5d
+                    SELECT MAX(sentiment_score) as score, actual_pct_5d
                     FROM analysis_history
                     WHERE backtest_filled=1
                       AND actual_pct_5d IS NOT NULL
                       AND sentiment_score IS NOT NULL
                       AND created_at >= datetime('now', '-21 days')
-                    ORDER BY created_at ASC
+                    GROUP BY code, DATE(created_at)
+                    ORDER BY DATE(created_at) ASC
                 """)).fetchall()
 
             if not rows or len(rows) < 20:
                 logger.debug(f"[ICGuard] 样本不足({len(rows) if rows else 0}<20)，跳过守卫")
                 return None
+            # t统计增强显著性检验（|↓|×√n ≥ 1.5，即大约邠90%置信区间）：不达标则返回结果但不触发守卫
 
             scores = [float(r[0]) for r in rows]
             rets = [float(r[1]) for r in rows]
@@ -363,20 +365,25 @@ class StockAnalysisPipeline:
             denom = denom_s * denom_r
             ic = round(num / denom, 4) if denom > 1e-9 else 0.0
 
-            if ic >= 0.20:
+            t_stat = abs(ic) * math.sqrt(n)
+            statistically_significant = t_stat >= 1.5  # ~90% 置信区间
+
+            if not statistically_significant:
+                level, desc = "normal", ""
+            elif ic >= 0.20:
                 level, desc = "strong", ""
             elif ic >= 0.10:
-                level, desc = "moderate", f"⚠️ 近21日信号中等(IC={ic:.2f})，请适当降低仓位，严格执行止损。"
+                level, desc = "moderate", f"⚠️ 近21日信号中等(IC={ic:.2f}, t={t_stat:.2f})，请适当降低仓位，严格执行止损。"
             elif ic >= 0.0:
-                level, desc = "weak", f"⚠️ 近21日信号较弱(IC={ic:.2f})，建议控制在半仓以内，优先等待信号增强再入场。"
+                level, desc = "weak", f"⚠️ 近21日信号较弱(IC={ic:.2f}, t={t_stat:.2f})，建议控制在半仓以内，优先等待信号增强再入场。"
             else:
                 level, desc = "negative", (
-                    f"🔴 近21日信号反转(IC={ic:.2f})！当前量化评分预测能力弱，"
+                    f"🔴 近21日信号反转(IC={ic:.2f}, t={t_stat:.2f})！当前量化评分预测能力弱，"
                     "建议：①缩小仓位至1/3以内；②执行更紧的止损（当前止损价上移0.5-1%）；"
                     "③优先等待IC转正（连续5日）后再新增头寸。"
                 )
 
-            guard = {"ic": ic, "n": n, "period": "近21日", "quality_level": level, "quality_desc": desc}
+            guard = {"ic": ic, "n": n, "t_stat": round(t_stat, 3), "period": "近21日", "quality_level": level, "quality_desc": desc}
             logger.info(f"📊 [ICGuard] 近21日滚动IC={ic:.4f}（n={n}），quality={level}")
             return guard
         except Exception as e:
@@ -786,6 +793,14 @@ class StockAnalysisPipeline:
                     context['peer_ranking'] = peer_data
         except Exception as e:
             logger.debug(f"[{code}] 同行业排名获取失败: {e}")
+
+        # 持仓周期胜率统计（短线/中线分类依据）
+        try:
+            horizon_stats = self.storage.get_holding_horizon_stats(code, days=90, min_samples=5)
+            if horizon_stats:
+                context['holding_horizon_stats'] = horizon_stats
+        except Exception as e:
+            logger.debug(f"[{code}] 持仓周期胜率获取失败: {e}")
 
         return context
 

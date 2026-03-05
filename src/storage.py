@@ -955,6 +955,68 @@ class DatabaseManager:
 
         return result
 
+    def get_holding_horizon_stats(self, code: str, days: int = 90, min_samples: int = 5) -> Optional[Dict[str, Any]]:
+        """计算指定股票不同持仓周期的胜率和平均收益（基于backtest数据）。
+
+        Returns dict with keys: periods (list), or None if insufficient data.
+        Each period: {period, n, win_rate, avg_return, avg_alpha}
+        """
+        with self.get_session() as session:
+            cutoff = datetime.now() - timedelta(days=days)
+            rows = session.execute(
+                select(AnalysisHistory).where(
+                    and_(
+                        AnalysisHistory.code == code,
+                        AnalysisHistory.backtest_filled == 1,
+                        AnalysisHistory.created_at >= cutoff,
+                    )
+                ).order_by(AnalysisHistory.created_at.desc())
+            ).scalars().all()
+
+        if not rows:
+            return None
+
+        # Dedup per day (keep highest score)
+        dedup: dict = {}
+        for r in rows:
+            day_key = r.created_at.date() if r.created_at else None
+            existing = dedup.get(day_key)
+            if existing is None or (r.sentiment_score or 0) > (existing.sentiment_score or 0):
+                dedup[day_key] = r
+        records = list(dedup.values())
+
+        def _stats(values, alphas=None):
+            vals = [v for v in values if v is not None]
+            if len(vals) < min_samples:
+                return None
+            avg = round(sum(vals) / len(vals), 2)
+            win = round(sum(1 for v in vals if v > 0) / len(vals) * 100, 1)
+            avg_alpha = None
+            if alphas:
+                a_vals = [a for a in alphas if a is not None]
+                if a_vals:
+                    avg_alpha = round(sum(a_vals) / len(a_vals), 2)
+            return {"n": len(vals), "win_rate": win, "avg_return": avg, "avg_alpha": avg_alpha}
+
+        periods = []
+        p1 = _stats([r.actual_pct_1d for r in records])
+        if p1:
+            periods.append({"period": "1d", **p1})
+        p3 = _stats([r.actual_pct_3d for r in records])
+        if p3:
+            periods.append({"period": "3d", **p3})
+        p5 = _stats([r.actual_pct_5d for r in records], [r.alpha_5d for r in records])
+        if p5:
+            periods.append({"period": "5d", **p5})
+        p10 = _stats([r.actual_pct_10d for r in records], [r.alpha_10d for r in records])
+        if p10:
+            periods.append({"period": "10d", **p10})
+
+        if not periods:
+            return None
+
+        return {"code": code, "n_records": len(records), "periods": periods}
+
     def get_ab_test_stats(self, min_samples: int = 30) -> Dict[str, Any]:
         """
         A/B测试胜率统计：按 ab_variant 分组，统计胜率/平均回报。

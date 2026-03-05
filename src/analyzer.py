@@ -586,7 +586,7 @@ class GeminiAnalyzer:
 
         # P9b: 信号质量守卫（IC质量退化时注入）
         _icg = context.get('ic_quality_guard')
-        if _icg and isinstance(_icg, dict) and _icg.get('quality_level') not in ('strong', None):
+        if _icg and isinstance(_icg, dict) and _icg.get('quality_level') not in ('strong', 'normal', None):
             _ic_val = _icg.get('ic', 0)
             _ic_level = _icg.get('quality_level', 'weak')
             _ic_desc = _icg.get('quality_desc', '')
@@ -673,6 +673,24 @@ class GeminiAnalyzer:
                 peer_ranking_section = ""
         else:
             peer_ranking_section = ""
+
+        # 持仓周期胜率（短线/中线归类参考）
+        _hhs = context.get('holding_horizon_stats')
+        if _hhs and isinstance(_hhs, dict) and _hhs.get('periods'):
+            _hp = _hhs['periods']
+            _lines = []
+            for p in _hp:
+                _alpha_str = f" alpha={p['avg_alpha']:+.1f}%" if p.get('avg_alpha') is not None else ""
+                _lines.append(
+                    f"{p['period']}持有: 胜率{p['win_rate']:.0f}%(n={p['n']}) 均收益{p['avg_return']:+.1f}%{_alpha_str}"
+                )
+            holding_horizon_section = (
+                f"\n## 📅 历史胜率（按持仓周期，去重后{_hhs.get('n_records',0)}个交易日）\n"
+                + "".join(f"- {l}\n" for l in _lines)
+                + "- **参考建议**：选择胜率最高的持仓周期作为本次操作的时间框架。\n"
+            )
+        else:
+            holding_horizon_section = ""
 
         # I3: 量化锁点提取（供 R/R 比计算和行动方案小组底层）
         trend_result_obj = context.get('trend_result')
@@ -890,7 +908,7 @@ Step 4（{_has_pos_label}） - 结论：
 ## 历史回溯
 {history_str}
 
-## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else '量化技术面（已完成，不得篡改）'}
+## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else '量化技术面原始信号（供你参考，你是最终决策者）'}
 {tech_report}
 
 ## 基本面 (F10)
@@ -898,9 +916,9 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{sector_exposure_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
+{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{sector_exposure_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}{holding_horizon_section}
 ## JSON 输出协议
-{'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
+{'**无量化技术信号，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '**你是最终决策者**，量化技术面仅整理了原始技术信号供你参考（不含评分结论）。请基于上述所有信息独立给出评分和操作建议。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
 
 stock_name, trend_prediction, time_horizon({time_horizon_hint}),

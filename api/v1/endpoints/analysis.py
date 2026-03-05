@@ -884,13 +884,15 @@ async def ic_analysis(
     _cutoff_21d = (_date.today() - _td(days=21)).isoformat()
     with db.get_session() as _s21:
         _guard_rows = _s21.execute(_text(f"""
-            SELECT sentiment_score, actual_pct_5d
+            SELECT MAX(sentiment_score) as score, actual_pct_5d
             FROM analysis_history
             WHERE backtest_filled=1
               AND actual_pct_5d IS NOT NULL
               AND sentiment_score IS NOT NULL
               AND ab_variant = '{_variant}'
               AND created_at >= '{_cutoff_21d}'
+            GROUP BY code, DATE(created_at)
+            ORDER BY DATE(created_at) ASC
         """)).fetchall()
     _MIN_IC_SAMPLES = 20
     current_ic_guard = None
@@ -905,27 +907,33 @@ async def ic_analysis(
         _dr21 = math.sqrt(sum((r - _my21) ** 2 for r in _rt21))
         _denom21 = _ds21 * _dr21
         _ic21 = round(_num21 / _denom21, 4) if _denom21 > 1e-9 else 0.0
+        _t21 = round(abs(_ic21) * math.sqrt(_n21), 3)
+        _sig21 = _t21 >= 1.5  # ~90% 置信
 
-        if _ic21 >= 0.20:
-            _qlevel, _qdesc = "strong", "✅ 信号强度正常，量化评分预测能力充足。"
+        if not _sig21:
+            _qlevel, _qdesc = "normal", f"✅ 信号IC={_ic21:.3f}(t={_t21:.2f})，统计上不显著，守卫不触发。"
+        elif _ic21 >= 0.20:
+            _qlevel, _qdesc = "strong", f"✅ 信号强(IC={_ic21:.3f}, t={_t21:.2f})，量化评分预测能力充足。"
         elif _ic21 >= 0.10:
-            _qlevel, _qdesc = "moderate", f"⚠️ 信号中等(IC={_ic21:.3f})，适当降仓。"
+            _qlevel, _qdesc = "moderate", f"⚠️ 信号中等(IC={_ic21:.3f}, t={_t21:.2f})，适当降仓。"
         elif _ic21 >= 0.0:
-            _qlevel, _qdesc = "weak", f"⚠️ 信号较弱(IC={_ic21:.3f})，控制在半仓以内。"
+            _qlevel, _qdesc = "weak", f"⚠️ 信号较弱(IC={_ic21:.3f}, t={_t21:.2f})，控制在半仓以内。"
         else:
             _qlevel, _qdesc = "negative", (
-                f"🔴 信号反转(IC={_ic21:.3f})！评分预测能力弱，"
+                f"🔴 信号反转(IC={_ic21:.3f}, t={_t21:.2f})！评分预测能力弱，"
                 "建议缩小仓位至1/3+收紧止损。"
             )
         current_ic_guard = {
             "ic": _ic21,
             "n": _n21,
+            "t_stat": _t21,
+            "statistically_significant": _sig21,
             "quality_level": _qlevel,
             "quality_desc": _qdesc,
-            "guard_active": _qlevel in ("weak", "negative"),
+            "guard_active": _sig21 and _qlevel in ("weak", "negative"),
             "guard_action": (
-                "⛔ 仓位减半 + 止损收紧 (当前批次分析已触发ICGuard)" if _qlevel == "negative"
-                else "⚠️ 控制半仓以内" if _qlevel == "weak"
+                "⛔ 仓位减半 + 止损收紧 (当前批次分析已触发ICGuard)" if (_sig21 and _qlevel == "negative")
+                else "⚠️ 控制半仓以内" if (_sig21 and _qlevel == "weak")
                 else None
             ),
         }

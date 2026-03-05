@@ -49,15 +49,7 @@ class AnalysisFormatter:
         
         LLM 不需要完整的量化报告，只需要关键信号和硬规则锚点。
         """
-        breakdown = result.score_breakdown
-        bd_str = ""
-        if breakdown:
-            base = "+".join(f"{k}{v}" for k in ['trend','bias','volume','support','macd','rsi','kdj'] if (v := breakdown.get(k)) is not None)
-            adj = " ".join(f"{label}{v:+d}" for key, label in AnalysisFormatter.ADJ_MAP.items() if (v := breakdown.get(key, 0)) != 0)
-            bd_str = f" ({base}{' | ' + adj if adj else ''})"
-
         lines = [
-            f"评分={result.signal_score}{bd_str} 信号={result.buy_signal.value}",
             f"趋势={result.trend_status.value}(强度{result.trend_strength:.0f}) 均线={result.ma_alignment}",
             f"MACD={result.macd_status.value} KDJ={result.kdj_status.value} RSI={result.rsi_status.value}(RSI6={result.rsi_6:.0f} RSI12={result.rsi_12:.0f} RSI24={result.rsi_24:.0f})",
             f"量能={result.volume_status.value} 量比={result.volume_ratio:.2f}",

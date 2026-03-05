@@ -39,7 +39,14 @@ class WatchlistAddRequest(BaseModel):
 
 @router.get("/portfolio", summary="获取所有持仓")
 def api_list_portfolio():
-    return {"items": list_portfolio()}
+    from src.services.portfolio_risk_service import calculate_sector_exposure
+    items = list_portfolio()
+    sector_exposure = None
+    try:
+        sector_exposure = calculate_sector_exposure(items)
+    except Exception:
+        pass
+    return {"items": items, "sector_exposure": sector_exposure}
 
 
 @router.post("/portfolio", summary="新增/更新持仓")
@@ -80,10 +87,18 @@ def api_monitor_portfolio():
     前端每2分钟轮询一次。
     """
     try:
+        from src.services.portfolio_risk_service import calculate_sector_exposure
         signals = monitor_portfolio()
         # P3: 生成组合集中度预警
         concentration_warnings = _calc_concentration_warnings(signals)
-        return {"signals": signals, "count": len(signals), "concentration_warnings": concentration_warnings}
+        # 行业敞口分析
+        portfolio_items = list_portfolio()
+        sector_exposure = None
+        try:
+            sector_exposure = calculate_sector_exposure(portfolio_items)
+        except Exception:
+            pass
+        return {"signals": signals, "count": len(signals), "concentration_warnings": concentration_warnings, "sector_exposure": sector_exposure}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
