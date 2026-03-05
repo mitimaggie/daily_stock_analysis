@@ -168,6 +168,7 @@ class AnalysisHistory(Base):
     buy_signal_val = Column(String(32), nullable=True)   # 买卖信号
     trend_status_val = Column(String(32), nullable=True) # 趋势状态
     ab_variant = Column(String(16), nullable=True, default='standard')  # A/B实验分组: 'standard'|'llm_only'
+    sector_name = Column(String(50), nullable=True)   # 行业板块（用于横截面排名）
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -376,6 +377,7 @@ class DatabaseManager:
                 'buy_signal_val':         'VARCHAR(32)',
                 'trend_status_val':       'VARCHAR(32)',
                 'ab_variant':             "VARCHAR(16) DEFAULT 'standard'",
+                'sector_name':            'VARCHAR(50)',
             },
         }
         with self._engine.connect() as conn:
@@ -528,7 +530,7 @@ class DatabaseManager:
             ).scalars().all()
             return list(results)
 
-    def save_analysis_history(self, result: Any, query_id: str, report_type: str, news_content: Optional[str], context_snapshot: Optional[Dict] = None, save_snapshot: bool = True, ab_variant: str = 'standard') -> int:
+    def save_analysis_history(self, result: Any, query_id: str, report_type: str, news_content: Optional[str], context_snapshot: Optional[Dict] = None, save_snapshot: bool = True, ab_variant: str = 'standard', sector_name: Optional[str] = None) -> int:
         if result is None: return 0
         sniper_points = self._extract_sniper_points(result)
         raw_result = self._build_raw_result(result)
@@ -552,7 +554,7 @@ class DatabaseManager:
             take_profit=sniper_points.get("take_profit"), created_at=datetime.now(),
             signal_score_val=_signal_score_val, capital_flow_score_val=_cf_score_val,
             macd_status_val=_macd_status, buy_signal_val=_buy_signal, trend_status_val=_trend_status,
-            ab_variant=ab_variant,
+            ab_variant=ab_variant, sector_name=sector_name,
         )
         with self.get_session() as session:
             try:
@@ -934,6 +936,120 @@ class DatabaseManager:
 
         return result
 
+    def get_ab_test_stats(self, min_samples: int = 30) -> Dict[str, Any]:
+        """
+        A/B测试胜率统计：按 ab_variant 分组，统计胜率/平均回报。
+        任一变体不足 min_samples 条回填记录时，返回 insufficient_data 状态。
+        """
+        from sqlalchemy import func, case as sa_case
+        with self.get_session() as session:
+            rows = session.execute(
+                select(
+                    AnalysisHistory.ab_variant,
+                    func.count().label('backfilled'),
+                    func.avg(AnalysisHistory.actual_pct_5d).label('avg_return'),
+                    func.sum(sa_case((AnalysisHistory.actual_pct_5d > 0, 1), else_=0)).label('positive_count'),
+                )
+                .where(AnalysisHistory.actual_pct_5d.isnot(None))
+                .group_by(AnalysisHistory.ab_variant)
+            ).fetchall()
+
+        stats: Dict[str, Any] = {}
+        for row in rows:
+            variant = row[0] or 'standard'
+            stats[variant] = {
+                'backfilled': row[1],
+                'avg_5d_return': round(float(row[2]), 2) if row[2] is not None else None,
+                'win_rate': round(float(row[3]) / row[1] * 100, 1) if row[1] > 0 else None,
+            }
+
+        insufficient = any(
+            stats.get(v, {}).get('backfilled', 0) < min_samples
+            for v in ['standard', 'llm_only']
+        )
+        return {
+            'status': 'insufficient_data' if insufficient else 'ready',
+            'min_samples_needed': min_samples,
+            'variants': stats,
+        }
+
+    def get_sector_peer_scores(self, sector_name: str, days: int = 7, min_peers: int = 10) -> Optional[Dict[str, Any]]:
+        """
+        查询同行业近N日的信号评分，计算本行业内的分位排名。
+        不足 min_peers 只有效数据时返回 None。
+        """
+        if not sector_name:
+            return None
+        cutoff = datetime.now() - timedelta(days=days)
+        with self.get_session() as session:
+            rows = session.execute(
+                select(
+                    AnalysisHistory.code,
+                    AnalysisHistory.signal_score_val,
+                )
+                .where(
+                    AnalysisHistory.sector_name == sector_name,
+                    AnalysisHistory.signal_score_val.isnot(None),
+                    AnalysisHistory.created_at >= cutoff,
+                )
+                .order_by(desc(AnalysisHistory.created_at))
+            ).fetchall()
+
+        if not rows:
+            return None
+
+        seen = {}
+        for code, score in rows:
+            if code not in seen:
+                seen[code] = score
+        peer_scores = list(seen.values())
+        if len(peer_scores) < min_peers:
+            return None
+
+        peer_scores_sorted = sorted(peer_scores)
+        return {
+            'sector_name': sector_name,
+            'peer_count': len(peer_scores),
+            'scores': peer_scores,
+            'sorted_scores': peer_scores_sorted,
+        }
+
+    def save_data_cache(self, cache_type: str, cache_key: str, data_json: str) -> None:
+        """更新或插入 data_cache 通用缓存记录（UPSERT）"""
+        with self.get_session() as session:
+            try:
+                existing = session.execute(
+                    select(DataCache).where(
+                        DataCache.cache_type == cache_type,
+                        DataCache.cache_key == cache_key,
+                    )
+                ).scalar_one_or_none()
+                if existing:
+                    existing.data_json = data_json
+                    existing.fetched_at = datetime.now()
+                else:
+                    session.add(DataCache(
+                        cache_type=cache_type, cache_key=cache_key,
+                        data_json=data_json, fetched_at=datetime.now(),
+                    ))
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.debug(f"save_data_cache 失败 [{cache_type}/{cache_key}]: {e}")
+
+    def get_data_cache(self, cache_type: str, cache_key: str, ttl_hours: float = 4.0) -> Optional[str]:
+        """读取 data_cache，超过 TTL 则返回 None"""
+        cutoff = datetime.now() - timedelta(hours=ttl_hours)
+        with self.get_session() as session:
+            row = session.execute(
+                select(DataCache).where(
+                    DataCache.cache_type == cache_type,
+                    DataCache.cache_key == cache_key,
+                    DataCache.fetched_at >= cutoff,
+                )
+            ).scalar_one_or_none()
+            return row.data_json if row else None
+
     def get_score_trend(self, code: str, days: int = 10) -> Dict[str, Any]:
         """
         获取近N日评分趋势，用于拐点检测和趋势分析。
@@ -1204,6 +1320,23 @@ class DatabaseManager:
             return df['pct_chg'].astype(float) / 100  # 百分比 -> 小数
         except Exception as e:
             logger.debug(f"读取指数收益率失败 [{index_name}]: {e}")
+            return pd.Series(dtype=float)
+
+    def get_stock_returns(self, code: str, days: int = 65) -> "pd.Series":
+        """获取个股收益率序列（供 Beta 计算），返回 pct_chg 的 Series（小数形式）"""
+        try:
+            sql = text("""
+                SELECT date, pct_chg FROM stock_daily
+                WHERE code = :code ORDER BY date DESC LIMIT :limit
+            """)
+            with self._engine.connect() as conn:
+                df = pd.read_sql(sql, conn, params={"code": code, "limit": days})
+            if df.empty:
+                return pd.Series(dtype=float)
+            df = df.sort_values('date').reset_index(drop=True)
+            return df['pct_chg'].astype(float) / 100
+        except Exception as e:
+            logger.debug(f"读取个股收益率失败 [{code}]: {e}")
             return pd.Series(dtype=float)
 
     @staticmethod

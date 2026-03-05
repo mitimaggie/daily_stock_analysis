@@ -563,6 +563,62 @@ class GeminiAnalyzer:
         else:
             prediction_accuracy_section = ""
 
+        # P2b: 宏观 Regime 覆盖层（Gemini flash 分类结果）
+        _mac_regime = context.get('macro_regime')
+        if _mac_regime and isinstance(_mac_regime, dict) and _mac_regime.get('regime'):
+            _r = _mac_regime['regime']
+            _conf = _mac_regime.get('confidence', 0)
+            _rationale = _mac_regime.get('rationale', '')
+            _regime_guidance = {
+                'BULL':   "宏观处于扩张期，流动性充裕/政策宽松，量化+基本面信号可正常执行。",
+                'NEUTRAL':"宏观中性，技术信号为主，建议合理控制仓位上限，关注政策边际变化。",
+                'BEAR':   "⚠️ 宏观处于收缩/熊市期：所有建议保守一级（买入→等待确认，加仓→维持），新建仓需更严格止损条件。",
+                'CRISIS': "🚨 宏观系统性风险期（流动性危机/极度恐慌）：**仅允许观望和止损操作，禁止新建仓**。",
+            }.get(_r, '')
+            macro_regime_overlay_section = (
+                f"\n## 🌐 宏观 Regime（AI分类，置信度{_conf:.0%}）\n"
+                f"- 当前状态: **{_r}** — {_rationale}\n"
+                f"- 操作指引: {_regime_guidance}\n"
+            ) if _regime_guidance else ""
+        else:
+            macro_regime_overlay_section = ""
+
+        # P2a-2: 组合 Beta section
+        _pb = context.get('portfolio_beta')
+        if _pb and isinstance(_pb, dict) and _pb.get('portfolio_beta') is not None:
+            _pbeta = _pb['portfolio_beta']
+            _hbeta = _pb.get('holdings_beta', {})
+            _code_beta = _hbeta.get(code, '')
+            _beta_note = ""
+            if abs(_pbeta - 1.0) > 0.15:
+                _beta_note = f"（{'高于' if _pbeta > 1 else '低于'}市场平均，{'本股加仓将进一步提升' if _code_beta and float(_code_beta) > _pbeta else '本股加仓对整体Beta影响较小'}）"
+            portfolio_beta_section = (
+                f"\n## 📐 持仓组合 Beta\n"
+                f"- 当前组合Beta: {_pbeta:.2f} vs 上证指数{_beta_note}\n"
+                + (f"- 本股Beta: {float(_code_beta):.2f}\n" if _code_beta != '' else "")
+            )
+        else:
+            portfolio_beta_section = ""
+
+        # P2c: 同行业横截面排名 section
+        _peer = context.get('peer_ranking')
+        if _peer and isinstance(_peer, dict) and _peer.get('peer_count', 0) >= 10:
+            _sec_scores = _peer.get('sorted_scores', [])
+            _cur_signal = (context.get('trend_analysis') or {}).get('signal_score')
+            if _sec_scores and _cur_signal is not None:
+                _n = len(_sec_scores)
+                _rank = sum(1 for s in _sec_scores if s <= _cur_signal)
+                _pct = round(_rank / _n * 100)
+                _sector_name = _peer.get('sector_name', '同行业')
+                peer_ranking_section = (
+                    f"\n## 🏆 横截面排名（{_sector_name}，近7日{_n}只股）\n"
+                    f"- 本股信号强度处于该行业**前{100-_pct}%**（排名第{_n-_rank+1}/{_n}）\n"
+                )
+            else:
+                peer_ranking_section = ""
+        else:
+            peer_ranking_section = ""
+
         # I3: 量化锁点提取（供 R/R 比计算和行动方案小组底层）
         trend_result_obj = context.get('trend_result')
         _ideal_buy = getattr(trend_result_obj, 'ideal_buy', None) if trend_result_obj else None
@@ -588,6 +644,19 @@ class GeminiAnalyzer:
         _sniper_fallback = 'LLM自行估算' if ab_variant == 'llm_only' else '用量化锚点'
         battle_plan_rr = f"risk_reward: {{max_loss_pct: '{_rr_example or _rr_hint}', rr_ratio: 实际计算或\'N/A\'}}"
 
+        # I3-ext: 2%-risk-rule 仓位建议（基于止损幅度倒推最大仓位）
+        _pos_total_capital = float((position_info or {}).get('total_capital') or 0)
+        _position_sizing_hint = ""
+        if _ideal_buy and _stop_loss and _ideal_buy > 0:
+            _max_loss_pct_sz = abs(_ideal_buy - _stop_loss) / _ideal_buy * 100
+            if _max_loss_pct_sz > 0.1:
+                _suggested_pct = round(min(max(2.0 / _max_loss_pct_sz * 100, 1.0), 30.0), 1)
+                _sz_note = f"2%风险规则:下行{_max_loss_pct_sz:.1f}%→建议仓位{_suggested_pct}%"
+                if _pos_total_capital > 0:
+                    _sz_note += f"({round(_pos_total_capital * _suggested_pct / 100 / 10000, 1)}万元)"
+                _position_sizing_hint = f"{{method: '2%-risk-rule', suggested_pct: {_suggested_pct}, rationale: '{_sz_note}'}}"
+        if not _position_sizing_hint:
+            _position_sizing_hint = "{method: '2%-risk-rule', suggested_pct: 'LLM自行估算', rationale: '请基于技术分析确定合理仓位'}"
 
         time_horizon_hint = "'短线(日内)' 或 '短线(1-3日)'" if is_intraday else "'短线(1-5日)' 或 '中线(1-4周)' 或 '长线(1-3月)'"
 
@@ -770,7 +839,7 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}
+{data_availability_section}{prediction_accuracy_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
 ## JSON 输出协议
 {'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
@@ -788,7 +857,7 @@ dashboard: {{
     {position_advice_protocol}
   }},
   intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
-  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, {battle_plan_rr} }},
+  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, {battle_plan_rr}, position_sizing: {_position_sizing_hint} }},
   override_intel: {{ triggered: false, tier: "", {'reason: "无Tier-0/1风险事件（若有请填写：监管/退市/实控人减持/业绩暴雷等，并在此说明为何选择了保守建议）"' if ab_variant == 'llm_only' else 'reason: "无Tier-0/1风险事件"'}, downgrade_to: "" }},
   counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"],
   action_now: "≤30字，直接说现在怎么操作（空仓：入场触发条件+价位+止损；持仓：加减仓触发价+止损线）",

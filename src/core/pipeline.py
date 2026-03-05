@@ -275,6 +275,57 @@ class StockAnalysisPipeline:
             logger.warning(f"🌐 [宏观情报] 搜索异常: {e}")
         return None
 
+    def _classify_macro_regime(self, macro_intel_text: str) -> Optional[Dict[str, Any]]:
+        """
+        用 Gemini flash 将宏观情报文本分类为 BULL/NEUTRAL/BEAR/CRISIS。
+        结果缓存在 data_cache (TTL=4h)，避免每次批量重复调用。
+        失败时静默返回 None，主流程无感降级。
+        """
+        CACHE_TYPE = "macro_regime"
+        CACHE_KEY = "global"
+        REGIME_TTL_HOURS = 4.0
+
+        # 1. 查缓存
+        try:
+            cached_json = self.storage.get_data_cache(CACHE_TYPE, CACHE_KEY, ttl_hours=REGIME_TTL_HOURS)
+            if cached_json:
+                import json as _json
+                data = _json.loads(cached_json)
+                logger.info(f"🌐 [Regime] 命中缓存: {data.get('regime')} (confidence={data.get('confidence')})")
+                return data
+        except Exception as _e:
+            logger.debug(f"[Regime] 缓存读取失败: {_e}")
+
+        # 2. 缓存未命中，调用 Gemini flash
+        if not self.analyzer or not getattr(self.analyzer, 'model', None):
+            return None
+
+        classify_prompt = (
+            "请根据以下宏观情报，将当前A股市场宏观状态分类为以下四种之一：\n"
+            "- BULL（经济扩张/流动性充裕/政策宽松）\n"
+            "- NEUTRAL（经济平稳/政策中性）\n"
+            "- BEAR（经济收缩/流动性收紧/政策收紧）\n"
+            "- CRISIS（系统性风险/金融危机/极度恐慌）\n\n"
+            f"宏观情报摘要：\n{macro_intel_text[:1500]}\n\n"
+            "只输出JSON，格式：{\"regime\": \"BULL|NEUTRAL|BEAR|CRISIS\", \"confidence\": 0.0-1.0, \"rationale\": \"一句话理由\"}"
+        )
+        try:
+            resp = self.analyzer.model.generate_content(classify_prompt)
+            raw = (resp.text or "").strip()
+            import json as _json, re as _re
+            m = _re.search(r'\{.*?\}', raw, _re.DOTALL)
+            if not m:
+                return None
+            data = _json.loads(m.group())
+            if data.get('regime') not in ('BULL', 'NEUTRAL', 'BEAR', 'CRISIS'):
+                return None
+            self.storage.save_data_cache(CACHE_TYPE, CACHE_KEY, _json.dumps(data, ensure_ascii=False))
+            logger.info(f"🌐 [Regime] 分类成功: {data['regime']} (confidence={data.get('confidence')}) — {data.get('rationale', '')[:60]}")
+            return data
+        except Exception as e:
+            logger.debug(f"[Regime] 分类失败(降级): {e}")
+            return None
+
     def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6,
                                   limit: int = 5, provider: str = None,
                                   min_count: int = 1) -> str:
@@ -668,6 +719,17 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.debug(f"[{code}] 分时数据获取失败: {e}")
 
+        # P2c: 同行业横截面评分排名（需 sector_name 已在 analysis_history 中积累）
+        try:
+            _sec_ctx = context.get('sector_context') or {}
+            _sec_name = _sec_ctx.get('sector_name') if isinstance(_sec_ctx, dict) else None
+            if _sec_name:
+                peer_data = self.storage.get_sector_peer_scores(_sec_name, days=7, min_peers=10)
+                if peer_data:
+                    context['peer_ranking'] = peer_data
+        except Exception as e:
+            logger.debug(f"[{code}] 同行业排名获取失败: {e}")
+
         return context
 
     def _log(self, msg: str, *args, **kwargs) -> None:
@@ -685,6 +747,8 @@ class StockAnalysisPipeline:
         position_info: Optional[Dict[str, Any]] = None,
         ab_variant: str = 'standard',
         macro_intel: Optional[str] = None,
+        portfolio_beta: Optional[Dict[str, Any]] = None,
+        macro_regime: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
@@ -692,6 +756,12 @@ class StockAnalysisPipeline:
             if not context: return None
             stock_name = context['stock_name']
             self._log(f"[{code}] {stock_name} 开始分析 (variant={ab_variant})")
+
+            # P2a-2/P2b: 注入组合Beta和宏观Regime到context（供analyzer.py渲染到prompt）
+            if portfolio_beta:
+                context['portfolio_beta'] = portfolio_beta
+            if macro_regime:
+                context['macro_regime'] = macro_regime
 
             # A/B 实验：llm_only 变体移除量化评分/信号结论，但保留 K 线叙事（让 LLM 自行解读走势）
             if ab_variant == 'llm_only':
@@ -1319,7 +1389,13 @@ class StockAnalysisPipeline:
             try:
                 # 每只股票用独立的 query_id（batch_id + code），确保 WebUI 历史记录能正确定位
                 per_stock_query_id = f"{self.query_id}_{code}" if self.query_id else None
-                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None, ab_variant=ab_variant)
+                _sector_name_save = None
+                try:
+                    _sc_ctx = context.get('sector_context') or {}
+                    _sector_name_save = _sc_ctx.get('sector_name') if isinstance(_sc_ctx, dict) else None
+                except Exception:
+                    pass
+                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None, ab_variant=ab_variant, sector_name=_sector_name_save)
             except Exception as e:
                 logger.error(f"保存分析历史失败: {e}")
             
@@ -1530,6 +1606,23 @@ class StockAnalysisPipeline:
             logger.debug(f"[宏观情报] 获取持仓板块失败(降级为通用查询): {_pe}")
         macro_intel_once: Optional[str] = self._get_macro_intel(save_to_db=True, portfolio_sectors=_portfolio_sectors or None)
 
+        # P2b: 宏观 Regime 分类（全批次一次，TTL=4h）
+        macro_regime_once: Optional[Dict[str, Any]] = None
+        if macro_intel_once:
+            try:
+                macro_regime_once = self._classify_macro_regime(macro_intel_once)
+            except Exception as _rge:
+                logger.debug(f"[Regime] 分类跳过: {_rge}")
+
+        # P2a-2: 组合 Beta 计算（全批次一次，TTL=1h 内存缓存）
+        portfolio_beta_once: Optional[Dict[str, Any]] = None
+        try:
+            if _portfolio:
+                from src.services.portfolio_risk_service import calculate_portfolio_beta
+                portfolio_beta_once = calculate_portfolio_beta(_portfolio)
+        except Exception as _be:
+            logger.debug(f"[Beta] 计算跳过: {_be}")
+
         # === 阶段二：并发分析 ===
         # 预取实时行情（批量预热，可选）
         if valid_stocks and hasattr(self.fetcher_manager, 'prefetch_realtime_quotes'):
@@ -1573,6 +1666,8 @@ class StockAnalysisPipeline:
                     report_type=report_type, 
                     market_overview_override=market_overview_once,
                     macro_intel=macro_intel_once,
+                    portfolio_beta=portfolio_beta_once,
+                    macro_regime=macro_regime_once,
                 ): code for code in valid_stocks
             }
             
