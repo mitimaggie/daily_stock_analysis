@@ -104,7 +104,7 @@ class TestBasicAnalysis:
         assert result.signal_score > 0
         assert result.current_price > 0
         assert result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]
-        assert result.buy_signal in [BuySignal.STRONG_BUY, BuySignal.BUY, BuySignal.CAUTIOUS_BUY, BuySignal.HOLD]
+        assert result.buy_signal in [BuySignal.STRONG_BUY, BuySignal.BUY, BuySignal.HOLD]
 
     def test_bear_market_low_score(self, analyzer):
         """空头行情应产生低评分和卖出/观望信号"""
@@ -852,12 +852,12 @@ class TestUpdateBuySignal:
         (94, BuySignal.STRONG_BUY),
         (85, BuySignal.STRONG_BUY),
         (84, BuySignal.BUY),
-        (70, BuySignal.BUY),
-        (69, BuySignal.CAUTIOUS_BUY),
-        (60, BuySignal.CAUTIOUS_BUY),
-        (59, BuySignal.HOLD),
-        (50, BuySignal.HOLD),
-        (49, BuySignal.REDUCE),
+        (78, BuySignal.BUY),
+        (77, BuySignal.HOLD),
+        (60, BuySignal.HOLD),
+        (55, BuySignal.HOLD),
+        (54, BuySignal.REDUCE),
+        (50, BuySignal.REDUCE),
         (35, BuySignal.REDUCE),
         (34, BuySignal.SELL),
         (0, BuySignal.SELL),

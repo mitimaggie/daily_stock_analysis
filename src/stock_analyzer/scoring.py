@@ -3298,7 +3298,6 @@ class ScoringSystem:
                     BuySignal.AGGRESSIVE_BUY: BuySignal.HOLD,
                     BuySignal.STRONG_BUY: BuySignal.HOLD,
                     BuySignal.BUY: BuySignal.HOLD,
-                    BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
                 }
             else:
                 # 78-84分弱共振+非多头：降一级
@@ -3306,7 +3305,6 @@ class ScoringSystem:
                     BuySignal.AGGRESSIVE_BUY: BuySignal.STRONG_BUY,
                     BuySignal.STRONG_BUY: BuySignal.BUY,
                     BuySignal.BUY: BuySignal.HOLD,
-                    BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
                 }
             result.buy_signal = _DOWNGRADE.get(result.buy_signal, result.buy_signal)
         
@@ -3318,7 +3316,6 @@ class ScoringSystem:
                 BuySignal.AGGRESSIVE_BUY: BuySignal.HOLD,
                 BuySignal.STRONG_BUY: BuySignal.HOLD,
                 BuySignal.BUY: BuySignal.HOLD,
-                BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
             }
             result.buy_signal = _DIVERGENCE_DOWNGRADE.get(result.buy_signal, result.buy_signal)
         
@@ -3330,6 +3327,5 @@ class ScoringSystem:
                 BuySignal.AGGRESSIVE_BUY: BuySignal.HOLD,
                 BuySignal.STRONG_BUY: BuySignal.HOLD,
                 BuySignal.BUY: BuySignal.HOLD,
-                BuySignal.CAUTIOUS_BUY: BuySignal.HOLD,
             }
             result.buy_signal = _MED_RESONANCE_DOWNGRADE.get(result.buy_signal, result.buy_signal)

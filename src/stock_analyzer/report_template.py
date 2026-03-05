@@ -23,7 +23,6 @@ class ReportTemplate:
             BuySignal.AGGRESSIVE_BUY: "🔥",
             BuySignal.STRONG_BUY: "✅",
             BuySignal.BUY: "👍",
-            BuySignal.CAUTIOUS_BUY: "🤔",
             BuySignal.HOLD: "⏸️",
             BuySignal.REDUCE: "⬇️",
             BuySignal.SELL: "❌",
@@ -36,8 +35,6 @@ class ReportTemplate:
             return f"🚨 {signal_text}：{result.trading_halt_reason}"
         
         if result.buy_signal in [BuySignal.AGGRESSIVE_BUY, BuySignal.STRONG_BUY, BuySignal.BUY]:
-            return f"{icon} {signal_text}：{result.advice_for_empty}（评分{result.signal_score}/100）"
-        elif result.buy_signal == BuySignal.CAUTIOUS_BUY:
             return f"{icon} {signal_text}：{result.advice_for_empty}（评分{result.signal_score}/100）"
         elif result.buy_signal == BuySignal.HOLD:
             return f"{icon} {signal_text}：{result.advice_for_holding}（评分{result.signal_score}/100）"
@@ -216,7 +213,6 @@ class ReportTemplate:
         aggressive_buy = []
         strong_buy = []
         buy = []
-        cautious_buy = []
         hold = []
         reduce = []
         sell = []
@@ -232,8 +228,6 @@ class ReportTemplate:
                 strong_buy.append(f"✅{item}")
             elif r.buy_signal == BuySignal.BUY:
                 buy.append(f"👍{item}")
-            elif r.buy_signal == BuySignal.CAUTIOUS_BUY:
-                cautious_buy.append(f"🤔{item}")
             elif r.buy_signal == BuySignal.HOLD:
                 hold.append(f"⏸️{item}")
             elif r.buy_signal == BuySignal.REDUCE:
@@ -254,7 +248,6 @@ class ReportTemplate:
         dashboard += f"🔥 激进买入：{', '.join(aggressive_buy) if aggressive_buy else '无'}\n"
         dashboard += f"✅ 强烈买入：{', '.join(strong_buy) if strong_buy else '无'}\n"
         dashboard += f"👍 适度买入：{', '.join(buy) if buy else '无'}\n"
-        dashboard += f"🤔 谨慎买入：{', '.join(cautious_buy) if cautious_buy else '无'}\n"
         dashboard += f"⏸️ 持股观望：{', '.join(hold) if hold else '无'}\n"
         dashboard += f"⬇️ 减仓观望：{', '.join(reduce) if reduce else '无'}\n"
         dashboard += f"❌ 建议离场：{', '.join(sell) if sell else '无'}\n"

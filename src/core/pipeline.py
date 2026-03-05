@@ -1288,7 +1288,7 @@ class StockAnalysisPipeline:
                 _quant_adv = (result.operation_advice or '').strip()
 
                 def _is_bullish(adv: str) -> bool:
-                    return any(k in adv for k in ('买入', '加仓', '强烈买入', '激进买入', '谨慎买入'))
+                    return any(k in adv for k in ('买入', '加仓', '强烈买入', '激进买入'))
 
                 def _is_bearish(adv: str) -> bool:
                     return any(k in adv for k in ('卖出', '减仓', '清仓', '强烈卖出'))
