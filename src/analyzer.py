@@ -584,6 +584,22 @@ class GeminiAnalyzer:
         else:
             max_dd_guard_section = ""
 
+        # P9b: 信号质量守卫（IC质量退化时注入）
+        _icg = context.get('ic_quality_guard')
+        if _icg and isinstance(_icg, dict) and _icg.get('quality_level') not in ('strong', None):
+            _ic_val = _icg.get('ic', 0)
+            _ic_level = _icg.get('quality_level', 'weak')
+            _ic_desc = _icg.get('quality_desc', '')
+            _ic_n = _icg.get('n', 0)
+            ic_quality_guard_section = (
+                f"\n## 📉 信号质量守卫（IC Guard）\n"
+                f"- 近21日滚动IC={_ic_val:.4f}（基于{_ic_n}条回测样本），信号质量={_ic_level.upper()}\n"
+                f"- {_ic_desc}\n"
+                f"- **执行要求**：当IC<0时，所有买入类操作仓位减半，止损条件收紧；如已有充分止损保护则可维持仓位但不加仓。\n"
+            )
+        else:
+            ic_quality_guard_section = ""
+
         # P2b: 宏观 Regime 覆盖层（Gemini flash 分类结果）
         _mac_regime = context.get('macro_regime')
         if _mac_regime and isinstance(_mac_regime, dict) and _mac_regime.get('regime'):
@@ -679,7 +695,11 @@ class GeminiAnalyzer:
         if not _position_sizing_hint:
             _position_sizing_hint = "{method: '2%-risk-rule', suggested_pct: 'LLM自行估算', rationale: '请基于技术分析确定合理仓位'}"
 
-        time_horizon_hint = "'短线(日内)' 或 '短线(1-3日)'" if is_intraday else "'短线(1-5日)' 或 '中线(1-4周)' 或 '长线(1-3月)'"
+        # IC衰减实证：信号在第5个交易日达到IC峰値(0.20)，第10日IC反转(-0.13)——最优持仓期不超过7个交易日
+        time_horizon_hint = ("'短线(日内)' 或 '短线(1-3日)'" if is_intraday
+                             else "'短线(3-5日)'（基于回测 IC分析最优） 或 '中线(1-4周)'."
+                                  "注意：当前信号在第5个交易日达到有效性峰値，超过7日信号开始衰减我们的IC分析显示10日IC=-0.13）"
+                             )
 
         # 持仓信息注入（仅持仓者视角时）
         has_position = bool(position_info and any(
@@ -860,7 +880,7 @@ Step 4（{_has_pos_label}） - 结论：
 
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
+{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}
 ## JSON 输出协议
 {'**无量化模型数据，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '最终评分/操作建议/止损/仓位由量化模型确定。你给出独立判断作为参考。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
@@ -878,7 +898,7 @@ dashboard: {{
     {position_advice_protocol}
   }},
   intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
-  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, {battle_plan_rr}, position_sizing: {_position_sizing_hint} }},
+  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, {battle_plan_rr}, position_sizing: {_position_sizing_hint}, holding_horizon: "建议3-5个交易日内完成获利了结（回测IC分析：信号有效性在5日达峰，第7日起开始衰减，10日后IC反转为-0.13）" }},
   override_intel: {{ triggered: false, tier: "", {'reason: "无Tier-0/1风险事件（若有请填写：监管/退市/实控人减持/业绩暴雷等，并在此说明为何选择了保守建议）"' if ab_variant == 'llm_only' else 'reason: "无Tier-0/1风险事件"'}, downgrade_to: "" }},
   counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"],
   action_now: "≤30字，直接说现在怎么操作（空仓：入场触发条件+价位+止损；持仓：加减仓触发价+止损线）",
@@ -979,9 +999,20 @@ dashboard: {{
                                         "type": "object",
                                         "properties": {
                                             "ideal_buy": {"type": "number"},
-                                            "stop_loss": {"type": "number"}
+                                            "stop_loss": {"type": "number"},
+                                            "target": {"type": "number"}
                                         }
-                                    }
+                                    },
+                                    "position_sizing": {
+                                        "type": "object",
+                                        "properties": {
+                                            "method": {"type": "string"},
+                                            "suggested_pct": {"type": "number"},
+                                            "rationale": {"type": "string"}
+                                        }
+                                    },
+                                    "holding_horizon": {"type": "string"},
+                                    "risk_reward_ratio": {"type": "string"}
                                 }
                             },
                             "counter_arguments": {

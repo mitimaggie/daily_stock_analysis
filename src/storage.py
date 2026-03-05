@@ -162,6 +162,8 @@ class AnalysisHistory(Base):
     actual_pct_5d = Column(Float)        # 5个交易日后实际收益率(%)
     actual_pct_10d = Column(Float, nullable=True)  # 10个交易日后实际收益率(%)
     actual_pct_20d = Column(Float, nullable=True)  # 20个交易日后实际收益率(%)
+    alpha_5d = Column(Float, nullable=True)          # 5日超额收益(vs沪深300)(%)
+    alpha_10d = Column(Float, nullable=True)         # 10日超额收益(vs沪深300)(%)
     hit_stop_loss = Column(Integer)      # 5日内是否触发止损 (0/1)
     hit_take_profit = Column(Integer)    # 5日内是否触发止盈 (0/1)
     backtest_filled = Column(Integer, default=0)  # 是否已回填 (0/1)
@@ -376,6 +378,8 @@ class DatabaseManager:
                 'actual_pct_5d':          'FLOAT',
                 'actual_pct_10d':         'FLOAT',
                 'actual_pct_20d':         'FLOAT',
+                'alpha_5d':               'FLOAT',
+                'alpha_10d':              'FLOAT',
                 'hit_stop_loss':          'INTEGER',
                 'hit_take_profit':        'INTEGER',
                 'backtest_filled':        'INTEGER DEFAULT 0',

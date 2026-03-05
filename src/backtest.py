@@ -182,7 +182,7 @@ class BacktestRunner:
             sql = text("""
                 SELECT date, close
                 FROM index_daily
-                WHERE name = '沪深300' AND date >= :start_date
+                WHERE code = '上证指数' AND date >= :start_date
                 ORDER BY date ASC
                 LIMIT :limit
             """)
@@ -216,16 +216,21 @@ class BacktestRunner:
             try:
                 record = session.get(AnalysisHistory, record_id)
                 if record:
+                    _alpha_5d = round(actual_pct - benchmark_pct_5d, 2) if benchmark_pct_5d is not None else None
+                    _alpha_10d = round(actual_pct_10d - benchmark_pct_10d, 2) if actual_pct_10d and benchmark_pct_10d else None
+
                     record.actual_pct_1d = actual_pct_1d
                     record.actual_pct_3d = actual_pct_3d
                     record.actual_pct_5d = actual_pct
                     record.actual_pct_10d = actual_pct_10d
                     record.actual_pct_20d = actual_pct_20d
+                    record.alpha_5d = _alpha_5d
+                    record.alpha_10d = _alpha_10d
                     record.hit_stop_loss = hit_sl
                     record.hit_take_profit = hit_tp
                     record.backtest_filled = 1
 
-                    # alpha 数据仍存入 raw_result（备查）
+                    # alpha 数据同时存入 raw_result（备查）
                     try:
                         import json
                         raw = json.loads(record.raw_result) if record.raw_result else {}
@@ -233,8 +238,8 @@ class BacktestRunner:
                             'benchmark_pct_5d': benchmark_pct_5d,
                             'benchmark_pct_10d': benchmark_pct_10d,
                             'benchmark_pct_20d': benchmark_pct_20d,
-                            'alpha_5d': round(actual_pct - benchmark_pct_5d, 2) if benchmark_pct_5d is not None else None,
-                            'alpha_10d': round(actual_pct_10d - benchmark_pct_10d, 2) if actual_pct_10d and benchmark_pct_10d else None,
+                            'alpha_5d': _alpha_5d,
+                            'alpha_10d': _alpha_10d,
                             'alpha_20d': round(actual_pct_20d - benchmark_pct_20d, 2) if actual_pct_20d and benchmark_pct_20d else None,
                         }
                         record.raw_result = json.dumps(raw, ensure_ascii=False)

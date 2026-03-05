@@ -761,7 +761,7 @@ async def ic_analysis(
         _days = int(days)
         _variant = variant.replace("'", "")
 
-        # 取所有回填完整的样本（含多周期）
+        # 取所有回填完整的样本（含多周期 + alpha）
         rows = session.execute(_text(f"""
             SELECT
                 date(created_at) as trade_date,
@@ -771,7 +771,9 @@ async def ic_analysis(
                 actual_pct_1d,
                 actual_pct_3d,
                 actual_pct_10d,
-                actual_pct_20d
+                actual_pct_20d,
+                alpha_5d,
+                alpha_10d
             FROM analysis_history
             WHERE backtest_filled=1
               AND actual_pct_5d IS NOT NULL
@@ -801,8 +803,8 @@ async def ic_analysis(
         )
         return round(num / denom, 4) if denom > 1e-9 else None
 
-    # 1. 全样本 IC（各持有期）
-    scores_all = [float(r[2]) for r in rows]
+    # 1. 全样本 IC（各持有期 + alpha）
+    # col_idx: 3=5d, 4=1d, 5=3d, 6=10d, 7=20d, 8=alpha_5d, 9=alpha_10d
     decay_ic = {}
     for hold_label, col_idx in [("1d", 4), ("3d", 5), ("5d", 3), ("10d", 6), ("20d", 7)]:
         valid_pairs = [(float(r[2]), float(r[col_idx])) for r in rows if r[col_idx] is not None]
@@ -812,6 +814,26 @@ async def ic_analysis(
             decay_ic[hold_label] = {"ic": pearson_ic(sc, rt), "n": len(valid_pairs)}
         else:
             decay_ic[hold_label] = {"ic": None, "n": 0, "note": "待回填或数据不足"}
+
+    # IC vs alpha（超额收益）对比
+    alpha_ic = {}
+    for alpha_label, col_idx in [("alpha_5d", 8), ("alpha_10d", 9)]:
+        valid_pairs = [(float(r[2]), float(r[col_idx])) for r in rows if r[col_idx] is not None]
+        if valid_pairs:
+            sc = [p[0] for p in valid_pairs]
+            rt = [p[1] for p in valid_pairs]
+            avg_alpha = round(sum(rt) / len(rt), 3)
+            alpha_ic[alpha_label] = {
+                "ic": pearson_ic(sc, rt),
+                "n": len(valid_pairs),
+                "avg_alpha": avg_alpha,
+                "avg_alpha_note": (
+                    "✅ 策略持续超越基准" if avg_alpha > 0
+                    else "⚠️ 策略尚未超越基准，建议检查选股逻辑"
+                )
+            }
+        else:
+            alpha_ic[alpha_label] = {"ic": None, "n": 0, "note": "待回填"}
 
     # 2. 滚动窗口 IC 时间序列（按 window_days 天分组）
     from collections import defaultdict
@@ -857,6 +879,46 @@ async def ic_analysis(
             return "⚠️ 弱稳定 (ICIR 0.3-0.5)，信号噪声较大，建议组合多因子"
         return "❌ 不稳定 (ICIR<0.3)，IC均值被高方差稀释，策略可靠性存疑"
 
+    # 5. 当前 ICGuard 状态（近21日，与pipeline注入一致）
+    recent_rows_21d = [r for r in rows if True]  # rows already filtered by `days`
+    _guard_rows = recent_rows_21d[-103:] if len(recent_rows_21d) >= 5 else []
+    current_ic_guard = None
+    if _guard_rows:
+        _sc21 = [float(r[2]) for r in _guard_rows]
+        _rt21 = [float(r[3]) for r in _guard_rows]
+        _n21 = len(_guard_rows)
+        _mx21 = sum(_sc21) / _n21
+        _my21 = sum(_rt21) / _n21
+        _num21 = sum((s - _mx21) * (r - _my21) for s, r in zip(_sc21, _rt21))
+        _ds21 = math.sqrt(sum((s - _mx21) ** 2 for s in _sc21))
+        _dr21 = math.sqrt(sum((r - _my21) ** 2 for r in _rt21))
+        _denom21 = _ds21 * _dr21
+        _ic21 = round(_num21 / _denom21, 4) if _denom21 > 1e-9 else 0.0
+
+        if _ic21 >= 0.20:
+            _qlevel, _qdesc = "strong", "✅ 信号强度正常，量化评分预测能力充足。"
+        elif _ic21 >= 0.10:
+            _qlevel, _qdesc = "moderate", f"⚠️ 信号中等(IC={_ic21:.3f})，适当降仓。"
+        elif _ic21 >= 0.0:
+            _qlevel, _qdesc = "weak", f"⚠️ 信号较弱(IC={_ic21:.3f})，控制在半仓以内。"
+        else:
+            _qlevel, _qdesc = "negative", (
+                f"🔴 信号反转(IC={_ic21:.3f})！评分预测能力弱，"
+                "建议缩小仓位至1/3+收紧止损。"
+            )
+        current_ic_guard = {
+            "ic": _ic21,
+            "n": _n21,
+            "quality_level": _qlevel,
+            "quality_desc": _qdesc,
+            "guard_active": _qlevel in ("weak", "negative"),
+            "guard_action": (
+                "⛔ 仓位减半 + 止损收紧 (当前批次分析已触发ICGuard)" if _qlevel == "negative"
+                else "⚠️ 控制半仓以内" if _qlevel == "weak"
+                else None
+            ),
+        }
+
     return {
         "variant": variant,
         "days": days,
@@ -871,6 +933,8 @@ async def ic_analysis(
             "ic_tstat_significant": (abs(ic_tstat) > 1.96) if ic_tstat else None,
         },
         "ic_decay": decay_ic,
+        "alpha_ic": alpha_ic,
+        "current_ic_guard": current_ic_guard,
         "rolling_ic_series": rolling_ic_series,
         "note": (
             f"ICIR={icir}：IC.mean/IC.std，衡量信号跨时间稳定性。"

@@ -327,6 +327,61 @@ class StockAnalysisPipeline:
             logger.debug(f"[Regime] 分类失败(降级): {e}")
             return None
 
+    def _compute_ic_quality_guard(self) -> Optional[Dict[str, Any]]:
+        """计算当前周期滚动 IC，感知信号质量退化。
+
+        Returns:
+            dict with keys: ic, n, period, quality_level, quality_desc
+            quality_level: 'strong' / 'moderate' / 'weak' / 'negative'
+        """
+        import math
+        try:
+            with self.storage.get_session() as session:
+                from sqlalchemy import text as _text
+                rows = session.execute(_text("""
+                    SELECT sentiment_score, actual_pct_5d
+                    FROM analysis_history
+                    WHERE backtest_filled=1
+                      AND actual_pct_5d IS NOT NULL
+                      AND sentiment_score IS NOT NULL
+                      AND created_at >= datetime('now', '-21 days')
+                    ORDER BY created_at ASC
+                """)).fetchall()
+
+            if not rows or len(rows) < 5:
+                return None
+
+            scores = [float(r[0]) for r in rows]
+            rets = [float(r[1]) for r in rows]
+            n = len(rows)
+            mx = sum(scores) / n
+            my = sum(rets) / n
+            num = sum((s - mx) * (r - my) for s, r in zip(scores, rets))
+            denom_s = math.sqrt(sum((s - mx) ** 2 for s in scores))
+            denom_r = math.sqrt(sum((r - my) ** 2 for r in rets))
+            denom = denom_s * denom_r
+            ic = round(num / denom, 4) if denom > 1e-9 else 0.0
+
+            if ic >= 0.20:
+                level, desc = "strong", ""
+            elif ic >= 0.10:
+                level, desc = "moderate", f"⚠️ 近21日信号中等(IC={ic:.2f})，请适当降低仓位，严格执行止损。"
+            elif ic >= 0.0:
+                level, desc = "weak", f"⚠️ 近21日信号较弱(IC={ic:.2f})，建议控制在半仓以内，优先等待信号增强再入场。"
+            else:
+                level, desc = "negative", (
+                    f"🔴 近21日信号反转(IC={ic:.2f})！当前量化评分预测能力弱，"
+                    "建议：①缩小仓位至1/3以内；②执行更紧的止损（当前止损价上移0.5-1%）；"
+                    "③优先等待IC转正（连续5日）后再新增头寸。"
+                )
+
+            guard = {"ic": ic, "n": n, "period": "近21日", "quality_level": level, "quality_desc": desc}
+            logger.info(f"📊 [ICGuard] 近21日滚动IC={ic:.4f}（n={n}），quality={level}")
+            return guard
+        except Exception as e:
+            logger.debug(f"[ICGuard] 计算失败: {e}")
+            return None
+
     def _get_cached_news_context(self, code: str, stock_name: str, hours: int = 6,
                                   limit: int = 5, provider: str = None,
                                   min_count: int = 1) -> str:
@@ -751,6 +806,7 @@ class StockAnalysisPipeline:
         portfolio_beta: Optional[Dict[str, Any]] = None,
         macro_regime: Optional[Dict[str, Any]] = None,
         max_dd_guard: Optional[Dict[str, Any]] = None,
+        ic_quality_guard: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """处理单只股票的核心逻辑"""
         try:
@@ -759,13 +815,15 @@ class StockAnalysisPipeline:
             stock_name = context['stock_name']
             self._log(f"[{code}] {stock_name} 开始分析 (variant={ab_variant})")
 
-            # P2a-2/P2b/P3b: 注入组合Beta/Regime/MaxDD到context（供analyzer.py渲染到prompt）
+            # P2a-2/P2b/P3b/P9a: 注入组合Beta/Regime/MaxDD/ICGuard到context（供analyzer.py渲染到prompt）
             if portfolio_beta:
                 context['portfolio_beta'] = portfolio_beta
             if macro_regime:
                 context['macro_regime'] = macro_regime
             if max_dd_guard:
                 context['max_dd_guard'] = max_dd_guard
+            if ic_quality_guard:
+                context['ic_quality_guard'] = ic_quality_guard
 
             # A/B 实验：llm_only 变体移除量化评分/信号结论，但保留 K 线叙事（让 LLM 自行解读走势）
             if ab_variant == 'llm_only':
@@ -1636,6 +1694,13 @@ class StockAnalysisPipeline:
         except Exception as _dde:
             logger.debug(f"[MaxDD] 计算跳过: {_dde}")
 
+        # P9a: 信号质量守卫 — 计算当前周期滚动 IC，感知信号退化
+        ic_quality_guard_once: Optional[Dict[str, Any]] = None
+        try:
+            ic_quality_guard_once = self._compute_ic_quality_guard()
+        except Exception as _icge:
+            logger.debug(f"[ICGuard] 计算跳过: {_icge}")
+
         # === 阶段二：并发分析 ===
         # 预取实时行情（批量预热，可选）
         if valid_stocks and hasattr(self.fetcher_manager, 'prefetch_realtime_quotes'):
@@ -1682,6 +1747,7 @@ class StockAnalysisPipeline:
                     portfolio_beta=portfolio_beta_once,
                     macro_regime=macro_regime_once,
                     max_dd_guard=max_dd_guard_once,
+                    ic_quality_guard=ic_quality_guard_once,
                 ): code for code in valid_stocks
             }
             
