@@ -331,7 +331,8 @@ class SearchService:
             "6. 【A股资金面与情绪】北向资金（最近5日净流入/流出金额）、ETF净申赎、融资余额趋势、市场情绪温度计"
             f"{sector_focus}"
         )
-        return self.search(query, model="sonar-pro", system_prompt_override=self._SYSTEM_PROMPT_MACRO)
+        _macro_prompt = getattr(self.provider, '_SYSTEM_PROMPT_MACRO', None)
+        return self.search(query, model="sonar-pro", system_prompt_override=_macro_prompt)
 
     def search_news(self, query: str, max_results: int = 5) -> List[Dict]:
         """

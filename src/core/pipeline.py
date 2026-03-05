@@ -297,7 +297,8 @@ class StockAnalysisPipeline:
             logger.debug(f"[Regime] 缓存读取失败: {_e}")
 
         # 2. 缓存未命中，调用 Gemini flash
-        if not self.analyzer or not getattr(self.analyzer, 'model', None):
+        _gemini_model = getattr(self.analyzer, '_model', None) if self.analyzer else None
+        if not _gemini_model:
             return None
 
         classify_prompt = (
@@ -310,7 +311,7 @@ class StockAnalysisPipeline:
             "只输出JSON，格式：{\"regime\": \"BULL|NEUTRAL|BEAR|CRISIS\", \"confidence\": 0.0-1.0, \"rationale\": \"一句话理由\"}"
         )
         try:
-            resp = self.analyzer.model.generate_content(classify_prompt)
+            resp = _gemini_model.generate_content(classify_prompt)
             raw = (resp.text or "").strip()
             import json as _json, re as _re
             m = _re.search(r'\{.*?\}', raw, _re.DOTALL)
