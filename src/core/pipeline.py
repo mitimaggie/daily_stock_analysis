@@ -291,8 +291,7 @@ class StockAnalysisPipeline:
                         logger.info("🌐 [宏观情报] 命中缓存，复用已有宏观研报")
                         _result = getattr(fresh[0], "snippet", None) or getattr(fresh[0], "title", None)
                         if _result:
-                            _macro_intel_mem_cache['data'] = _result
-                            _macro_intel_mem_cache['ts'] = _time.time()
+                            _macro_intel_mem_cache.update({'data': _result, 'ts': _time.time()})
                         return _result
             except Exception as e:
                 logger.debug(f"[宏观情报] 缓存读取失败: {e}")
@@ -319,8 +318,7 @@ class StockAnalysisPipeline:
                         except Exception as _e:
                             logger.debug(f"[宏观情报] 落库跳过: {_e}")
                     if content:
-                        _macro_intel_mem_cache['data'] = content
-                        _macro_intel_mem_cache['ts'] = _time.time()
+                        _macro_intel_mem_cache.update({'data': content, 'ts': _time.time()})
                     logger.info("🌐 [宏观情报] 获取成功，已注入全批次")
                     return content
                 else:

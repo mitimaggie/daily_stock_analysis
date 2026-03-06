@@ -351,12 +351,14 @@ class AkshareFetcher(BaseFetcher):
             try:
                 import efinance as _ef
                 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
-                with ThreadPoolExecutor(max_workers=1) as _ef_ex:
-                    try:
-                        df_bill = _ef_ex.submit(_ef.stock.get_today_bill, stock_code).result(timeout=15)
-                    except _FuturesTimeout:
-                        logger.debug(f"[{stock_code}] efinance get_today_bill 超时(15s)，跳过")
-                        df_bill = None
+                _ef_ex = ThreadPoolExecutor(max_workers=1)
+                try:
+                    df_bill = _ef_ex.submit(_ef.stock.get_today_bill, stock_code).result(timeout=15)
+                except _FuturesTimeout:
+                    logger.debug(f"[{stock_code}] efinance get_today_bill 超时(15s)，跳过")
+                    df_bill = None
+                finally:
+                    _ef_ex.shutdown(wait=False)
                 if df_bill is not None and not df_bill.empty:
                     last_row = df_bill.iloc[-1]
                     main_net_raw = float(last_row.get('主力净流入', 0) or 0)  # 元

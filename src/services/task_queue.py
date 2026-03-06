@@ -160,10 +160,12 @@ class AnalysisTaskQueue:
     def executor(self) -> ThreadPoolExecutor:
         """懒加载线程池"""
         if self._executor is None:
-            self._executor = ThreadPoolExecutor(
-                max_workers=self._max_workers,
-                thread_name_prefix="analysis_task_"
-            )
+            with self._data_lock:
+                if self._executor is None:
+                    self._executor = ThreadPoolExecutor(
+                        max_workers=self._max_workers,
+                        thread_name_prefix="analysis_task_"
+                    )
         return self._executor
     
     # ========== 任务提交与查询 ==========
@@ -417,7 +419,8 @@ class AnalysisTaskQueue:
                     if task.stock_code in self._analyzing_stocks:
                         del self._analyzing_stocks[task.stock_code]
             
-            self._broadcast_event("task_failed", task.to_dict())
+            if task:
+                self._broadcast_event("task_failed", task.to_dict())
             
             # 清理过期任务
             self._cleanup_old_tasks()
@@ -473,11 +476,7 @@ class AnalysisTaskQueue:
             try:
                 self._main_loop = asyncio.get_running_loop()
             except RuntimeError:
-                # 如果不在 async 上下文中，尝试获取事件循环
-                try:
-                    self._main_loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    pass
+                pass
             logger.debug(f"[TaskQueue] 新订阅者加入，当前订阅者数: {len(self._subscribers)}")
     
     def unsubscribe(self, queue: 'AsyncQueue') -> None:

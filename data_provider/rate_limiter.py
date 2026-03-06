@@ -272,19 +272,22 @@ class GlobalRateLimiter:
         Raises:
             CircuitBreakerOpen: 熔断器打开时抛出
         """
-        # 检查熔断器
-        breaker = self.breakers.get(source)
-        if breaker and breaker.state == CircuitBreaker.STATE_OPEN:
-            if time.time() - breaker.last_failure_time < breaker.timeout:
-                raise CircuitBreakerOpen(f"{source} 熔断器打开")
-        
-        # 获取令牌
-        limiter = self.limiters.get(source)
-        if limiter is None:
-            # 未配置的数据源，使用默认限流（每秒1次）
-            limiter = TokenBucket(capacity=2, refill_rate=1.0)
-            self.limiters[source] = limiter
-            self.breakers[source] = CircuitBreaker()
+        # 检查熔断器（加锁确保读取一致性）
+        with self.lock:
+            breaker = self.breakers.get(source)
+            if breaker:
+                with breaker.lock:
+                    if breaker.state == CircuitBreaker.STATE_OPEN:
+                        if time.time() - breaker.last_failure_time < breaker.timeout:
+                            raise CircuitBreakerOpen(f"{source} 熔断器打开")
+            
+            # 获取令牌（创建新 limiter 需在锁内，防止并发重复创建）
+            limiter = self.limiters.get(source)
+            if limiter is None:
+                # 未配置的数据源，使用默认限流（每秒1次）
+                limiter = TokenBucket(capacity=2, refill_rate=1.0)
+                self.limiters[source] = limiter
+                self.breakers[source] = CircuitBreaker()
         
         return limiter.acquire(tokens=1, blocking=blocking, timeout=timeout)
     

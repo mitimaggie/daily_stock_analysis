@@ -594,19 +594,21 @@ class ScoringSystem:
             try:
                 from data_provider.rate_limiter import get_global_limiter
                 limiter = get_global_limiter()
-                limiter.acquire('akshare', blocking=True, timeout=10.0)
+                limiter.acquire('akshare', blocking=True, timeout=3.0)
             except Exception:
                 time.sleep(random.uniform(1.0, 2.0))
 
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
-            with ThreadPoolExecutor(max_workers=1) as _p4_ex:
-                try:
-                    df_flow = _p4_ex.submit(
-                        ak.stock_individual_fund_flow, stock=stock_code, market=market
-                    ).result(timeout=20)
-                except _FuturesTimeout:
-                    logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(20s)，跳过")
-                    return
+            _p4_ex = ThreadPoolExecutor(max_workers=1)
+            try:
+                df_flow = _p4_ex.submit(
+                    ak.stock_individual_fund_flow, stock=stock_code, market=market
+                ).result(timeout=20)
+            except _FuturesTimeout:
+                logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(20s)，跳过")
+                return
+            finally:
+                _p4_ex.shutdown(wait=False)
             if df_flow is None or len(df_flow) < 5:
                 return
 
