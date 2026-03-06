@@ -1341,6 +1341,30 @@ class StockAnalysisPipeline:
 
                 result.dashboard = dashboard
 
+                # 信号一致性检查：评分 < 78 给出"买入"属内部矛盾，强制降为"观望"
+                # 回测依据（2026-03）：sentiment_score 65-77 + 买入 → 5日胜率24.2%，avg-1.19%，负期望
+                #                      sentiment_score >=78 + 买入 → 5日胜率76.3%，avg+6.49%，强正期望
+                _final_score = result.sentiment_score or 0
+                if _final_score < 78 and (result.operation_advice or '').strip() == '买入':
+                    logger.info(f"[{code}] 一致性覆盖: 买入@{_final_score}分 → 观望（低分买入负期望，回测24.2%胜率）")
+                    result.operation_advice = '观望'
+                    if result.llm_advice == '买入':
+                        result.llm_advice = '观望'
+
+                # LLM降级否决权：量化看多但LLM明确保守（观望/持有）→ 降为观望
+                # 回测依据（2026-02，45条分歧记录）：
+                #   量化买入+LLM观望 → 4条，0%胜率，avg-4.06%（茅台连降两次、中远海特）
+                #   量化买入+LLM持有 → 3条，33%胜率，avg-0.65%（江苏神通）
+                #   案例：LLM识别"PE高估+主力撤离+盈亏比极差"→ 量化技术面无法捕获此类基本面/资金风险
+                #   风险：1条误判（华明装备+5.12%，LLM持有+量化买入）
+                _llm_conservative = any(k in _llm_adv for k in ('观望', '等待', '持有'))
+                if _quant_bull and _llm_conservative and (result.operation_advice or '').strip() == '买入':
+                    logger.info(
+                        f"[{code}] LLM降级否决: 量化{_quant_adv}+LLM保守({_llm_adv}) → 观望"
+                        f"（基本面/资金风险，回测0-33%胜率avg-0.65~-4.06%）"
+                    )
+                    result.operation_advice = '观望'
+
                 # 决策类型
                 advice = result.operation_advice
                 if '买' in advice or '加仓' in advice:

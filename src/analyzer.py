@@ -834,15 +834,23 @@ class GeminiAnalyzer:
         reliability_section = ""
         if role not in ('macro', 'researcher'):
             _signal_score = trend_analysis.get('signal_score') or trend_analysis.get('score')
+            _buy_signal_label = trend_analysis.get('buy_signal') or ''
             _regime_label = regime_label_map.get(market_regime, market_regime) if market_regime else ''
             _volatility_hint = ""
             if market_regime in ('bull', 'bear', 'recovery'):
                 _volatility_hint = "\n- 注意：当前市场处于较大波动阶段，建议适当提升基本面/舆情分析权重，谨慎对待技术面信号的短期准确性。"
             if _regime_label or _signal_score is not None:
-                _score_str = f"量化评分：{_signal_score}分、" if _signal_score is not None else ""
+                _score_str = f"量化评分：{_signal_score}分" if _signal_score is not None else ""
+                _signal_str = f"，量化信号：**{_buy_signal_label}**" if _buy_signal_label else ""
+                _agree_ex = f'认同量化"{_buy_signal_label}"信号，因为[具体理由]' if _buy_signal_label else '认同量化结论，因为[具体理由]'
+                _disagree_ex = f'不认同量化"{_buy_signal_label}"信号，因为[具体反驳理由]' if _buy_signal_label else '不认同量化结论，因为[具体反驳理由]'
                 reliability_section = f"""
-## 量化模型参考信息
-- 当前市场形态：{_regime_label or '未知'}（{_score_str}供参考）{_volatility_hint}"""
+## 量化模型结论（须在 llm_reasoning 中明确表态）
+- 当前市场形态：{_regime_label or '未知'}（{_score_str}{_signal_str}）{_volatility_hint}
+- ⚠️ **必须在 llm_reasoning 字段明确表态**：认同或不认同量化结论，并给出具体理由。
+  - 认同示例："{_agree_ex}"
+  - 不认同示例："{_disagree_ex}"
+  - **禁止**写"与量化结论一致"等空洞表述，必须说明核心数据依据。"""
 
         # Layer C: Skill 步骤框架注入（只在 trader 角色时注入；llm_only 变体不注入，让 LLM 完全自主推理）
         skill_section = ""
@@ -926,7 +934,7 @@ analysis_summary(格式固定为3句话：①明确的方向性结论（多/空/
 risk_warning,
 sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望") — 你是持仓者，请根据分析给出适当建议' if has_position else 'operation_advice("买入"/"观望"/"等待") — 你是空仓者，禁止输出减仓/清仓/持有'},
 llm_score(同sentiment_score), llm_advice(同operation_advice),
-llm_reasoning(与量化分歧原因，无分歧写"与量化结论一致"),
+llm_reasoning(明确表态是否认同量化信号及原因：认同写"认同量化[信号名]，因为[具体数据/理由]"；不认同写"不认同量化[信号名]，因为[具体反驳依据]"；禁止写"与量化结论一致"等空洞表述),
 confidence_reasoning(判断置信度，如"舆情充分置信度高"或"缺少关键数据置信度低"),
 dashboard: {{
   core_conclusion: {{
