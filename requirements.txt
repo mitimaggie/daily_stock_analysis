@@ -51,3 +51,4 @@ lxml_html_clean             # Fix for lxml.html.clean ImportError in newer lxml 
 # FastAPI + React WebUI 后端
 fastapi>=0.109.0            # 现代 Python Web 框架
 uvicorn[standard]>=0.27.0   # ASGI 服务器
+pyyaml>=6.0.0               # Agent 策略 YAML 文件解析

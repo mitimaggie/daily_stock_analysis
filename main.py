@@ -158,6 +158,20 @@ def run_full_analysis(config: Config, args: argparse.Namespace, stock_codes: Opt
     """
     执行分析流程（互斥逻辑优化版）
     """
+    # 交易日检测：非交易日自动跳过（可通过 TRADING_DAY_CHECK_ENABLED=false 禁用）
+    if config.trading_day_check_enabled:
+        try:
+            from src.core.trading_calendar import is_cn_trading_day, get_trading_day_status
+            status = get_trading_day_status()
+            if not is_cn_trading_day():
+                logger.info(f"⏭️  {status}，跳过今日分析任务")
+                logger.info("如需强制运行，请设置 TRADING_DAY_CHECK_ENABLED=false")
+                return
+            else:
+                logger.info(f"✅ {status}，继续执行分析")
+        except Exception as e:
+            logger.warning(f"[交易日检测] 检查失败（fail-open，继续执行）: {e}")
+
     try:
         if getattr(args, 'single_notify', False):
             config.single_stock_notify = True
@@ -276,7 +290,10 @@ def main() -> int:
     logger.info("=" * 60)
     logger.info("A股自选股智能分析系统 启动")
     logger.info("=" * 60)
-    
+
+    # 结构化配置校验（启动时输出 ✓/✗/⚠ 报告）
+    config.validate_structured()
+
     stock_codes = None
     if args.stocks:
         stock_codes = [c.strip() for c in args.stocks.split(',') if c.strip()]

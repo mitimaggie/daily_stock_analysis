@@ -150,6 +150,7 @@ class Config:
     # === 定时任务配置 ===
     schedule_enabled: bool = False            # 是否启用定时任务
     schedule_time: str = "18:00"              # 每日分析/推送时间（HH:MM）
+    trading_day_check_enabled: bool = True    # 非交易日自动跳过分析（使用 TRADING_DAY_CHECK_ENABLED 配置）
     chip_schedule_time: str = "16:00"        # 每日筹码拉取时间（收盘后建议 16:00，与 schedule_time 同时启用定时时自动注册）
     market_review_enabled: bool = True        # 是否启用大盘复盘
     analysis_timeout_seconds: int = 180       # 单股分析超时（秒），超时后跳过该股
@@ -417,6 +418,7 @@ class Config:
             enable_alert_monitor=os.getenv('ENABLE_ALERT_MONITOR', 'false').lower() == 'true',
             alert_interval_seconds=int(os.getenv('ALERT_INTERVAL_SECONDS', '300')),
             signal_confirm_days=int(os.getenv('SIGNAL_CONFIRM_DAYS', '0')),
+            trading_day_check_enabled=os.getenv('TRADING_DAY_CHECK_ENABLED', 'true').lower() == 'true',
         )
     
     @classmethod
@@ -510,6 +512,74 @@ class Config:
             warnings.append("提示：未配置通知渠道，将不发送推送通知")
         
         return warnings
+
+    def validate_structured(self) -> None:
+        """
+        结构化配置校验：启动时输出 ✓/✗/⚠ 状态报告（severity-aware）。
+        不抛出异常，仅记录日志。
+        """
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+
+        # (severity, name, message)
+        items = []
+
+        # === P0：AI 分析引擎 ===
+        if self.gemini_api_key:
+            items.append(('ok',   'GEMINI_API_KEY',    f'已配置（主模型: {self.gemini_model}）'))
+        else:
+            items.append(('error','GEMINI_API_KEY',    '未配置 — AI分析将完全不可用，请在 .env 设置 GEMINI_API_KEY'))
+
+        # === P0：自选股 ===
+        if self.stock_list:
+            items.append(('ok',   'STOCK_LIST',        f'{len(self.stock_list)} 只股票: {" ".join(self.stock_list[:5])}{"..." if len(self.stock_list)>5 else ""}'))
+        else:
+            items.append(('error','STOCK_LIST',        '未配置自选股列表 — 无法分析，请在 .env 设置 STOCK_LIST'))
+
+        # === P1：搜索引擎（深度舆情）===
+        _pplx = bool(os.getenv('PERPLEXITY_API_KEY'))
+        _any_search = bool(self.bocha_api_keys or self.tavily_api_keys or self.serpapi_keys or _pplx)
+        if _any_search:
+            _src = []
+            if self.bocha_api_keys:  _src.append('Bocha')
+            if self.tavily_api_keys: _src.append('Tavily')
+            if self.serpapi_keys:    _src.append('SerpAPI')
+            if _pplx:                _src.append('Perplexity')
+            items.append(('ok',  '搜索引擎',     '、'.join(_src) + ' 已配置'))
+        else:
+            items.append(('warn','搜索引擎',     '未配置 — 将跳过实时舆情搜索（分析质量降级）'))
+
+        # === P1：通知渠道 ===
+        _notif = []
+        if self.wechat_webhook_url:                         _notif.append('企业微信')
+        if self.feishu_webhook_url:                         _notif.append('飞书Webhook')
+        if self.telegram_bot_token and self.telegram_chat_id: _notif.append('Telegram')
+        if self.email_sender and self.email_password:       _notif.append('邮件')
+        if self.pushplus_token:                             _notif.append('PushPlus')
+        if self.discord_webhook_url or self.discord_bot_token: _notif.append('Discord')
+        if _notif:
+            items.append(('ok',  '通知渠道',     '、'.join(_notif)))
+        else:
+            items.append(('warn','通知渠道',     '未配置 — 分析结果仅输出到日志，不推送'))
+
+        # === P2：交易日检测 ===
+        if self.trading_day_check_enabled:
+            items.append(('ok',  '交易日检测',   '已启用（非交易日自动跳过）'))
+        else:
+            items.append(('warn','交易日检测',   '已禁用（TRADING_DAY_CHECK_ENABLED=false）— 周末/节假日也会运行'))
+
+        # === 输出 ===
+        _logger.info('=' * 58)
+        _logger.info('  配置校验报告')
+        _logger.info('=' * 58)
+        for sev, name, msg in items:
+            if sev == 'ok':
+                _logger.info(f'  ✓  {name:<18} {msg}')
+            elif sev == 'warn':
+                _logger.warning(f'  ⚠  {name:<18} {msg}')
+            else:
+                _logger.error(f'  ✗  {name:<18} {msg}')
+        _logger.info('=' * 58)
     
     def get_db_url(self) -> str:
         """

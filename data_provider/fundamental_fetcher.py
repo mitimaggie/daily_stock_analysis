@@ -20,11 +20,17 @@ from data_provider.fundamental_types import FundamentalData, FinancialSummary, F
 
 logger = logging.getLogger(__name__)
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  ⚠️  反封禁警告：本文件所有 akshare 调用必须通过 _rate_limited_sleep()  ║
+# ║  不得在此文件内直接并发调用 akshare 任何接口              ║
+# ║  限流配置：最多 20次/分钟，每次间隔≥1s + 随机延迟 0.5~1.5s       ║
+# ║  如需提高并发，必须先评估封禁风险并设计需要的 sleep 间隔      ║
+# ╚══════════════════════════════════════════════════════════════════╝
 # === 全局请求限流器（所有 akshare 调用共享） ===
 _request_lock = threading.Lock()
 _request_timestamps: list = []  # 记录最近请求时间戳
-_MAX_REQUESTS_PER_MINUTE = 20   # 每分钟最多 20 次请求
-_MIN_INTERVAL = 1.0             # 最小请求间隔（秒）
+_MAX_REQUESTS_PER_MINUTE = 20   # 每分钟最多 20 次请求（勿随意调高，会触发封禁）
+_MIN_INTERVAL = 1.0             # 最小请求间隔（秒）（勿低于 1.0s）
 
 def _rate_limited_sleep():
     """全局限流：确保不超过每分钟 N 次请求，每次至少间隔 M 秒"""

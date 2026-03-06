@@ -9,14 +9,18 @@
 2. 自动故障切换
 3. 防封禁流控策略
 
-数据源优先级：
-1. AkshareFetcher (Priority 0) - 来自 akshare 库（东财/新浪/腾讯多源）
-2. EfinanceFetcher (Priority 1) - 来自 efinance 库
-3. BaostockFetcher (Priority 2) - 来自 baostock 库
-4. YfinanceFetcher (Priority 3) - 来自 yfinance 库（美股/港股）
-5. PytdxFetcher (Priority 4) - 来自 pytdx 库（通达信）
+数据源优先级（K线/日线）：
+1. BaostockFetcher (Priority 0) - 首选：稳定、免费、无反爬
+2. AkshareFetcher  (Priority 1) - 备用：功能全，批量易限流
+3. TencentFetcher  (Priority 2) - 备用：腾讯K线
+4. YfinanceFetcher (Priority 4) - 备用：美股首选，A股延迟
+5. PytdxFetcher    (Priority 5) - 备用：通达信TCP
 
-提示：优先级数字越小越优先，同优先级按初始化顺序排列
+⚠️ 已移除 EfinanceFetcher（K线）：import efinance 触发全量817支股票下载，严重阻塞
+   efinance.get_today_bill 仅在 akshare_fetcher.py 中单次串行调用（资金流盘中实时）
+
+⚠️ 反封禁规则：akshare/efinance 均有反爬机制，严禁并发批量调用
+   批量分析并发上限由 pipeline.py 控制（搜索模式≤2，纯本地≤3）
 """
 
 from .base import BaseFetcher, DataFetcherManager

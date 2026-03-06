@@ -2,7 +2,12 @@
 """
 分时/分钟级 K 线数据获取器
 支持 1min / 5min / 15min / 30min / 60min 周期
-数据源优先级：akshare(东财) → efinance
+数据源优先级：akshare(东财) [唯一有效] → efinance [已禁用，函数体直接返回None]
+
+⚠️ 反封禁警告：
+  - akshare 东财接口有反爬限制，严禁并发批量调用此模块
+  - efinance 分钟线接口已禁用（import efinance 会触发全量817支股票下载）
+  - 如需新增数据源，必须先通过 rate_limiter.py 的令牌桶限流
 
 使用场景：
   - 盘中分析时获取更精细的量价数据
@@ -111,12 +116,15 @@ def _fetch_intraday_akshare(code: str, period: str = "5", days: int = 1) -> Opti
         return None
 
 
-# ============ efinance 数据源 ============
+# ============ efinance 数据源 [已禁用 - 勿启用] ============
+# ⚠️ 下方函数体第一行直接 return None，下方所有代码均为死代码
+# 原因：import efinance 会在后台触发全量 817 支股票数据下载（耗时 30-60s），
+# 严重阻塞主线程。如需分钟线数据，请扩展 _fetch_intraday_akshare。
 
 def _fetch_intraday_efinance(code: str, period: str = "5", days: int = 1) -> Optional[pd.DataFrame]:
     """
-    通过 efinance 获取分钟级 K 线
-    
+    [已禁用] 通过 efinance 获取分钟级 K 线 — 函数始终返回 None
+
     Args:
         code: 股票代码
         period: "1" / "5" / "15" / "30" / "60"

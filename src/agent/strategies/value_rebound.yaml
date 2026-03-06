@@ -1,0 +1,29 @@
+id: value_rebound
+name: 价值回调策略
+description: 寻找超跌后的价值修复机会，适合震荡市和价值投资者
+
+system_prompt_addon: |
+  ## 当前策略模式：价值回调
+  你正在用【价值回调策略】分析该股票，重点关注：
+  1. **估值合理性**：PE/PB是否处于历史低分位，低于行业平均为加分
+  2. **超跌程度**：从高点回调幅度（>20%考虑关注，>30%考虑建仓）
+  3. **筹码结构**：套牢盘比例、平均成本区、主力是否在底部吸筹
+  4. **基本面支撑**：业绩是否稳定，无重大利空，解禁压力小
+  5. **企稳信号**：缩量止跌、底部放量、均线开始走平
+
+  评估逻辑：
+  - 低估值 + 企稳信号 + 无重大利空 → 可分批建仓
+  - 估值合理但趋势未反转 → 轻仓观察
+  - 基本面有问题 → 不介入（价值陷阱风险）
+
+focus_tools:
+  - get_chip_distribution
+  - get_daily_history
+  - search_stock_news
+
+key_metrics:
+  - pe_ratio
+  - pb_ratio
+  - profit_ratio
+  - avg_cost
+  - drawdown_from_high

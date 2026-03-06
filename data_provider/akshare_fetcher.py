@@ -1,4 +1,10 @@
 # -*- coding: utf-8 -*-
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  ⚠️  反封禁警告：严禁高并发调用本文件的任何外部 API              ║
+# ║  akshare(东财/新浪) + efinance 均有反爬机制，高并发必触发封禁   ║
+# ║  批量分析时 max_workers 已限制为 ≤2（搜索模式）/ ≤3（纯本地）  ║
+# ║  任何修改并发逻辑前，必须先确认不会同时触发多个外部 HTTP 请求   ║
+# ╚══════════════════════════════════════════════════════════════════╝
 import logging
 import time
 import random
@@ -347,6 +353,8 @@ class AkshareFetcher(BaseFetcher):
                 logger.debug(f"[{stock_code}] 资金流向落DB缓存失败: {_e}")
 
         # ── 盘中：优先用 efinance 实时今日资金流（东财历史接口盘中易断连）──
+        # ⚠️ efinance.get_today_bill 是单次串行调用（每支股票独立触发），
+        # 已通过 ThreadPoolExecutor(max_workers=1, timeout=15) 保护，禁止改为并发！
         if _intraday:
             try:
                 import efinance as _ef

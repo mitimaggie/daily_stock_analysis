@@ -522,6 +522,7 @@ class ChatService:
         report_context: str,
         query_id: Optional[str] = None,
         progress_callback=None,
+        strategy_id: Optional[str] = None,
     ) -> str:
         """同步对话（优先使用 Agent function calling 模式）
 
@@ -547,6 +548,7 @@ class ChatService:
                     history=history,
                     progress_callback=progress_callback,
                     context=context,
+                    strategy_id=strategy_id,
                 )
                 if result.success:
                     return result.content
@@ -643,6 +645,7 @@ class ChatService:
         messages: List[Dict[str, str]],
         report_context: str,
         query_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
     ) -> Iterator[Dict]:
         """流式对话，产出事件字典序列。
 
@@ -676,6 +679,7 @@ class ChatService:
                         history=history,
                         progress_callback=progress_callback,
                         context=context,
+                        strategy_id=strategy_id,
                     )
                     if result.success:
                         event_queue.put({"type": "final", "content": result.content})

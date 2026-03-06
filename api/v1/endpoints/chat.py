@@ -36,6 +36,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     query_id: str = Field(..., description="关联的分析报告 query_id")
     messages: List[ChatMessage] = Field(..., description="对话历史（含当前用户消息）")
+    strategy_id: Optional[str] = Field(None, description="策略模式 ID（可选，如 trend_momentum/value_rebound/risk_check 等）")
 
 
 class ChatResponse(BaseModel):
@@ -68,7 +69,7 @@ def chat(
 
     # 对话
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
-    reply = svc.chat(messages, report_context)
+    reply = svc.chat(messages, report_context, strategy_id=req.strategy_id)
 
     return ChatResponse(reply=reply)
 
@@ -108,7 +109,7 @@ def chat_stream(
 
     def event_generator():
         try:
-            for event in svc.chat_stream(messages, report_context, query_id=req.query_id):
+            for event in svc.chat_stream(messages, report_context, query_id=req.query_id, strategy_id=req.strategy_id):
                 event_type = event.get("type", "")
                 if event_type == "chunk":
                     # 兼容旧格式：同时发送 chunk 字段
@@ -135,3 +136,18 @@ def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get(
+    "/strategies",
+    summary="获取可用策略列表",
+    description="返回所有可选的 Agent 分析策略（id, name, description）",
+)
+def list_strategies():
+    """Agent 策略列表接口"""
+    try:
+        from src.agent.strategy_manager import list_strategies as _list
+        return {"strategies": _list()}
+    except Exception as e:
+        logger.warning(f"list_strategies 失败: {e}")
+        return {"strategies": []}

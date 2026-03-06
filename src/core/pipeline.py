@@ -110,7 +110,7 @@ class StockAnalysisPipeline:
     股票分析流水线 (最终完整修复版)
     适配 main.py 的 config 传参调用方式，包含两阶段执行和防封号逻辑
     """
-    def __init__(self, config, max_workers=3, query_id=None, query_source="cli", save_context_snapshot=True, source_message=None, **kwargs):
+    def __init__(self, config, max_workers=1, query_id=None, query_source="cli", save_context_snapshot=True, source_message=None, **kwargs):
         """
         初始化 - 严格适配 main.py 的调用方式
         """
@@ -156,13 +156,13 @@ class StockAnalysisPipeline:
             )
             has_search_key = True
 
-        # 如果启用了搜索，强制限制并发数，防止 429 错误
+        # 搜索服务启用时，确保并发不超过 2（防 Perplexity 429）
         if has_search_key:
             self.max_workers = min(max_workers, 2)
             logger.info(f"🕵️  [深度模式] 搜索服务已启用，并发限制为: {self.max_workers}")
         else:
             self.max_workers = max_workers
-            logger.info(f"🚀 [极速模式] 纯本地分析，并发数: {self.max_workers}")
+            logger.info(f"🚀 [模式] 并发数: {self.max_workers}（默认1=串行/防封禁，需提速请用 --workers N）")
 
         # 大盘监控：用于个股分析时的「仓位上限/前置滤网」（大盘定仓位，个股定方向）
         self._market_monitor = market_monitor
@@ -1906,6 +1906,13 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"📊 [阶段二] 获取大盘快照失败(降级为逐股/不注入): {e}")
 
+        # ╔══════════════════════════════════════════════════════════════════════╗
+        # ║  ⚠️  反封禁警告：严禁随意增大 max_workers 或在此处新增外部 API 调用  ║
+        # ║  每个 worker 线程都会触发：akshare(资金流/F10) + efinance(今日资金流)  ║
+        # ║  默认 max_workers=1（串行，防封禁最安全）。如需提高并发：              ║
+        # ║  1. 先确认 rate_limiter.py 已设置对应数据源的限速                        ║
+        # ║  2. CLI 用 --workers N 传入（N 建议 ≤2），不得修改此处默认属性      ║
+        # ╚══════════════════════════════════════════════════════════════════════╝
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_code = {
                 executor.submit(

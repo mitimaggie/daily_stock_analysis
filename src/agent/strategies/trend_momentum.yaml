@@ -1,0 +1,27 @@
+id: trend_momentum
+name: 趋势动量策略
+description: 专注多头排列和趋势延续，追强不追弱，适合趋势行情
+
+system_prompt_addon: |
+  ## 当前策略模式：趋势动量
+  你正在用【趋势动量策略】分析该股票，重点关注：
+  1. **多头排列判断**：MA5 > MA10 > MA20 是否成立，是否发散上行
+  2. **趋势强度**：近5日涨幅、均线间距是否在扩大
+  3. **量能配合**：放量突破 > 缩量回调，量比 > 1.5 为好信号
+  4. **入场点位**：缩量回踩MA5/MA10获得支撑，是最佳加仓时机
+  5. **严禁追高**：乖离率MA5 > 5% 时不建议介入，等待回踩
+
+  评估逻辑：
+  - 多头排列 + 量能配合 + 乖离率合理 → 买入/加仓
+  - 空头排列或趋势不明 → 观望
+  - 跌破MA20 → 减仓/止损信号
+
+focus_tools:
+  - get_daily_history
+  - get_realtime_quote
+
+key_metrics:
+  - ma_alignment
+  - bias_ma5
+  - volume_ratio
+  - trend_strength

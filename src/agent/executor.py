@@ -139,6 +139,7 @@ class AgentExecutor:
         history: Optional[List[Dict]] = None,
         progress_callback: Optional[Callable[[Dict], None]] = None,
         context: Optional[Dict[str, Any]] = None,
+        strategy_id: Optional[str] = None,
     ) -> AgentResult:
         """执行一轮 Agent 对话（含多轮工具调用）"""
         self._ensure_init()
@@ -151,15 +152,28 @@ class AgentExecutor:
             ctx_str = json.dumps(context, ensure_ascii=False, default=str)
             user_message = f"[当前分析报告上下文]\n{ctx_str}\n\n[用户问题]\n{message}"
 
+        # 构建策略增强的 system prompt
+        system_prompt = SYSTEM_PROMPT
+        if strategy_id:
+            try:
+                from src.agent.strategy_manager import get_strategy_system_prompt
+                addon = get_strategy_system_prompt(strategy_id)
+                if addon:
+                    system_prompt = SYSTEM_PROMPT + "\n\n" + addon
+                    logger.debug(f"[Agent] 已应用策略: {strategy_id}")
+            except Exception as e:
+                logger.warning(f"[Agent] 策略加载失败({strategy_id}): {e}")
+
         if self._use_openai:
-            return self._chat_openai(user_message, history or [], progress_callback)
-        return self._chat_gemini(user_message, history or [], progress_callback)
+            return self._chat_openai(user_message, history or [], progress_callback, system_prompt)
+        return self._chat_gemini(user_message, history or [], progress_callback, system_prompt)
 
     def _chat_gemini(
         self,
         message: str,
         history: List[Dict],
         progress_callback: Optional[Callable],
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> AgentResult:
         """Gemini function calling 循环 (google.genai SDK)"""
         from google.genai import types as genai_types
@@ -187,7 +201,7 @@ class AgentExecutor:
 
         gen_config = genai_types.GenerateContentConfig(
             temperature=temperature,
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_prompt,
             tools=tools,
         )
 
@@ -287,10 +301,11 @@ class AgentExecutor:
         message: str,
         history: List[Dict],
         progress_callback: Optional[Callable],
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> AgentResult:
         """OpenAI function calling 循环"""
         config = self._config
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": system_prompt}]
         for msg in history:
             messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
         messages.append({"role": "user", "content": message})

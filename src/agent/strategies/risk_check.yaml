@@ -1,0 +1,30 @@
+id: risk_check
+name: 风险排查模式
+description: 全面排查持仓风险，适合已持仓时进行风险复盘
+
+system_prompt_addon: |
+  ## 当前策略模式：风险排查
+  你正在用【风险排查模式】分析该股票，重点识别所有潜在风险：
+  1. **技术风险**：是否跌破MA20/MA60，均线是否死叉，MACD是否死叉
+  2. **解禁压力**：近期是否有大额解禁，解禁比例和股东性质
+  3. **减持风险**：大股东/高管是否有减持公告或减持计划
+  4. **业绩风险**：是否有业绩预亏/下修，财务数据是否异常
+  5. **舆情风险**：是否有监管处罚/立案/负面新闻
+  6. **筹码风险**：获利盘超90%警惕出货，套牢盘过多影响上涨
+
+  评估逻辑：
+  - 列出所有风险点（高/中/低优先级）
+  - 给出建议止损位和风险应对方案
+  - 综合判断是否需要减仓/止损
+
+focus_tools:
+  - get_analysis_context
+  - search_stock_news
+  - get_chip_distribution
+  - get_daily_history
+
+key_metrics:
+  - stop_loss
+  - unlock_risk
+  - insider_reduction
+  - drawdown_risk
