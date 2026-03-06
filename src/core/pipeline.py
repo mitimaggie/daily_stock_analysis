@@ -1151,7 +1151,7 @@ class StockAnalysisPipeline:
                 quant_signal = trend.get('buy_signal')
                 # 保留 LLM 的原始评分和建议作为参考
                 # llm_score/llm_advice 可能由 _parse_response 从 JSON 直接解析；
-                # 若 LLM 没显式返回，则用 LLM 的 sentiment_score/operation_advice 作为 fallback（量化覆盖前）
+                # 若 LLM 没显式返回，则用当前评分/建议作为 fallback（确保 llm_score/llm_advice 有初始值）
                 if result.llm_score is None and result.sentiment_score is not None:
                     result.llm_score = result.sentiment_score
                 if not result.llm_advice and result.operation_advice and result.operation_advice != '观望':
@@ -1160,7 +1160,7 @@ class StockAnalysisPipeline:
                 # 确保 llm_advice 有值
                 if not result.llm_advice and result.operation_advice:
                     result.llm_advice = result.operation_advice
-                # 量化模型覆盖主决策
+                # 量化提供初始 operation_advice 和 sentiment_score（内部评分，供一致性检查和 LLM 否决机制使用）
                 if quant_score is not None:
                     result.sentiment_score = int(quant_score)
                 if quant_signal:
@@ -1484,7 +1484,9 @@ class StockAnalysisPipeline:
             if history and isinstance(history, dict) and history.get('score') is not None:
                 result.is_first_analysis = False
                 result.prev_score = history['score']
-                result.score_change = result.sentiment_score - history['score']
+                # 使用 llm_score 做对比（与前端展示分一致）；llm_score 此时可能还未设定，保底用 sentiment_score
+                _cur_display_score = result.llm_score if result.llm_score is not None else result.sentiment_score
+                result.score_change = _cur_display_score - history['score']
                 result.prev_advice = history.get('advice', '')
                 result.prev_trend = history.get('trend', '')
                 # 检测关键信号变化
@@ -1508,7 +1510,7 @@ class StockAnalysisPipeline:
                 # 评分变化也作为信号
                 if result.score_change is not None and abs(result.score_change) >= 5:
                     arrow = '⬆️' if result.score_change > 0 else '⬇️'
-                    changes.insert(0, f"{arrow}评分{result.prev_score}→{result.sentiment_score}({result.score_change:+d})")
+                    changes.insert(0, f"{arrow}评分{result.prev_score}→{_cur_display_score}({result.score_change:+d})")
                 # 操作建议变化
                 if result.prev_advice and result.operation_advice != result.prev_advice:
                     changes.append(f"建议: {result.prev_advice}→{result.operation_advice}")

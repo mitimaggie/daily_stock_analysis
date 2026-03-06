@@ -176,6 +176,7 @@ class AnalysisHistory(Base):
     trend_status_val = Column(String(32), nullable=True) # 趋势状态
     ab_variant = Column(String(16), nullable=True, default='standard')  # A/B实验分组: 'standard'|'llm_only'
     sector_name = Column(String(50), nullable=True)   # 行业板块（用于横截面排名）
+    llm_score = Column(Integer, nullable=True)         # LLM 自评分（对外展示主评分，区别于量化 sentiment_score）
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -190,6 +191,7 @@ class AnalysisHistory(Base):
             'name': self.name,
             'report_type': self.report_type,
             'sentiment_score': self.sentiment_score,
+            'llm_score': self.llm_score,
             'operation_advice': self.operation_advice,
             'trend_prediction': self.trend_prediction,
             'analysis_summary': self.analysis_summary,
@@ -397,6 +399,7 @@ class DatabaseManager:
                 'trend_status_val':       'VARCHAR(32)',
                 'ab_variant':             "VARCHAR(16) DEFAULT 'standard'",
                 'sector_name':            'VARCHAR(50)',
+                'llm_score':              'INTEGER',
             },
         }
         with self._engine.connect() as conn:
@@ -574,6 +577,7 @@ class DatabaseManager:
             signal_score_val=_signal_score_val, capital_flow_score_val=_cf_score_val,
             macd_status_val=_macd_status, buy_signal_val=_buy_signal, trend_status_val=_trend_status,
             ab_variant=ab_variant, sector_name=sector_name,
+            llm_score=int(result.llm_score) if getattr(result, 'llm_score', None) is not None else None,
         )
         with self.get_session() as session:
             try:
@@ -870,7 +874,7 @@ class DatabaseManager:
                     'trend': result.trend_prediction,
                     'view': (result.analysis_summary[:80] + "..." if result.analysis_summary and len(result.analysis_summary) > 80 else (result.analysis_summary or "")),
                     'advice': result.operation_advice,
-                    'score': result.sentiment_score,
+                    'score': result.llm_score if result.llm_score is not None else result.sentiment_score,
                 }
                 # 从 context_snapshot 提取结构化信号数据
                 if result.context_snapshot:

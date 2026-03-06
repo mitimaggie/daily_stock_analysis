@@ -158,7 +158,7 @@ class AnalysisService:
         if hasattr(result, 'get_sniper_points'):
             sniper_points = result.get_sniper_points() or {}
         
-        # 持仓建议（空仓/持仓分开展示，优先用量化 trade_advice → holding_strategy → AI）
+        # 持仓建议文字（优先级：场景化建议 > 持仓策略文本 > quant_extras > AI核心结论）
         dashboard = getattr(result, "dashboard", None) or {}
         core = dashboard.get("core_conclusion") or {}
         pos_advice = core.get("position_advice") or {}
@@ -216,7 +216,7 @@ class AnalysisService:
                 f"⚠️ 技术信号({_quant_signal_score}分/{q_dir}) 与 AI研判({score}分/{a_dir}) 方向不一致，"
                 f"请结合基本面和市场情绪综合判断"
             )
-            if llm_reasoning and llm_reasoning != "与量化结论一致":
+            if llm_reasoning:
                 _divergence_alert += f" | AI理由: {llm_reasoning[:80]}"
         elif _divergence >= 10:
             _divergence_alert = f"技术信号({_quant_signal_score}) vs AI研判({score}) 存在一定差异（{_divergence}分）"

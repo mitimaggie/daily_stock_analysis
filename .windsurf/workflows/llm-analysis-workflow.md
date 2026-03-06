@@ -4,7 +4,7 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
 
 # A股LLM智能分析系统 — 完整工作流
 
-> 最后更新：2026-04（opt-1/2/3/4 + P4 52周叙事）
+> 最后更新：2026-03-06（评分双轨制 + 前端UI优化 + 代码注释清理）
 > 维护者：cascade AI pair programmer
 
 ---
@@ -181,6 +181,19 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 4. **Sector Exposure Guard**：行业集中度过高时警告
 5. **LLM否决权**：量化买入但LLM保守则降档
 
+### 5.3 评分双轨制（2026-03-06新增）
+
+| 字段 | 含义 | 用途 |
+|-----|------|------|
+| `result.sentiment_score` | 量化内部评分（signal_score + 惯性修正 + 融合adj） | 一致性检查（<78禁买入）、防守模式判定、回测阈值 |
+| `result.llm_score` | LLM自评分（从JSON输出直接解析） | 对外展示、历史对比、score_change计算 |
+
+**存储**：DB `analysis_history` 同时存两列（`sentiment_score` + `llm_score`）
+**展示**：`analysis_service.py` 优先取 `llm_score` 作为 Web/API 主展示分
+**历史对比**：`get_last_analysis_summary` 优先返回 `llm_score`，score_change 也基于 llm_score
+
+> 注意：旧数据（2026-03-06前）仅有量化分，无 llm_score。数据库于2026-03-06清空重新积累。
+
 ---
 
 ## 六、Perplexity情报服务（search_service.py）
@@ -339,11 +352,32 @@ L3:   网络请求（东财API 10s超时）      → 首次拉取
 
 ---
 
-## 十二、待实现功能（Backlog）
+## 十二、前端UI组件（2026-03-06实现）
+
+### 文件：`apps/dsa-web/src/components/report/`
+
+| 组件 | 功能 | 数据来源 |
+|-----|------|---------|
+| `DecisionCard.tsx` | 三秒决策卡（操作/止损/目标/盈亏计算器） | `summary.operationAdvice`, `strategy.stopLoss/takeProfit/idealBuy`, `tradeAdvice.winRate` |
+| `SignalLights.tsx` | 三色信号灯（技术/基本/资金） | `quantExtras.ma_alignment`, `valuation_verdict`, `capital_flow_signal` |
+| `DangerBanners`（内联） | 雷区警告横幅（解禁/减持强制首屏） | `contextSnapshot.upcomingUnlock`, `insiderChanges` |
+| `HoldingHorizonCard`（重设计） | 持仓时间维度进度条（替换星级） | `strategy.holdingHorizon[short/mid/long].score` |
+
+**布局顺序**（ReportSummary.tsx）：
+```
+雷区预警 → 股票概览 → 三秒决策卡 → 信号灯 → 持仓快照 → 准确率 → 当日快照
+→ AI分析 → 关键信号 → 52周区间 → 股东动态 → 操作计划 → 持仓周期(进度条)
+→ 关键价位 → 量化数据(折叠) → 公告资讯 → 交易日志
+```
+
+---
+
+## 十三、待实现功能（Backlog）
 
 | 优先 | 功能 | 预计工时 |
 |-----|------|---------|
 | P5 | 北向资金个股持仓数据 | 4h（数据质量不稳定） |
+| P6 | 大盘状态常驻显示（macro_regime需暴露到前端） | 2h |
 
 ---
 

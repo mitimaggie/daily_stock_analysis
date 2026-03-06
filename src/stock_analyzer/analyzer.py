@@ -291,7 +291,7 @@ class StockTrendAnalyzer:
             result.is_limit_up = bool(df.iloc[-1].get('limit_up', False))
             result.is_limit_down = bool(df.iloc[-1].get('limit_down', False))
             result.limit_pct = float(df.iloc[-1].get('limit_pct', 10.0))
-            # 连板检测（向量化：找最后一个非连板日的位置）
+            # 找最后一个非连板日的位置
             if result.is_limit_up or result.is_limit_down:
                 col = 'limit_up' if result.is_limit_up else 'limit_down'
                 series = df[col].values

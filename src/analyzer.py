@@ -66,7 +66,7 @@ class AnalysisResult:
     data_sources: str = ""
     change_pct: Optional[float] = None
     analysis_time: str = ""       # 分析时间 (HH:MM)，盘中多次分析时区分
-    # LLM 独立判断（作为参考，不覆盖量化决策）
+    # LLM 是最终决策者（对量化信号有否决权；llm_score/llm_advice 对外展示优先）
     llm_score: Optional[int] = None       # LLM 自己给的评分 (0-100)
     llm_advice: str = ""                  # LLM 自己的操作建议
     llm_reasoning: str = ""               # LLM 给出上调/下调理由
@@ -1182,7 +1182,7 @@ dashboard: {{
         cp = data.get('change_pct')
         result.change_pct = float(cp) if cp is not None and cp != '' else None
 
-        # LLM 独立判断字段
+        # LLM 最终判断字段（从 JSON 输出解析）
         llm_s = data.get('llm_score')
         if llm_s is not None:
             try:
