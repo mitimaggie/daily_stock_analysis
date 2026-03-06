@@ -1143,7 +1143,8 @@ class StockAnalysisPipeline:
             
             if not result: return None
 
-            # ===== Quant Override: 硬决策由量化模型主导，LLM 意见保留作参考 =====
+            # ===== 后处理层: 量化信号驱动 operation_advice，LLM 是最终决策者（可否决）=====
+            # 注: sentiment_score 内部仍用量化分做一致性检查，对外展示由 analysis_service 转换为 LLM 分
             trend = context.get('trend_analysis', {})
             if trend and isinstance(trend, dict):
                 quant_score = trend.get('signal_score')
@@ -1515,20 +1516,21 @@ class StockAnalysisPipeline:
             else:
                 result.is_first_analysis = True
 
-            # === 改进6: 量化 vs AI 分歧高亮 ===
-            if result.llm_score is not None and result.sentiment_score is not None:
-                divergence = abs(result.sentiment_score - result.llm_score)
+            # === 改进6: 技术信号 vs AI研判分歧高亮 ===
+            _sig_score_for_div = trend.get('signal_score') if trend and isinstance(trend, dict) else None
+            if result.llm_score is not None and _sig_score_for_div is not None:
+                divergence = abs(_sig_score_for_div - result.llm_score)
                 result.quant_ai_divergence = divergence
                 if divergence >= 20:
-                    q_label = f"量化{result.sentiment_score}分"
+                    q_label = f"技术信号{_sig_score_for_div}分"
                     a_label = f"AI{result.llm_score}分"
-                    q_dir = "看多" if result.sentiment_score >= 60 else ("看空" if result.sentiment_score <= 40 else "中性")
+                    q_dir = "看多" if _sig_score_for_div >= 60 else ("看空" if _sig_score_for_div <= 40 else "中性")
                     a_dir = "看多" if result.llm_score >= 60 else ("看空" if result.llm_score <= 40 else "中性")
-                    result.divergence_alert = f"⚠️ 量化与AI严重分歧: {q_label}({q_dir}) vs {a_label}({a_dir})"
+                    result.divergence_alert = f"⚠️ 技术信号与AI研判方向不一致: {q_label}({q_dir}) vs {a_label}({a_dir})"
                     if result.llm_reasoning:
                         result.divergence_alert += f" | AI理由: {result.llm_reasoning[:60]}"
                 elif divergence >= 15:
-                    result.divergence_alert = f"📊 量化({result.sentiment_score}) vs AI({result.llm_score}) 存在分歧({divergence}分)"
+                    result.divergence_alert = f"📊 技术信号({_sig_score_for_div}) vs AI研判({result.llm_score}) 存在差异({divergence}分)"
 
             # === 改进3: 具体手数建议 ===
             portfolio_size = getattr(self.config, 'portfolio_size', 0) or 0

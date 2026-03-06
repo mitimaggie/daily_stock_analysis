@@ -186,8 +186,11 @@ class AnalysisService:
             "trade_advice": ta,  # 完整场景数据，供前端展示
         }
         
-        # 计算情绪标签（兼容无 sentiment_score）
-        score = getattr(result, "sentiment_score", 50)
+        # 内部量化分（用于信号一致性等内部逻辑，保留不变）
+        _quant_score_internal = getattr(result, "sentiment_score", 50)
+        # 对外展示分：LLM 的分为主，量化分仅作参考对比
+        llm_score = getattr(result, "llm_score", None)
+        score = llm_score if llm_score is not None else _quant_score_internal
         sentiment_label = self._get_sentiment_label(score)
         
         # 持仓者策略直接从 pipeline 注入的 dashboard.holding_strategy 获取
@@ -195,27 +198,32 @@ class AnalysisService:
         
         # === 量化 vs AI 对比数据 ===
         quant_extras = dashboard.get("quant_extras") or {}
-        llm_score = getattr(result, "llm_score", None)
         llm_advice = getattr(result, "llm_advice", "") or ""
         llm_reasoning = getattr(result, "llm_reasoning", "") or ""
-        # 计算量化 vs AI 分歧并生成告警
-        _divergence = abs(score - llm_score) if llm_score is not None else 0
+        # 量化技术信号分（signal_score）—— 仅供对比展示，不作为主决策分
+        _quant_signal_score = (
+            quant_extras.get("signal_score")
+            or quant_extras.get("signalScore")
+            or _quant_score_internal
+        )
+        # 计算量化技术信号 vs AI 分歧
+        _divergence = abs(_quant_signal_score - score) if score is not None else 0
         _divergence_alert = ""
         if _divergence >= 20:
-            q_dir = "看多" if score >= 60 else ("看空" if score <= 40 else "中性")
-            a_dir = "看多" if llm_score >= 60 else ("看空" if llm_score <= 40 else "中性")
+            q_dir = "看多" if _quant_signal_score >= 60 else ("看空" if _quant_signal_score <= 40 else "中性")
+            a_dir = "看多" if score >= 60 else ("看空" if score <= 40 else "中性")
             _divergence_alert = (
-                f"⚠️ 量化({score}分/{q_dir}) 与 AI({llm_score}分/{a_dir}) 严重分歧，"
-                f"建议以量化结论为主，参考 AI 理由后再决策"
+                f"⚠️ 技术信号({_quant_signal_score}分/{q_dir}) 与 AI研判({score}分/{a_dir}) 方向不一致，"
+                f"请结合基本面和市场情绪综合判断"
             )
             if llm_reasoning and llm_reasoning != "与量化结论一致":
                 _divergence_alert += f" | AI理由: {llm_reasoning[:80]}"
         elif _divergence >= 10:
-            _divergence_alert = f"量化({score}) vs AI({llm_score}) 存在一定分歧（{_divergence}分）"
+            _divergence_alert = f"技术信号({_quant_signal_score}) vs AI研判({score}) 存在一定差异（{_divergence}分）"
         quant_vs_ai = {
-            "quant_score": score,
+            "quant_score": _quant_signal_score,
             "quant_advice": getattr(result, "operation_advice", ""),
-            "ai_score": llm_score,
+            "ai_score": score,
             "ai_advice": llm_advice,
             "divergence_reason": llm_reasoning,
             "divergence": _divergence,

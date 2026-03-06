@@ -83,7 +83,7 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
       </button>
       {!expanded && (
         <div className="mt-2 text-[11px] text-white/35">
-          量化 <span className={`font-mono font-semibold ${scoreColor(quantScore)}`}>{quantScore}</span>
+          技术信号 <span className={`font-mono font-semibold ${scoreColor(quantScore)}`}>{quantScore}</span>
           {aiScore != null && <> · AI <span className={`font-mono font-semibold ${scoreColor(aiScore)}`}>{aiScore}</span></>}
           {hasSevereDivergence && <span className="ml-1 text-red-400">分歧</span>}
         </div>
@@ -93,7 +93,7 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
       {/* 严重分歧告警横幅 */}
       {hasSevereDivergence && (
         <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/25 text-[11px] text-red-300 leading-relaxed">
-          {divergenceAlert || `量化(${quantScore}分) 与 AI(${aiScore}分) 严重分歧，建议以量化结论为主，参考 AI 理由后再决策`}
+          {divergenceAlert || `技术信号(${quantScore}分) 与 AI研判(${aiScore}分) 方向不一致，请结合基本面和市场情绪综合判断`}
         </div>
       )}
 
@@ -102,7 +102,7 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
         <thead>
           <tr className="text-white/40 border-b border-white/[0.06]">
             <th className="text-left py-1.5 font-medium w-16"></th>
-            <th className="text-center py-1.5 font-medium">量化模型</th>
+            <th className="text-center py-1.5 font-medium">技术信号</th>
             <th className="text-center py-1.5 font-medium">
               AI 研判
               {skillUsed && <span className="text-[10px] text-violet-400/60 font-mono font-normal ml-1">({SKILL_LABEL[skillUsed] ?? skillUsed})</span>}
@@ -147,13 +147,13 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
         {(() => {
           const qDir = scoreDirection(quantScore);
           const aDir = aiScore != null ? scoreDirection(aiScore) : null;
-          const qLabel = `量化${quantScore}分(${qDir})`;
-          const aLabel = aiScore != null ? `AI ${aiScore}分(${aDir})` : 'AI 未出分';
+          const qLabel = `技术信号${quantScore}分(${qDir})`;
+          const aLabel = aiScore != null ? `AI研判${aiScore}分(${aDir})` : 'AI 未出分';
           const aligned = aiScore != null && Math.abs(quantScore - aiScore) < 15;
           const prefix = aligned
-            ? `${qLabel} vs ${aLabel}，两者方向一致。`
+            ? `${qLabel} vs ${aLabel}，技术信号与AI研判方向一致。`
             : aiScore != null
-              ? `${qLabel} vs ${aLabel}，存在${divergence}分分歧。`
+              ? `${qLabel} vs ${aLabel}，存在差异(${divergence}分)。`
               : `${qLabel}，${aLabel}。`;
           const reason = divergenceReason && divergenceReason !== '与量化结论一致'
             ? ` ${divergenceReason}`
