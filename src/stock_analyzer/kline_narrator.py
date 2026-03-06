@@ -45,6 +45,7 @@ class KlineNarrator:
                 KlineNarrator._describe_momentum(result),
                 KlineNarrator._describe_key_levels(result),
                 KlineNarrator._describe_gap_status(result),
+                KlineNarrator._describe_52week_range(result, daily_df),
                 KlineNarrator._describe_special(result),
             ]
             return "\n".join(s for s in sections if s)
@@ -382,6 +383,66 @@ class KlineNarrator:
         if not parts:
             return ""
         return f"【缺口状态】{'；'.join(parts)}。"
+
+    @staticmethod
+    def _describe_52week_range(result: TrendAnalysisResult, daily_df: Optional[pd.DataFrame]) -> str:
+        """描述52周（约250交易日）高低点区间对比，量化价格所处历史位置"""
+        if daily_df is None or daily_df.empty or len(daily_df) < 20:
+            return ""
+        price = result.current_price
+        if price <= 0:
+            return ""
+        try:
+            n_days = min(250, len(daily_df))
+            period_df = daily_df.tail(n_days)
+            period_high = float(period_df['high'].max())
+            period_low = float(period_df['low'].min())
+            label = "52周" if n_days >= 200 else f"{n_days}交易日"
+
+            if period_high <= period_low or period_high <= 0:
+                return ""
+
+            pct_from_high = (price - period_high) / period_high * 100   # 负数
+            pct_from_low = (price - period_low) / period_low * 100       # 正数
+            position_pct = (price - period_low) / (period_high - period_low) * 100  # 0-100%
+
+            parts = []
+            # 绝对位置描述
+            if price >= period_high:
+                # 当前价突破52周高点（盘中新高）
+                if pct_from_high < 1:
+                    parts.append(f"当前价{price:.2f}触及{label}新高（高点{period_high:.2f}），突破确认需收盘站稳")
+                else:
+                    parts.append(f"当前价{price:.2f}突破{label}高点{period_high:.2f}（超出+{pct_from_high:.1f}%），强势突破")
+            elif price <= period_low:
+                parts.append(f"当前价{price:.2f}跌破{label}低点{period_low:.2f}（跌幅{pct_from_low:.1f}%），需警惕继续下探")
+            elif pct_from_high >= -5:
+                parts.append(f"当前价{price:.2f}接近{label}高点（高点{period_high:.2f}，距高点{abs(pct_from_high):.1f}%），关注突破可能")
+            elif pct_from_high <= -30:
+                parts.append(f"距{label}高点{period_high:.2f}已回落{abs(pct_from_high):.0f}%，处于深度调整区")
+            elif pct_from_low <= 10:
+                parts.append(f"当前价{price:.2f}接近{label}低点区（低点{period_low:.2f}，距低点+{pct_from_low:.1f}%），关注止跌信号")
+            else:
+                # 区间百分位
+                if position_pct >= 75:
+                    zone = "区间上方3/4位置"
+                elif position_pct >= 50:
+                    zone = "区间中上部"
+                elif position_pct >= 25:
+                    zone = "区间中下部"
+                else:
+                    zone = "区间下方1/4位置"
+                parts.append(
+                    f"{label}区间{period_low:.2f}-{period_high:.2f}，"
+                    f"当前价位于{zone}（分位{position_pct:.0f}%，"
+                    f"距高点{abs(pct_from_high):.1f}% / 距低点+{pct_from_low:.1f}%）"
+                )
+
+            if not parts:
+                return ""
+            return f"【{label}区间】{'；'.join(parts)}。"
+        except Exception:
+            return ""
 
     @staticmethod
     def _describe_special(result: TrendAnalysisResult) -> str:

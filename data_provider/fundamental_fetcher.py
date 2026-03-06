@@ -48,7 +48,9 @@ def _rate_limited_sleep():
 
 # L1: 进程内存缓存
 _fundamental_cache: Dict[str, Dict] = {}
-_industry_pe_cache: Dict[str, float] = {}
+_industry_pe_cache: Dict[str, float] = {}       # code → pe
+_industry_pe_by_name: Dict[str, float] = {}     # 行业名称 → pe（同行业共享）
+_industry_name_of_code: Dict[str, str] = {}     # code → industry_name
 
 # L2: SQLite 缓存 TTL
 _F10_CACHE_TTL_HOURS = 168.0     # 7天
@@ -347,10 +349,18 @@ def get_margin_history(code: str, days: int = 7) -> Optional[list]:
 
 
 def get_industry_pe_median(code: str) -> Optional[float]:
-    """获取个股所属行业的 PE 中位数（L1内存 -> L2 DB -> 网络）"""
-    # L1: 进程内存
+    """获取个股所属行业的 PE 中位数（L1内存 -> L0.5行业内存 -> L2 DB -> 网络）"""
+    # L1: 按 code 查内存
     if code in _industry_pe_cache:
         return _industry_pe_cache[code]
+
+    # L0.5: 若已知该 code 的行业名称，直接查行业级缓存
+    if code in _industry_name_of_code:
+        _ind = _industry_name_of_code[code]
+        if _ind in _industry_pe_by_name:
+            val = _industry_pe_by_name[_ind]
+            _industry_pe_cache[code] = val
+            return val
 
     # L2: SQLite 缓存
     db = _get_db()
@@ -358,7 +368,11 @@ def get_industry_pe_median(code: str) -> Optional[float]:
         cached = db.get_cache('industry_pe', code, ttl_hours=_INDUSTRY_PE_TTL_HOURS)
         if cached and 'median_pe' in cached:
             val = cached['median_pe']
+            industry = cached.get('industry', '')
             _industry_pe_cache[code] = val
+            if industry:
+                _industry_pe_by_name[industry] = val
+                _industry_name_of_code[code] = industry
             logger.info(f"💾 [{code}] 行业PE中位数命中 DB 缓存: {val}")
             return val
 
@@ -420,14 +434,17 @@ def get_industry_pe_median(code: str) -> Optional[float]:
 
         # 回写缓存（同行业所有成分股共享）
         cache_val = {'median_pe': median_pe, 'industry': industry}
+        _industry_pe_by_name[industry] = median_pe  # 行业级共享缓存
         if db:
             if '代码' in cons_df.columns:
                 for row in cons_df.to_dict('records'):
                     peer_code = str(row['代码'])
                     _industry_pe_cache[peer_code] = median_pe
+                    _industry_name_of_code[peer_code] = industry
                     db.set_cache('industry_pe', peer_code, cache_val)
             db.set_cache('industry_pe', code, cache_val)
         _industry_pe_cache[code] = median_pe
+        _industry_name_of_code[code] = industry
         return median_pe
 
     except Exception as e:
