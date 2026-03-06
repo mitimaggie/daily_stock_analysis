@@ -537,6 +537,7 @@ class StockAnalysisPipeline:
         kline_narrative = ""
         trend_analysis_dict = {}
         trend_result_obj = None
+        _ind_pe_for_context = None
         if daily_df is not None and not daily_df.empty:
             try:
                 from src.stock_analyzer import StockTrendAnalyzer as _STA, MarketRegime
@@ -587,12 +588,14 @@ class StockAnalysisPipeline:
                     net_profit_growth=fundamental_data.financial.net_profit_growth,
                 )
                 # 行业PE中位数（用于相对估值判断）+ PE历史（P3估值分位数）
+                _ind_pe_for_context = None
                 try:
                     from data_provider.fundamental_fetcher import get_industry_pe_median, get_pe_history
                     if not fast_mode:
                         ind_pe = get_industry_pe_median(code)
                         if ind_pe and ind_pe > 0:
                             _val_snap.industry_pe_median = ind_pe
+                            _ind_pe_for_context = ind_pe
                         # P3: PE历史数据（用于估值分位数计算）
                         pe_hist = get_pe_history(code)
                         if pe_hist:
@@ -757,6 +760,9 @@ class StockAnalysisPipeline:
             'data_availability': _missing_data,
             'prediction_accuracy': prediction_accuracy,
         }
+        # 注入行业PE中位数供f10_str相对估值展示
+        if _ind_pe_for_context and isinstance(context.get('fundamental', {}).get('valuation'), dict):
+            context['fundamental']['valuation']['industry_pe_median'] = _ind_pe_for_context
         context = self._enhance_context(context)
         return context
 
@@ -881,9 +887,11 @@ class StockAnalysisPipeline:
                     logger.info(f"� [{stock_name}] 命中 Akshare 新闻缓存，跳过外部搜索")
 
             # 层 2: Perplexity 缓存（之前搜索过的结果）
+            # 盘中2h TTL（新闻更新快）；盘后10h TTL（覆盖隔夜到次日开盘）
+            _pplx_ttl = 2 if is_market_intraday() else 10
             if not search_content:
                 pplx_cache = self._get_cached_news_context(
-                    code, stock_name, hours=6, limit=5, provider='perplexity'
+                    code, stock_name, hours=_pplx_ttl, limit=5, provider='perplexity'
                 )
                 if pplx_cache:
                     search_content = pplx_cache

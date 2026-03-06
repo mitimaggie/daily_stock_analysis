@@ -240,8 +240,8 @@ class GlobalRateLimiter:
         self.limiters['akshare'] = TokenBucket(capacity=3, refill_rate=1.0)
         self.breakers['akshare'] = CircuitBreaker(failure_threshold=5, timeout=60.0)
         
-        # efinance: 中等限流（每秒0.5次，桶容量2）
-        self.limiters['efinance'] = TokenBucket(capacity=2, refill_rate=0.5)
+        # efinance: 中等限流（每秒0.8次，桶容量2）
+        self.limiters['efinance'] = TokenBucket(capacity=2, refill_rate=0.8)
         self.breakers['efinance'] = CircuitBreaker(failure_threshold=5, timeout=60.0)
         
         # baostock: 保守限流（每秒0.5次，桶容量2）

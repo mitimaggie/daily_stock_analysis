@@ -103,13 +103,13 @@ class AnalysisFormatter:
         if result.trading_halt:
             lines.append(f"🚨暂停交易: {result.trading_halt_reason}")
         if result.capital_flow_signal and result.capital_flow_signal != "资金面数据正常":
-            lines.append(f"资金面({result.capital_flow_score}/10): {result.capital_flow_signal}")
+            lines.append(f"资金面: {result.capital_flow_signal}")
         if result.sector_name:
-            lines.append(f"板块({result.sector_score}/10): {result.sector_signal}")
+            lines.append(f"板块({result.sector_name}): {result.sector_signal}")
         if result.chip_signal and result.chip_signal != "筹码分布正常":
-            lines.append(f"筹码({result.chip_score}/10): {result.chip_signal}")
+            lines.append(f"筹码: {result.chip_signal}")
         if result.fundamental_signal and result.fundamental_signal != "基本面数据正常":
-            lines.append(f"基本面({result.fundamental_score}/10): {result.fundamental_signal}")
+            lines.append(f"基本面: {result.fundamental_signal}")
         
         risk_items = []
         if result.beta_vs_index != 1.0:
@@ -147,9 +147,6 @@ class AnalysisFormatter:
             lines.append(f"估值区间: {result.valuation_zone}" + (f" PE历史{result.pe_percentile:.0f}%分位" if result.pe_percentile >= 0 else ""))
         if result.margin_trend:
             lines.append(f"融资趋势: {result.margin_trend}({result.margin_trend_days}日)")
-        lines.append(f"仓位={result.suggested_position_pct}%")
-        lines.append(f"空仓建议: {result.advice_for_empty}")
-        lines.append(f"持仓建议: {result.advice_for_holding}")
         return "\n".join(lines)
     
     @staticmethod

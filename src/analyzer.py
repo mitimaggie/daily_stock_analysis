@@ -472,8 +472,15 @@ class GeminiAnalyzer:
             pb = val.get('pb')
             peg = val.get('peg')
             total_mv = val.get('total_mv')
+            _ind_pe = val.get('industry_pe_median')
             parts = []
-            if isinstance(pe, (int, float)) and pe > 0: parts.append(f"PE={pe:.1f}")
+            if isinstance(pe, (int, float)) and pe > 0:
+                if isinstance(_ind_pe, (int, float)) and _ind_pe > 0:
+                    _pe_diff = (pe - _ind_pe) / _ind_pe * 100
+                    _pe_dir = "溢价" if _pe_diff > 0 else "折价"
+                    parts.append(f"PE={pe:.1f}（行业中位{_ind_pe:.1f}，{_pe_dir}{abs(_pe_diff):.0f}%）")
+                else:
+                    parts.append(f"PE={pe:.1f}")
             if isinstance(pb, (int, float)) and pb > 0: parts.append(f"PB={pb:.2f}")
             if isinstance(peg, (int, float)) and peg > 0: parts.append(f"PEG={peg:.2f}")
             if isinstance(total_mv, (int, float)) and total_mv > 0:
@@ -833,24 +840,15 @@ class GeminiAnalyzer:
         # Layer B: 宏观可靠性评估注入（只在 trader 角色时注入）
         reliability_section = ""
         if role not in ('macro', 'researcher'):
-            _signal_score = trend_analysis.get('signal_score') or trend_analysis.get('score')
-            _buy_signal_label = trend_analysis.get('buy_signal') or ''
             _regime_label = regime_label_map.get(market_regime, market_regime) if market_regime else ''
             _volatility_hint = ""
             if market_regime in ('bull', 'bear', 'recovery'):
                 _volatility_hint = "\n- 注意：当前市场处于较大波动阶段，建议适当提升基本面/舆情分析权重，谨慎对待技术面信号的短期准确性。"
-            if _regime_label or _signal_score is not None:
-                _score_str = f"量化评分：{_signal_score}分" if _signal_score is not None else ""
-                _signal_str = f"，量化信号：**{_buy_signal_label}**" if _buy_signal_label else ""
-                _agree_ex = f'认同量化"{_buy_signal_label}"信号，因为[具体理由]' if _buy_signal_label else '认同量化结论，因为[具体理由]'
-                _disagree_ex = f'不认同量化"{_buy_signal_label}"信号，因为[具体反驳理由]' if _buy_signal_label else '不认同量化结论，因为[具体反驳理由]'
+            if _regime_label:
                 reliability_section = f"""
-## 量化模型结论（须在 llm_reasoning 中明确表态）
-- 当前市场形态：{_regime_label or '未知'}（{_score_str}{_signal_str}）{_volatility_hint}
-- ⚠️ **必须在 llm_reasoning 字段明确表态**：认同或不认同量化结论，并给出具体理由。
-  - 认同示例："{_agree_ex}"
-  - 不认同示例："{_disagree_ex}"
-  - **禁止**写"与量化结论一致"等空洞表述，必须说明核心数据依据。"""
+## 市场背景（参考）
+- 当前市场形态：{_regime_label}{_volatility_hint}
+- ⚠️ **请基于以上技术面数据、基本面、舆情独立判断**。必须在 llm_reasoning 中说明支持结论的2-3个最关键数据依据，禁止写"数据显示"等模糊表述。"""
 
         # Layer C: Skill 步骤框架注入（只在 trader 角色时注入；llm_only 变体不注入，让 LLM 完全自主推理）
         skill_section = ""

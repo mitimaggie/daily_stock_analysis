@@ -39,9 +39,12 @@ class KlineNarrator:
             sections = [
                 KlineNarrator._describe_trend_overview(result, daily_df),
                 KlineNarrator._describe_ma_structure(result),
+                KlineNarrator._describe_ma_interaction(result, daily_df),
+                KlineNarrator._describe_candle_sequence(result, daily_df),
                 KlineNarrator._describe_volume(result, daily_df),
                 KlineNarrator._describe_momentum(result),
                 KlineNarrator._describe_key_levels(result),
+                KlineNarrator._describe_gap_status(result),
                 KlineNarrator._describe_special(result),
             ]
             return "\n".join(s for s in sections if s)
@@ -264,6 +267,121 @@ class KlineNarrator:
         if not parts:
             return ""
         return f"【关键价位】{'，'.join(parts)}。"
+
+    @staticmethod
+    def _describe_ma_interaction(result: TrendAnalysisResult, daily_df: Optional[pd.DataFrame]) -> str:
+        """描述价格与均线的交互动作：回踩/触碰/突破，有助于判断支撑确认或压力测试"""
+        if daily_df is None or daily_df.empty or len(daily_df) < 6:
+            return ""
+        price = result.current_price
+        if price <= 0:
+            return ""
+        parts = []
+        try:
+            closes = daily_df['close'].values
+            n = len(closes)
+            # 计算过去10日的MA20值（若可用）
+            if n >= 20 and result.ma20 > 0:
+                ma20 = result.ma20
+                # 判断最近5日是否有回踩MA20的行为
+                recent_lows = daily_df['low'].values[-6:-1]  # 前5日最低价
+                recent_closes = closes[-6:-1]
+                today_close = closes[-1]
+                # 寻找回踩：前5日内有某天low触碰MA20（偏差±1.5%）
+                for i, (low, cls) in enumerate(zip(recent_lows, recent_closes)):
+                    touch_pct = abs(low - ma20) / ma20 * 100
+                    if touch_pct <= 1.5:
+                        days_ago = 5 - i
+                        if cls > ma20 and today_close > ma20:
+                            parts.append(f"{days_ago}日前回踩MA20={ma20:.2f}后站稳，支撑有效")
+                        elif cls < ma20:
+                            parts.append(f"{days_ago}日前跌破MA20={ma20:.2f}，当前{'已收复' if today_close > ma20 else '仍在下方'}")
+                        break
+                # 如果没有触碰事件，描述价格与MA20的相对位置和持续天数
+                if not parts:
+                    above_count = sum(1 for c in closes[-10:] if c > ma20)
+                    if above_count >= 8:
+                        parts.append(f"近10日持续站上MA20={ma20:.2f}，多方占据主动")
+                    elif above_count <= 2:
+                        parts.append(f"近10日持续运行于MA20={ma20:.2f}下方，多方未能收复")
+            # MA5回踩MA10
+            if result.ma5 > 0 and result.ma10 > 0 and not parts:
+                if abs(result.ma5 - result.ma10) / result.ma10 * 100 < 0.5:
+                    parts.append(f"MA5({result.ma5:.2f})与MA10({result.ma10:.2f})高度粘合，方向待定")
+        except Exception:
+            pass
+        if not parts:
+            return ""
+        return f"【均线交互】{'，'.join(parts)}。"
+
+    @staticmethod
+    def _describe_candle_sequence(result: TrendAnalysisResult, daily_df: Optional[pd.DataFrame]) -> str:
+        """描述近期连续阴阳线节奏，判断趋势动能是否持续"""
+        if daily_df is None or daily_df.empty or len(daily_df) < 5:
+            return ""
+        parts = []
+        try:
+            opens = daily_df['open'].values[-10:]
+            closes = daily_df['close'].values[-10:]
+            n = len(closes)
+            # 统计最近的连续阳线/阴线
+            is_up = closes[-1] >= opens[-1]
+            streak = 1
+            for i in range(n - 2, -1, -1):
+                if (closes[i] >= opens[i]) == is_up:
+                    streak += 1
+                else:
+                    break
+            if streak >= 3:
+                direction = "阳线" if is_up else "阴线"
+                if streak >= 6:
+                    warn = "，需警惕动能衰竭" if is_up else "，需关注超卖反弹机会"
+                    parts.append(f"连续{streak}根{direction}{warn}")
+                else:
+                    parts.append(f"连续{streak}根{direction}，{'多方持续做多' if is_up else '空方持续施压'}")
+            # 今日是否为阳包阴/阴包阳（吞没形态）
+            if n >= 2:
+                prev_body = abs(closes[-2] - opens[-2])
+                curr_body = abs(closes[-1] - opens[-1])
+                if prev_body > 0 and curr_body > prev_body * 1.2:
+                    if closes[-1] > opens[-1] and closes[-2] < opens[-2]:
+                        parts.append("今日阳包阴（多方吞没），短线止跌信号")
+                    elif closes[-1] < opens[-1] and closes[-2] > opens[-2]:
+                        parts.append("今日阴包阳（空方吞没），短线见顶信号")
+        except Exception:
+            pass
+        if not parts:
+            return ""
+        return f"【K线节奏】{'，'.join(parts)}。"
+
+    @staticmethod
+    def _describe_gap_status(result: TrendAnalysisResult) -> str:
+        """描述缺口状态（未回补的缺口是重要支撑/压力位）"""
+        if not result.gap_type:
+            return ""
+        parts = []
+        try:
+            gap_upper = result.gap_upper
+            gap_lower = result.gap_lower
+            price = result.current_price
+            if result.gap_filled:
+                parts.append(f"{result.gap_type}缺口（{gap_lower:.2f}-{gap_upper:.2f}）已回补")
+            else:
+                if result.gap_type == "向上跳空":
+                    if price > gap_upper:
+                        parts.append(f"向上跳空缺口（{gap_lower:.2f}-{gap_upper:.2f}）未回补，为下方有效支撑")
+                    else:
+                        parts.append(f"向上跳空缺口（{gap_lower:.2f}-{gap_upper:.2f}）未回补，价格已回落至缺口区域")
+                elif result.gap_type == "向下跳空":
+                    if price < gap_lower:
+                        parts.append(f"向下跳空缺口（{gap_lower:.2f}-{gap_upper:.2f}）未回补，为上方压力位")
+                    else:
+                        parts.append(f"向下跳空缺口（{gap_lower:.2f}-{gap_upper:.2f}）未回补，价格已反弹至缺口区域")
+        except Exception:
+            pass
+        if not parts:
+            return ""
+        return f"【缺口状态】{'；'.join(parts)}。"
 
     @staticmethod
     def _describe_special(result: TrendAnalysisResult) -> str:
