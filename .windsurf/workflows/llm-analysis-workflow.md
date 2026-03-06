@@ -4,7 +4,7 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
 
 # A股LLM智能分析系统 — 完整工作流
 
-> 最后更新：2026-03（双维度架构重构后）
+> 最后更新：2026-04（opt-1/2/3/4 + P4 52周叙事）
 > 维护者：cascade AI pair programmer
 
 ---
@@ -232,7 +232,7 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 | `src/analyzer.py` | Prompt构建、LLM调用、结果解析 |
 | `src/stock_analyzer/scoring.py` | 量化评分、指标计算、信号判断 |
 | `src/stock_analyzer/formatter.py` | format_for_llm（技术摘要给LLM用） |
-| `src/stock_analyzer/kline_narrator.py` | K线叙事生成（MA交互/连续K线/缺口等） |
+| `src/stock_analyzer/kline_narrator.py` | K线叙事生成（MA交互/连续K线/缺口/52周区间等） |
 | `src/stock_analyzer/pattern_recognition.py` | K线形态识别（锤子/吞没/缺口等） |
 | `src/search_service.py` | Perplexity AI情报搜索 |
 | `data_provider/rate_limiter.py` | 限流+熔断器（防API封禁） |
@@ -263,17 +263,91 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 
 ---
 
-## 十一、待实现功能（Backlog）
+## 十、性能优化记录
 
-| 优先 | 功能 | 预计工时 |
-|-----|------|---------|
-| P3 | 股票回购akshare接口（`stock_repurchase_em`超时，需全局缓存方案） | 2h |
-| P4 | 北向资金个股持仓数据 | 4h（数据质量不稳定） |
-| P4 | 历史高低点对比叙事（52周/历史新高等） | 1h |
+### opt-1：shareholder缓存异步预热（pipeline init时后台下载）
+
+**文件**：`src/core/pipeline.py` `__init__`
+
+```python
+def _warmup():
+    try:
+        from data_provider.shareholder_fetcher import _refresh_insider_cache
+        _refresh_insider_cache()
+    except Exception:
+        pass
+threading.Thread(target=_warmup, daemon=True).start()
+```
+
+**效果**：首次分析请求时shareholder缓存已就绪，延迟从5-6s降为<0.1s
 
 ---
 
-## 十二、关键回测结论（截至2026-03）
+### opt-2：行业PE中位数超时保护（10s）
+
+**文件**：`data_provider/fundamental_fetcher.py` `get_industry_pe_median`
+
+- 用 `ThreadPoolExecutor` + `Future.result(timeout=10)` 包裹akshare网络调用
+- 东财SSL挂起时最多等10s后返回None，不阻塞主线程
+
+---
+
+### opt-3：股票回购API全局缓存
+
+**文件**：`data_provider/shareholder_fetcher.py`
+
+| 函数 | 数据源 | 缓存 | 超时 |
+|-----|------|------|------|
+| `get_repurchase_summary(code)` | `stock_repurchase_em`（全市场） | 内存4h全局缓存 | 30s ThreadPoolExecutor |
+
+**prompt注入（股东与资本结构section）**：
+```
+- 股票回购: 近期宣告回购计划：金额上限3.2亿元，进度67%，价格上限15.8元
+```
+
+---
+
+### opt-4：行业PE三层内存缓存
+
+**文件**：`data_provider/fundamental_fetcher.py`
+
+```
+L1:   _industry_pe_cache[code]         → code级内存（进程内，ns级）
+L0.5: _industry_pe_by_name[industry]   → 行业名称级内存（同行业共享）
+      _industry_name_of_code[code]     → code→行业名称映射
+L2:   SQLite data_cache TTL=24h        → 跨重启持久化
+L3:   网络请求（东财API 10s超时）      → 首次拉取
+```
+
+**效果**：同行业第N只股票直接命中L0.5（<1μs），L2命中回填L0.5，避免重复网络请求。
+
+---
+
+## 十一、P4：52周高低点区间叙事（已实现）
+
+### 文件：`src/stock_analyzer/kline_narrator.py` `_describe_52week_range`
+
+| 场景 | 输出示例 |
+|-----|------|
+| 突破新高（price > 52W high） | `当前价11.00突破52周高点10.50（超出+4.8%），强势突破` |
+| 接近高点（距高点≤5%） | `当前价10.20接近52周高点（高点10.50，距高点2.9%），关注突破可能` |
+| 区间中段 | `52周区间8.00-10.50，当前价位于区间中上部（分位60%，距高点9.5% / 距低点+18.8%）` |
+| 接近低点（距低点≤10%） | `当前价8.50接近52周低点区（低点8.00，距低点+6.2%），关注止跌信号` |
+| 跌破新低（price < 52W low） | `当前价7.00跌破52周低点8.00（跌幅-12.5%），需警惕继续下探` |
+
+**数据来源**：`daily_df.tail(250)` 的high/low列（约250交易日≈52周），数据不足时用实际可用天数。
+
+---
+
+## 十二、待实现功能（Backlog）
+
+| 优先 | 功能 | 预计工时 |
+|-----|------|---------|
+| P5 | 北向资金个股持仓数据 | 4h（数据质量不稳定） |
+
+---
+
+## 十三、关键回测结论（截至2026-03）
 
 | 规则 | 依据 |
 |-----|------|
