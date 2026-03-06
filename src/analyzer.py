@@ -550,15 +550,18 @@ class GeminiAnalyzer:
 
 {news_context}"""
 
-        # P3: 股东资金博弈数据（高管增减持 + 限售解禁）
+        # P3: 股东资金博弈数据（高管增减持 + 限售解禁 + 回购）
         shareholder_section = ""
         _insider = context.get('insider_changes') or {}
         _unlock = context.get('upcoming_unlock') or {}
+        _repurchase = context.get('repurchase') or {}
         _sh_parts = []
         if _insider.get('has_data'):
             _sh_parts.append(f"- 高管增减持: {_insider.get('summary', '')}")
         if _unlock.get('has_data'):
             _sh_parts.append(f"- 限售解禁: {_unlock.get('summary', '')}")
+        if _repurchase.get('has_data'):
+            _sh_parts.append(f"- 股票回购: {_repurchase.get('summary', '')}")
         if _sh_parts:
             shareholder_section = "\n## 股东与资本结构\n" + "\n".join(_sh_parts) + "\n"
 

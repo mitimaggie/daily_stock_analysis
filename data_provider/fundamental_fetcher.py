@@ -362,14 +362,21 @@ def get_industry_pe_median(code: str) -> Optional[float]:
             logger.info(f"💾 [{code}] 行业PE中位数命中 DB 缓存: {val}")
             return val
 
-    # L3: 网络请求
+    # L3: 网络请求（带超时保护，防止东财SSL挂起阻塞主线程）
+    _NET_TIMEOUT = 10  # 单次网络请求超时秒数
     try:
         import akshare as ak
         import numpy as np
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
-        # 1. 获取个股行业分类
+        # 1. 获取个股行业分类（带超时）
         _rate_limited_sleep()
-        info_df = ak.stock_individual_info_em(symbol=code)
+        with ThreadPoolExecutor(max_workers=1) as _ex:
+            try:
+                info_df = _ex.submit(ak.stock_individual_info_em, symbol=code).result(timeout=_NET_TIMEOUT)
+            except FuturesTimeout:
+                logger.debug(f"[{code}] 行业分类接口超时({_NET_TIMEOUT}s)，跳过行业PE")
+                return None
         if info_df is None or info_df.empty:
             return None
 
@@ -378,9 +385,14 @@ def get_industry_pe_median(code: str) -> Optional[float]:
         if not industry:
             return None
 
-        # 2. 获取行业成分股
+        # 2. 获取行业成分股（带超时）
         _rate_limited_sleep()
-        cons_df = ak.stock_board_industry_cons_em(symbol=industry)
+        with ThreadPoolExecutor(max_workers=1) as _ex:
+            try:
+                cons_df = _ex.submit(ak.stock_board_industry_cons_em, symbol=industry).result(timeout=_NET_TIMEOUT)
+            except FuturesTimeout:
+                logger.debug(f"[{code}] 行业成分股接口超时({_NET_TIMEOUT}s)，跳过行业PE")
+                return None
         if cons_df is None or cons_df.empty:
             return None
 

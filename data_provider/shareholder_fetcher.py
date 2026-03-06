@@ -4,6 +4,7 @@
 提供：
 - 高管增减持记录（内存全局缓存4h，按股票代码筛选）
 - 限售解禁队列（per-stock，直接调用）
+- 股票回购（内存全局缓存4h，按股票代码筛选）
 """
 import logging
 import time
@@ -20,6 +21,11 @@ _CACHE_TTL_SECONDS = 4 * 3600  # 4小时
 _insider_cache: Dict[str, Any] = {
     'data': None,        # DataFrame: 增减持合并数据
     'ts': 0.0,           # 最后刷新时间戳
+}
+
+_repurchase_cache: Dict[str, Any] = {
+    'data': None,        # DataFrame: 回购数据
+    'ts': 0.0,
 }
 
 
@@ -51,6 +57,122 @@ def _refresh_insider_cache() -> bool:
     _insider_cache['ts'] = time.time()
     logger.info(f"[shareholder] 增减持缓存已刷新: {len(df)} 条记录")
     return True
+
+
+def _refresh_repurchase_cache() -> bool:
+    """下载最新股票回购数据并写入全局缓存。返回是否成功"""
+    import warnings
+    warnings.filterwarnings('ignore')
+    try:
+        import akshare as ak
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        with ThreadPoolExecutor(max_workers=1) as _ex:
+            try:
+                df = _ex.submit(ak.stock_repurchase_em).result(timeout=30)
+            except FuturesTimeout:
+                logger.warning("[shareholder] 回购数据获取超时(30s)")
+                return False
+        if df is None or df.empty:
+            return False
+        _repurchase_cache['data'] = df
+        _repurchase_cache['ts'] = time.time()
+        logger.info(f"[shareholder] 回购缓存已刷新: {len(df)} 条记录")
+        return True
+    except Exception as e:
+        logger.warning(f"[shareholder] 回购数据获取失败: {e}")
+        return False
+
+
+def get_repurchase_summary(code: str) -> Dict[str, Any]:
+    """获取指定股票的回购计划摘要
+
+    Returns:
+        dict with keys:
+            has_data: bool
+            plan_amount_yi: float  计划回购金额上限（亿元）
+            executed_amount_yi: float  已执行回购金额（亿元）
+            progress_pct: float  执行进度(%)
+            status: str  回购状态
+            summary: str  一句话摘要
+    """
+    now = time.time()
+    if _repurchase_cache['data'] is None or (now - _repurchase_cache['ts']) > _CACHE_TTL_SECONDS:
+        _refresh_repurchase_cache()
+
+    df = _repurchase_cache.get('data')
+    if df is None or df.empty:
+        return {'has_data': False, 'summary': '回购数据暂不可用'}
+
+    try:
+        # 按股票代码筛选（列名可能是「股票代码」或「代码」）
+        code_col = None
+        for col in ['股票代码', '代码', 'code']:
+            if col in df.columns:
+                code_col = col
+                break
+        if code_col is None:
+            return {'has_data': False, 'summary': '回购数据格式异常'}
+
+        sub = df[df[code_col].astype(str).str.strip() == str(code).strip()].copy()
+    except Exception:
+        return {'has_data': False, 'summary': '筛选失败'}
+
+    if sub.empty:
+        return {'has_data': False, 'summary': '无股票回购记录'}
+
+    # 取最新一条（按公告日期排序）
+    try:
+        date_col = next((c for c in ['公告日期', '披露日期', '公告时间'] if c in sub.columns), None)
+        if date_col:
+            sub = sub.sort_values(date_col, ascending=False)
+        row = sub.iloc[0]
+    except Exception:
+        row = sub.iloc[0]
+
+    # 提取金额字段
+    def _to_yi(val):
+        try:
+            v = float(str(val).replace(',', '').replace('亿', ''))
+            # 判断单位：>1e6 认为是元，>1e4 认为是万元
+            if v > 1e6:
+                return round(v / 1e8, 2)
+            elif v > 1e4:
+                return round(v / 1e4, 2)
+            return round(v, 2)
+        except Exception:
+            return 0.0
+
+    plan_col = next((c for c in ['回购金额上限', '拟回购金额', '计划回购金额', '回购金额'] if c in sub.columns), None)
+    exec_col = next((c for c in ['已回购金额', '已完成金额', '实际回购金额'] if c in sub.columns), None)
+    status_col = next((c for c in ['状态', '回购状态', '进展'] if c in sub.columns), None)
+
+    plan_yi = _to_yi(row.get(plan_col, 0)) if plan_col else 0.0
+    exec_yi = _to_yi(row.get(exec_col, 0)) if exec_col else 0.0
+    progress_pct = round(exec_yi / plan_yi * 100, 1) if plan_yi > 0 else 0.0
+    status = str(row.get(status_col, '')) if status_col else ''
+
+    parts = []
+    if plan_yi > 0:
+        parts.append(f"计划回购{plan_yi}亿元")
+    if exec_yi > 0:
+        parts.append(f"已执行{exec_yi}亿元")
+    if progress_pct > 0:
+        parts.append(f"进度{progress_pct}%")
+    if status:
+        parts.append(f"状态：{status}")
+
+    if not parts:
+        return {'has_data': False, 'summary': '回购记录无有效金额数据'}
+
+    summary = '，'.join(parts)
+    return {
+        'has_data': True,
+        'plan_amount_yi': plan_yi,
+        'executed_amount_yi': exec_yi,
+        'progress_pct': progress_pct,
+        'status': status,
+        'summary': summary,
+    }
 
 
 def get_insider_changes(code: str, days_back: int = 90) -> Dict[str, Any]:

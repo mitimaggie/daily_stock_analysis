@@ -120,11 +120,13 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
 [header] 分析: {股票名} ({代码})
 [tech_report] = kline_narrative + 【量化指标明细】tech_report_llm
 [f10_str] = PE={X}（行业中位{Y}，溢价/折价Z%） | PB=... | 净利增速=... | ROE=...
-[news_section] = Perplexity情报（含增减持/解禁/融资余额）
+[sector_line] = 板块相对强弱
 [chip_line] = 筹码分布
-[sector_line] = 板块强弱
+[regime_str] = 大盘形态文字
+[position_section] = 持仓成本/浮盈/持仓天数（若有持仓）
+[shareholder_section] = 高管增减持摘要 + 限售解禁预警（P3新增）
+[news_section] = Perplexity情报（含增减持/解禁/融资余额）
 [市场背景] = 大盘形态（牛市/熊市/震荡/修复中）
-[持仓部分] = 成本价/浮盈/持仓天数（若有持仓）
 [历史记忆] = 昨日分析观点对比
 [数据缺失提示] = 降低相关维度置信度
 [各守卫模块] = MaxDD/IC Quality/Sector Exposure/Portfolio Beta/Macro Regime
@@ -261,7 +263,7 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 
 ---
 
-## 十、待实现功能（Backlog）
+## 十一、待实现功能（Backlog）
 
 | 优先 | 功能 | 预计工时 |
 |-----|------|---------|
@@ -271,7 +273,7 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 
 ---
 
-## 十、关键回测结论（截至2026-03）
+## 十二、关键回测结论（截至2026-03）
 
 | 规则 | 依据 |
 |-----|------|

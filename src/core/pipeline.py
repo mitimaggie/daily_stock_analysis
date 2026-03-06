@@ -161,6 +161,16 @@ class StockAnalysisPipeline:
         else:
             logger.warning("📊 [大盘监控] 未加载，个股分析将不注入大盘环境（请检查 data_provider.market_monitor 与 akshare）")
 
+        # P3: 后台预热 shareholder_fetcher 增减持缓存，避免首次分析延迟
+        try:
+            import threading
+            from data_provider.shareholder_fetcher import _refresh_insider_cache
+            _warmup_thread = threading.Thread(target=_refresh_insider_cache, daemon=True, name="shareholder-warmup")
+            _warmup_thread.start()
+            logger.info("🔄 [股东数据] 后台预热线程已启动（增减持全量缓存）")
+        except Exception as _warm_e:
+            logger.debug(f"[股东数据] 后台预热跳过: {_warm_e}")
+
     def fetch_and_save_stock_data(self, code: str) -> (bool, str, Any, Any):
         """获取数据并落库，保证下次可做「历史+实时」拼接。
 
@@ -735,20 +745,18 @@ class StockAnalysisPipeline:
         except Exception as _pa_e:
             logger.debug(f"[{code}] 历史准确率获取跳过: {_pa_e}")
 
-        # P3: 股东资金博弈数据（高管增减持 + 限售解禁）
+        # P3: 股东资金博弈数据（高管增减持 + 限售解禁 + 回购）
         _insider_data = {}
         _unlock_data = {}
+        _repurchase_data = {}
         if not fast_mode:
             try:
-                from data_provider.shareholder_fetcher import get_insider_changes, get_upcoming_unlock
+                from data_provider.shareholder_fetcher import get_insider_changes, get_upcoming_unlock, get_repurchase_summary
                 _insider_data = get_insider_changes(code, days_back=90)
-            except Exception as _se:
-                logger.debug(f"[{code}] 增减持数据获取跳过: {_se}")
-            try:
-                from data_provider.shareholder_fetcher import get_upcoming_unlock
                 _unlock_data = get_upcoming_unlock(code, days_ahead=180)
-            except Exception as _ue:
-                logger.debug(f"[{code}] 限售解禁数据获取跳过: {_ue}")
+                _repurchase_data = get_repurchase_summary(code)
+            except Exception as _se:
+                logger.debug(f"[{code}] 股东数据获取跳过: {_se}")
 
         context = {
             'code': code,
@@ -776,6 +784,7 @@ class StockAnalysisPipeline:
             'prediction_accuracy': prediction_accuracy,
             'insider_changes': _insider_data,
             'upcoming_unlock': _unlock_data,
+            'repurchase': _repurchase_data,
         }
         # 注入行业PE中位数供f10_str相对估值展示
         if _ind_pe_for_context and isinstance(context.get('fundamental', {}).get('valuation'), dict):
