@@ -550,6 +550,18 @@ class GeminiAnalyzer:
 
 {news_context}"""
 
+        # P3: 股东资金博弈数据（高管增减持 + 限售解禁）
+        shareholder_section = ""
+        _insider = context.get('insider_changes') or {}
+        _unlock = context.get('upcoming_unlock') or {}
+        _sh_parts = []
+        if _insider.get('has_data'):
+            _sh_parts.append(f"- 高管增减持: {_insider.get('summary', '')}")
+        if _unlock.get('has_data'):
+            _sh_parts.append(f"- 限售解禁: {_unlock.get('summary', '')}")
+        if _sh_parts:
+            shareholder_section = "\n## 股东与资本结构\n" + "\n".join(_sh_parts) + "\n"
+
         # 数据可用性警告段落（若有数据模块获取失败，明确告知 LLM，让其降低相关维度置信度）
         _missing = context.get('data_availability') or []
         if _missing:
@@ -918,8 +930,7 @@ Step 4（{_has_pos_label}） - 结论：
 {tech_report}
 
 ## 基本面 (F10)
-{f10_str}{sector_line}{chip_line}{regime_str}{position_section}
-
+{f10_str}{sector_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
 {data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{sector_exposure_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}{holding_horizon_section}
@@ -932,7 +943,7 @@ analysis_summary(格式固定为3句话：①明确的方向性结论（多/空/
 risk_warning,
 sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望") — 你是持仓者，请根据分析给出适当建议' if has_position else 'operation_advice("买入"/"观望"/"等待") — 你是空仓者，禁止输出减仓/清仓/持有'},
 llm_score(同sentiment_score), llm_advice(同operation_advice),
-llm_reasoning(明确表态是否认同量化信号及原因：认同写"认同量化[信号名]，因为[具体数据/理由]"；不认同写"不认同量化[信号名]，因为[具体反驳依据]"；禁止写"与量化结论一致"等空洞表述),
+llm_reasoning(说明支撑你最终结论的2-3个最关键证据，必须引用具体数字/事件；禁止写"综合以上分析""数据显示"等空洞表述),
 confidence_reasoning(判断置信度，如"舆情充分置信度高"或"缺少关键数据置信度低"),
 dashboard: {{
   core_conclusion: {{

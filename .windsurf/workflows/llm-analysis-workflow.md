@@ -241,13 +241,32 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 
 ---
 
-## 九、待实现功能（Backlog）
+## 九、P3：股东资金博弈数据（已实现）
+
+### 文件：`data_provider/shareholder_fetcher.py`
+
+| 函数 | 数据源 | 缓存 | 用途 |
+|-----|------|------|-----|
+| `get_insider_changes(code, days_back=90)` | `stock_hold_management_detail_cninfo`（增持+减持） | 内存4h全局缓存 | 高管增减持摘要 |
+| `get_upcoming_unlock(code, days_ahead=180)` | `stock_restricted_release_queue_em`（per-stock） | 无缓存（每次<1.1s） | 限售解禁风险预警 |
+
+**输出示例（注入prompt的"股东与资本结构"section）**：
+```
+## 股东与资本结构
+- 高管增减持: 近90日内：减持3次（约12.5万股），整体净减持（最新公告2026-01-15）
+- 限售解禁: 下次解禁：2026-04-01，规模0.32亿股，市值约8.6亿元，占流通股2.3%，类型：定向增发机构配售股份
+```
+
+**性能**：首次调用5-6s（全量下载），之后缓存命中<0.1s
+
+---
+
+## 十、待实现功能（Backlog）
 
 | 优先 | 功能 | 预计工时 |
 |-----|------|---------|
-| P3 | 大股东增减持akshare接口集成（目前靠Perplexity） | 3h |
-| P3 | 限售解禁akshare接口集成 | 2h |
-| P3 | 北向资金个股持仓数据 | 4h（数据质量不稳定） |
+| P3 | 股票回购akshare接口（`stock_repurchase_em`超时，需全局缓存方案） | 2h |
+| P4 | 北向资金个股持仓数据 | 4h（数据质量不稳定） |
 | P4 | 历史高低点对比叙事（52周/历史新高等） | 1h |
 
 ---

@@ -1,0 +1,236 @@
+# -*- coding: utf-8 -*-
+"""
+股东与资本结构数据获取模块
+提供：
+- 高管增减持记录（内存全局缓存4h，按股票代码筛选）
+- 限售解禁队列（per-stock，直接调用）
+"""
+import logging
+import time
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# === 全局内存缓存（减少API调用，4h TTL）===
+_CACHE_TTL_SECONDS = 4 * 3600  # 4小时
+
+_insider_cache: Dict[str, Any] = {
+    'data': None,        # DataFrame: 增减持合并数据
+    'ts': 0.0,           # 最后刷新时间戳
+}
+
+
+def _refresh_insider_cache() -> bool:
+    """下载最新增持+减持数据并合并，写入全局缓存。返回是否成功"""
+    import warnings
+    warnings.filterwarnings('ignore')
+    try:
+        import akshare as ak
+        df_buy = ak.stock_hold_management_detail_cninfo(symbol="增持")
+        df_buy['变动方向'] = '增持'
+    except Exception as e:
+        logger.warning(f"[shareholder] 增持数据获取失败: {e}")
+        df_buy = pd.DataFrame()
+
+    try:
+        import akshare as ak
+        df_sell = ak.stock_hold_management_detail_cninfo(symbol="减持")
+        df_sell['变动方向'] = '减持'
+    except Exception as e:
+        logger.warning(f"[shareholder] 减持数据获取失败: {e}")
+        df_sell = pd.DataFrame()
+
+    if df_buy.empty and df_sell.empty:
+        return False
+
+    df = pd.concat([df_buy, df_sell], ignore_index=True)
+    _insider_cache['data'] = df
+    _insider_cache['ts'] = time.time()
+    logger.info(f"[shareholder] 增减持缓存已刷新: {len(df)} 条记录")
+    return True
+
+
+def get_insider_changes(code: str, days_back: int = 90) -> Dict[str, Any]:
+    """获取指定股票近期高管增减持摘要
+
+    Args:
+        code: 股票代码（如 "600000" 或 "000001"）
+        days_back: 查看最近N天内的记录
+
+    Returns:
+        dict with keys:
+            has_data: bool
+            buy_count: int  近期增持次数
+            sell_count: int 近期减持次数
+            buy_amount: float  增持市值（万元），NaN时为0
+            sell_amount: float 减持市值（万元），NaN时为0
+            net_direction: str  "净增持"/"净减持"/"无变动"
+            latest_date: str  最新公告日期
+            summary: str  一句话摘要（供LLM直接阅读）
+    """
+    now = time.time()
+    # 缓存过期则刷新
+    if _insider_cache['data'] is None or (now - _insider_cache['ts']) > _CACHE_TTL_SECONDS:
+        _refresh_insider_cache()
+
+    df = _insider_cache.get('data')
+    if df is None or df.empty:
+        return {'has_data': False, 'summary': '增减持数据暂不可用'}
+
+    # 规范化股票代码（去前缀）
+    code_clean = code.lstrip('sh').lstrip('sz').lstrip('0') if False else code
+    try:
+        sub = df[df['证券代码'].astype(str).str.strip() == str(code).strip()].copy()
+    except Exception:
+        return {'has_data': False, 'summary': '筛选失败'}
+
+    if sub.empty:
+        return {'has_data': False, 'summary': '近期无高管增减持记录'}
+
+    # 日期过滤
+    try:
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        sub['公告日期'] = pd.to_datetime(sub['公告日期'], errors='coerce')
+        sub = sub[sub['公告日期'] >= cutoff].copy()
+    except Exception:
+        pass
+
+    if sub.empty:
+        return {'has_data': False, 'summary': f'近{days_back}日内无高管增减持记录'}
+
+    buy_df = sub[sub['变动方向'] == '增持']
+    sell_df = sub[sub['变动方向'] == '减持']
+    buy_count = len(buy_df)
+    sell_count = len(sell_df)
+
+    # 变动数量（万股）
+    def _sum_qty(df_part):
+        try:
+            return abs(pd.to_numeric(df_part['变动数量'], errors='coerce').sum()) / 1e4
+        except Exception:
+            return 0.0
+
+    buy_qty = _sum_qty(buy_df)
+    sell_qty = _sum_qty(sell_df)
+
+    # 最新日期
+    try:
+        latest_date = sub['公告日期'].max().strftime('%Y-%m-%d')
+    except Exception:
+        latest_date = '未知'
+
+    net_direction = '净增持' if buy_qty > sell_qty else ('净减持' if sell_qty > buy_qty else '无净变动')
+
+    # 生成摘要
+    parts = []
+    if buy_count > 0:
+        parts.append(f"增持{buy_count}次（约{buy_qty:.1f}万股）")
+    if sell_count > 0:
+        parts.append(f"减持{sell_count}次（约{sell_qty:.1f}万股）")
+
+    summary = f"近{days_back}日内：{' | '.join(parts) if parts else '无记录'}，整体{net_direction}（最新公告{latest_date}）"
+
+    return {
+        'has_data': True,
+        'buy_count': buy_count,
+        'sell_count': sell_count,
+        'buy_qty_wan': round(buy_qty, 1),
+        'sell_qty_wan': round(sell_qty, 1),
+        'net_direction': net_direction,
+        'latest_date': latest_date,
+        'summary': summary,
+    }
+
+
+def get_upcoming_unlock(code: str, days_ahead: int = 180) -> Dict[str, Any]:
+    """获取指定股票即将到来的限售解禁信息
+
+    Args:
+        code: 股票代码（不含前缀，如 "600000"）
+        days_ahead: 查看未来N天内的解禁
+
+    Returns:
+        dict with keys:
+            has_data: bool
+            next_unlock_date: str  下次解禁日期
+            next_unlock_qty_yi: float  下次解禁数量（亿股）
+            next_unlock_mv_yi: float  下次解禁市值（亿元）
+            next_unlock_float_pct: float  占流通股比例(%)
+            unlock_type: str  限售股类型
+            summary: str  一句话摘要
+    """
+    import warnings
+    warnings.filterwarnings('ignore')
+    try:
+        import akshare as ak
+        df = ak.stock_restricted_release_queue_em(symbol=code)
+    except Exception as e:
+        logger.debug(f"[shareholder] 解禁数据获取失败({code}): {e}")
+        return {'has_data': False, 'summary': '限售解禁数据暂不可用'}
+
+    if df is None or df.empty:
+        return {'has_data': False, 'summary': '近期无限售解禁计划'}
+
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        cutoff_end = (datetime.now() + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+        df['解禁时间'] = pd.to_datetime(df['解禁时间'], errors='coerce')
+        upcoming = df[(df['解禁时间'].dt.strftime('%Y-%m-%d') >= today) &
+                      (df['解禁时间'].dt.strftime('%Y-%m-%d') <= cutoff_end)].copy()
+    except Exception:
+        upcoming = df.copy()
+
+    if upcoming.empty:
+        return {'has_data': False, 'summary': f'未来{days_ahead}日内无限售解禁'}
+
+    # 取最近一次解禁
+    row = upcoming.sort_values('解禁时间').iloc[0]
+
+    next_date = row.get('解禁时间', pd.NaT)
+    next_date_str = next_date.strftime('%Y-%m-%d') if not pd.isnull(next_date) else '未知'
+
+    qty = float(row.get('解禁数量', 0) or 0)
+    mv = float(row.get('实际解禁数量市值', 0) or 0)
+    float_pct = float(row.get('占流通市值比例', 0) or 0)
+    unlock_type = str(row.get('限售股类型', ''))
+
+    qty_yi = qty / 1e8 if qty > 0 else 0.0
+    mv_yi = mv / 1e8 if mv > 0 else 0.0
+
+    # 判断解禁压力等级
+    if float_pct >= 10:
+        pressure = "⚠️ 重大解禁压力"
+    elif float_pct >= 3:
+        pressure = "中等解禁压力"
+    elif float_pct > 0:
+        pressure = "小额解禁"
+    else:
+        pressure = ""
+
+    parts = [f"下次解禁：{next_date_str}"]
+    if qty_yi > 0:
+        parts.append(f"规模{qty_yi:.2f}亿股")
+    if mv_yi > 0:
+        parts.append(f"市值约{mv_yi:.1f}亿元")
+    if float_pct > 0:
+        parts.append(f"占流通股{float_pct:.1f}%")
+    if unlock_type:
+        parts.append(f"类型：{unlock_type}")
+    if pressure:
+        parts.append(pressure)
+
+    summary = '，'.join(parts)
+
+    return {
+        'has_data': True,
+        'next_unlock_date': next_date_str,
+        'next_unlock_qty_yi': round(qty_yi, 3),
+        'next_unlock_mv_yi': round(mv_yi, 2),
+        'next_unlock_float_pct': round(float_pct, 2),
+        'unlock_type': unlock_type,
+        'upcoming_count': len(upcoming),
+        'summary': summary,
+    }

@@ -735,6 +735,21 @@ class StockAnalysisPipeline:
         except Exception as _pa_e:
             logger.debug(f"[{code}] 历史准确率获取跳过: {_pa_e}")
 
+        # P3: 股东资金博弈数据（高管增减持 + 限售解禁）
+        _insider_data = {}
+        _unlock_data = {}
+        if not fast_mode:
+            try:
+                from data_provider.shareholder_fetcher import get_insider_changes, get_upcoming_unlock
+                _insider_data = get_insider_changes(code, days_back=90)
+            except Exception as _se:
+                logger.debug(f"[{code}] 增减持数据获取跳过: {_se}")
+            try:
+                from data_provider.shareholder_fetcher import get_upcoming_unlock
+                _unlock_data = get_upcoming_unlock(code, days_ahead=180)
+            except Exception as _ue:
+                logger.debug(f"[{code}] 限售解禁数据获取跳过: {_ue}")
+
         context = {
             'code': code,
             'stock_name': stock_name,
@@ -759,6 +774,8 @@ class StockAnalysisPipeline:
             'analysis_time': datetime.now().strftime('%H:%M'),
             'data_availability': _missing_data,
             'prediction_accuracy': prediction_accuracy,
+            'insider_changes': _insider_data,
+            'upcoming_unlock': _unlock_data,
         }
         # 注入行业PE中位数供f10_str相对估值展示
         if _ind_pe_for_context and isinstance(context.get('fundamental', {}).get('valuation'), dict):
