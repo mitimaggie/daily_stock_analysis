@@ -18,6 +18,8 @@ interface WatchlistProps {
   onBatchAnalyze: (codes: string[]) => void;
   /** 是否正在分析 */
   isAnalyzing?: boolean;
+  /** 最近一次分析结果摘要（代码 → 评分/建议） */
+  scoreMap?: Record<string, { score?: number | null; advice?: string | null }>;
 }
 
 /** 从 localStorage 读取自选股列表 */
@@ -44,6 +46,7 @@ export const Watchlist: React.FC<WatchlistProps> = ({
   onAnalyze,
   onBatchAnalyze,
   isAnalyzing = false,
+  scoreMap = {},
 }) => {
   const [items, setItems] = useState<WatchlistItem[]>(loadWatchlist);
   const [addCode, setAddCode] = useState('');
@@ -126,10 +129,25 @@ export const Watchlist: React.FC<WatchlistProps> = ({
                     type="button"
                     onClick={() => onAnalyze(item.code)}
                     disabled={isAnalyzing}
-                    className="flex-1 text-left text-xs font-mono text-white hover:text-cyan transition-colors disabled:opacity-50"
+                    className="flex-1 text-left min-w-0"
                   >
-                    {item.code}
-                    {item.name && <span className="text-muted ml-1.5">{item.name}</span>}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-mono text-white hover:text-cyan transition-colors disabled:opacity-50 flex-shrink-0">{item.code}</span>
+                      {item.name && <span className="text-muted text-[10px] truncate">{item.name}</span>}
+                    </div>
+                    {scoreMap[item.code] && (() => {
+                      const s = scoreMap[item.code];
+                      const sc = s.score;
+                      const adv = s.advice;
+                      if (sc == null && !adv) return null;
+                      const scoreColor = sc == null ? '' : sc >= 70 ? 'text-emerald-400' : sc >= 50 ? 'text-amber-400' : 'text-red-400/70';
+                      return (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {sc != null && <span className={`text-[10px] font-mono font-bold ${scoreColor}`}>{sc}</span>}
+                          {adv && <span className="text-[9px] text-white/25 truncate max-w-[80px]">{adv}</span>}
+                        </div>
+                      );
+                    })()}
                   </button>
                   <button
                     type="button"

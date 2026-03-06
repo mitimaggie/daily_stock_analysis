@@ -174,6 +174,10 @@ const HomePage: React.FC = () => {
   // 移动端侧边栏状态
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // 搜索自动补全
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
+
   // AI 对话面板状态
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -661,8 +665,8 @@ const HomePage: React.FC = () => {
             </svg>
           </button>
 
-          {/* 搜索输入 */}
-          <div className="flex-1 max-w-xl relative">
+          {/* 搜索输入 + 自动补全 */}
+          <div className="flex-1 max-w-xl relative" ref={searchWrapperRef}>
             <div className="relative">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -675,6 +679,7 @@ const HomePage: React.FC = () => {
                   setStockCode(val);
                   setInputError(undefined);
                   setDuplicateError(null);
+                  setShowSuggestions(val.length >= 1);
                   // 代码输入完整（≥5位）时 debounce 加载持仓信息
                   if (loadPositionTimerRef.current) clearTimeout(loadPositionTimerRef.current);
                   if (val.length >= 5) {
@@ -684,11 +689,59 @@ const HomePage: React.FC = () => {
                   }
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="股票代码  600519 / HK00700 / AAPL"
+                onFocus={() => stockCode.length >= 1 && setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                placeholder="股票代码或名称  600519 茅台 / HK00700 / AAPL"
                 disabled={isAnalyzing}
                 className={`header-input w-full pl-9 ${inputError ? 'border-danger/40' : ''}`}
               />
             </div>
+            {/* 自动补全下拉 */}
+            {showSuggestions && (() => {
+              const q = stockCode.trim();
+              const seen = new Set<string>();
+              const suggestions = historyItems.filter(item => {
+                if (seen.has(item.stockCode)) return false;
+                const code = item.stockCode.toUpperCase();
+                const name = (item.stockName || '').toUpperCase();
+                const matches = code.includes(q) || name.includes(q);
+                if (matches) seen.add(item.stockCode);
+                return matches;
+              }).slice(0, 6);
+              if (suggestions.length === 0) return null;
+              return (
+                <div className="absolute top-full left-0 right-0 mt-1 z-[70] rounded-xl bg-[#0d0d14] border border-white/10 shadow-xl shadow-black/50 overflow-hidden animate-fade-in">
+                  {suggestions.map(item => {
+                    const score = item.sentimentScore;
+                    const scoreColor = score == null ? 'text-white/25' : score >= 70 ? 'text-emerald-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
+                    return (
+                      <button
+                        key={item.stockCode + item.queryId}
+                        type="button"
+                        onMouseDown={() => {
+                          setStockCode(item.stockCode);
+                          setShowSuggestions(false);
+                          setTimeout(() => {
+                            const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
+                            if (btn) btn.click();
+                          }, 50);
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/[0.05] transition text-left"
+                      >
+                        <span className="text-[13px] font-mono text-white/80 w-16 flex-shrink-0">{item.stockCode}</span>
+                        <span className="text-[12px] text-white/50 flex-1 truncate">{item.stockName || '—'}</span>
+                        {score != null && (
+                          <span className={`text-[11px] font-mono font-semibold ${scoreColor}`}>{score}分</span>
+                        )}
+                        {item.operationAdvice && (
+                          <span className="text-[10px] text-white/25 truncate max-w-[60px]">{item.operationAdvice}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
             {(inputError || duplicateError) && (
               <p className={`absolute -bottom-5 left-0 text-[11px] ${inputError ? 'text-danger' : 'text-warning'}`}>
                 {inputError || duplicateError}
@@ -798,6 +851,9 @@ const HomePage: React.FC = () => {
               onAnalyze={handleWatchlistAnalyze}
               onBatchAnalyze={handleBatchAnalyze}
               isAnalyzing={isAnalyzing}
+              scoreMap={Object.fromEntries(
+                [...new Map(historyItems.map(h => [h.stockCode, { score: h.sentimentScore, advice: h.operationAdvice }])).entries()]
+              )}
             />
 
             {/* 任务面板 */}
@@ -863,18 +919,66 @@ const HomePage: React.FC = () => {
                 )}
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center h-full text-center gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
-                  <svg className="w-7 h-7 text-white/15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-[15px] font-semibold text-white/80 mb-1">开始分析</h3>
-                  <p className="text-[12px] text-white/25 max-w-[260px] leading-relaxed">
-                    输入股票代码进行 AI 智能分析，或从左侧选择历史报告
+              <div className="flex flex-col items-center justify-center h-full px-4 gap-6 max-w-2xl mx-auto w-full">
+                {/* 品牌标语 */}
+                <div className="text-center">
+                  <h3 className="text-[16px] font-semibold text-white/70 mb-1">AI 股票智能分析</h3>
+                  <p className="text-[12px] text-white/25 leading-relaxed">
+                    输入股票代码或名称，获取 AI 深度分析报告
                   </p>
                 </div>
+
+                {/* 最近分析快速入口 */}
+                {historyItems.length > 0 && (() => {
+                  const seen = new Set<string>();
+                  const recents = historyItems.filter(item => {
+                    if (seen.has(item.stockCode)) return false;
+                    seen.add(item.stockCode);
+                    return true;
+                  }).slice(0, 6);
+                  return (
+                    <div className="w-full">
+                      <p className="text-[11px] text-white/25 mb-2 font-medium tracking-wide uppercase">最近分析</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {recents.map(item => {
+                          const score = item.sentimentScore;
+                          const scoreColor = score == null ? 'text-white/30' : score >= 70 ? 'text-emerald-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
+                          const borderColor = score == null ? 'border-white/[0.06]' : score >= 70 ? 'border-emerald-500/20' : score >= 50 ? 'border-yellow-500/15' : 'border-red-500/15';
+                          const adv = item.operationAdvice || '';
+                          const isBuy = adv.includes('买入') || adv.includes('吸纳');
+                          const isSell = adv.includes('卖出') || adv.includes('减仓');
+                          const advColor = isBuy ? 'text-emerald-400/70' : isSell ? 'text-red-400/70' : 'text-white/30';
+                          return (
+                            <button
+                              key={item.stockCode}
+                              type="button"
+                              onClick={() => handleHistoryClick(item.queryId, item.stockCode)}
+                              className={`flex flex-col gap-1 p-3 rounded-xl bg-[var(--bg-card)] border ${borderColor} hover:bg-white/[0.04] transition text-left group`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[12px] font-mono font-semibold text-white/80">{item.stockCode}</span>
+                                {score != null && (
+                                  <span className={`text-[11px] font-mono font-bold ${scoreColor}`}>{score}</span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-white/45 truncate">{item.stockName || '—'}</span>
+                              {adv && (
+                                <span className={`text-[10px] font-medium ${advColor}`}>{adv}</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 无历史记录时的提示 */}
+                {historyItems.length === 0 && !isLoadingHistory && (
+                  <p className="text-[12px] text-white/20 text-center">
+                    在上方输入股票代码开始第一次分析
+                  </p>
+                )}
               </div>
             )
           )}

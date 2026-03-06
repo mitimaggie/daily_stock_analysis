@@ -8,6 +8,10 @@ import { QuantAnalysis } from './QuantAnalysis';
 import { QuantVsAi } from './QuantVsAi';
 import { KeyPriceLevels } from './KeyPriceLevels';
 import { AiDiagnosis } from './AiDiagnosis';
+import { ShareholderCard } from './ShareholderCard';
+import { PriceRangeBar } from './PriceRangeBar';
+import { TodaySnapshot } from './TodaySnapshot';
+import { KeyInsights } from './KeyInsights';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -60,6 +64,13 @@ const QuantPanel: React.FC<{
   const [open, setOpen] = useState(false);
   if (!quantExtras && !quantVsAi) return null;
 
+  const qe = quantExtras as Record<string, any> | null;
+  const maAlignment = qe?.ma_alignment ?? qe?.maAlignment;
+  const valuationVerdict = qe?.valuation_verdict ?? qe?.valuationVerdict;
+  const capitalFlow = qe?.capital_flow_signal ?? qe?.capitalFlowSignal;
+  const isBullMa = maAlignment && (maAlignment.includes('多头') || maAlignment.includes('偏多'));
+  const isBearMa = maAlignment && (maAlignment.includes('空头') || maAlignment.includes('偏空'));
+
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] overflow-hidden">
       <button
@@ -68,9 +79,26 @@ const QuantPanel: React.FC<{
         onClick={() => setOpen(v => !v)}
       >
         <span className="text-sm font-semibold text-white/60 flex items-center gap-1.5">
-          <span>📊</span> 量化数据
+          <span>�</span> 技术指标
         </span>
-        <span className="text-xs text-white/25">{open ? '▲ 收起' : '▼ 展开'}</span>
+        {/* 收起时显示一行摘要 */}
+        {!open && (
+          <div className="flex items-center gap-2 text-[11px] font-mono">
+            {maAlignment && (
+              <span className={isBullMa ? 'text-emerald-400/80' : isBearMa ? 'text-red-400/70' : 'text-white/35'}>
+                {maAlignment.length > 8 ? maAlignment.slice(0, 8) : maAlignment}
+              </span>
+            )}
+            {valuationVerdict && (
+              <span className="text-white/30 truncate max-w-[100px]">{valuationVerdict}</span>
+            )}
+            {capitalFlow && capitalFlow !== '资金面数据正常' && (
+              <span className="text-amber-400/60 truncate max-w-[80px]">{capitalFlow}</span>
+            )}
+            <span className="text-white/20 ml-1">▼</span>
+          </div>
+        )}
+        {open && <span className="text-xs text-white/25">▲ 收起</span>}
       </button>
       {open && (
         <div className="border-t border-white/[0.04] space-y-3 p-3">
@@ -104,6 +132,19 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const queryId = 'queryId' in data ? data.queryId : report.meta.queryId;
 
   const { meta, summary, strategy, details } = report;
+
+  // P3/P4 data from contextSnapshot
+  const { insiderChanges, upcomingUnlock, repurchase, priceRange52w, predictionAccuracy } = useMemo(() => {
+    const ctx = details?.contextSnapshot as Record<string, any> | undefined;
+    if (!ctx) return { insiderChanges: undefined, upcomingUnlock: undefined, repurchase: undefined, priceRange52w: undefined, predictionAccuracy: undefined };
+    return {
+      insiderChanges: ctx.insider_changes ?? ctx.insiderChanges,
+      upcomingUnlock: ctx.upcoming_unlock ?? ctx.upcomingUnlock,
+      repurchase: ctx.repurchase,
+      priceRange52w: ctx.price_range_52w ?? ctx.priceRange52w,
+      predictionAccuracy: ctx.prediction_accuracy ?? ctx.predictionAccuracy,
+    };
+  }, [details?.contextSnapshot]);
 
   const {
     quantExtras, intelligence, counterArguments, positionInfo,
@@ -182,6 +223,40 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         />
       )}
 
+      {/* 1.5 历史准确率信任条（散户心理安全感）*/}
+      {predictionAccuracy && (() => {
+        const pa = predictionAccuracy as Record<string, any>;
+        const wr = pa.bullish_win_rate ?? pa.bullishWinRate;
+        const cnt = pa.bullish_count ?? pa.bullishCount ?? pa.total_records ?? pa.totalRecords;
+        const avg = pa.avg_5d_return ?? pa.avg5dReturn;
+        if (wr == null && avg == null) return null;
+        const wrGood = wr != null && wr >= 60;
+        const wrBad = wr != null && wr < 40;
+        const wrColor = wrGood ? 'text-emerald-400' : wrBad ? 'text-red-400/70' : 'text-amber-400/80';
+        return (
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[11px]">
+            <span className="text-white/25 flex-shrink-0">📊 该股历史准确率</span>
+            {wr != null && (
+              <span className={`font-mono font-semibold ${wrColor}`}>
+                看多胜率 {wr.toFixed(0)}%
+                {cnt != null && <span className="text-white/25 font-normal ml-1">({cnt}次)</span>}
+              </span>
+            )}
+            {avg != null && (
+              <span className={`font-mono ${avg >= 0 ? 'text-emerald-400/70' : 'text-red-400/60'}`}>
+                5日均益 {avg >= 0 ? '+' : ''}{avg.toFixed(1)}%
+              </span>
+            )}
+            <span className="text-white/15 text-[10px] ml-auto">90日回填</span>
+          </div>
+        );
+      })()}
+
+      {/* 2.5 当日行情快照（成交量/中/振幅/换手率/量比）*/}
+      {report.todaySnapshot && (
+        <TodaySnapshot data={report.todaySnapshot} />
+      )}
+
       {/* 3. AI 分析（主角：默认展开）*/}
       <AiDiagnosis
         analysisSummary={summary.analysisSummary}
@@ -189,6 +264,26 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         counterArguments={counterArguments}
         positionAdvice={positionAdvice}
         defaultExpanded={true}
+      />
+
+      {/* 3.25 重要信号（AI风险+正面摔化+量化指标）*/}
+      <KeyInsights
+        intelligence={intelligence ?? undefined}
+        counterArguments={counterArguments ?? undefined}
+        quantExtras={quantExtras ?? undefined}
+      />
+
+      {/* 3.5 52周价格区间（散户直观感知价格高低位）*/}
+      <PriceRangeBar
+        range={priceRange52w}
+        currentPrice={meta.currentPrice}
+      />
+
+      {/* 3.6 股东动态（P3 增减持/解禁/回购）*/}
+      <ShareholderCard
+        insiderChanges={insiderChanges}
+        upcomingUnlock={upcomingUnlock}
+        repurchase={repurchase}
       />
 
       {/* 4. 操作计划（止损/止盈/仓位）*/}

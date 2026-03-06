@@ -785,6 +785,11 @@ class StockAnalysisPipeline:
             'insider_changes': _insider_data,
             'upcoming_unlock': _unlock_data,
             'repurchase': _repurchase_data,
+            'price_range_52w': (lambda df: {
+                'high': float(df.tail(min(250, len(df)))['high'].max()),
+                'low': float(df.tail(min(250, len(df)))['low'].min()),
+                'n_days': min(250, len(df)),
+            } if df is not None and not df.empty and len(df) >= 20 else {})(daily_df),
         }
         # 注入行业PE中位数供f10_str相对估值展示
         if _ind_pe_for_context and isinstance(context.get('fundamental', {}).get('valuation'), dict):

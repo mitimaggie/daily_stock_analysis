@@ -12,3 +12,5 @@ export * from './KeyPriceLevels';
 export * from './QuantVsAi';
 export * from './TodaySnapshot';
 export * from './KeyInsights';
+export * from './ShareholderCard';
+export * from './PriceRangeBar';

@@ -112,6 +112,23 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
       {signal.reasons?.map((r, i) => (
         <p key={i} className="text-[12px] text-white/60 leading-relaxed">{r}</p>
       ))}
+
+      {/* P&L 可视化条 */}
+      {pnl != null && (
+        <div className="pt-1">
+          <div className="relative h-1 rounded-full bg-white/[0.06] overflow-hidden">
+            <div
+              className={`absolute inset-y-0 ${pnl >= 0 ? 'left-1/2' : 'right-1/2'} ${pnl >= 0 ? 'bg-red-400/40' : 'bg-emerald-400/40'} rounded-full`}
+              style={{ width: `${Math.min(50, Math.abs(pnl) * 2)}%` }}
+            />
+            {/* 中心基准线 */}
+            <div className="absolute left-1/2 inset-y-0 w-px bg-white/15" />
+          </div>
+          <div className="flex justify-between mt-0.5 text-[9px] text-white/15 font-mono">
+            <span>-25%</span><span>0</span><span>+25%</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -299,42 +316,93 @@ const PortfolioPage: React.FC = () => {
               </button>
             </div>
 
-            {/* 组合盈亏汇总卡片 */}
+            {/* 组合盈亏汇总卡片 — 重设计 */}
             {signals.length > 0 && (() => {
               const validSignals = signals.filter(s => s.currentPrice != null && s.shares > 0);
               const totalCost = validSignals.reduce((sum, s) => sum + s.costPrice * s.shares, 0);
               const totalMarket = validSignals.reduce((sum, s) => sum + (s.currentPrice ?? s.costPrice) * s.shares, 0);
               const totalPnlAmt = totalMarket - totalCost;
               const totalPnlPct = totalCost > 0 ? totalPnlAmt / totalCost * 100 : 0;
-              const pnlColor = totalPnlAmt >= 0 ? 'text-red-400' : 'text-emerald-400';
-              const maxRiskSignal = signals.filter(s => s.signal === 'stop_loss' || s.signal === 'reduce')
-                .map(s => ({ name: s.name, pnlPct: s.pnlPct ?? 0 }))
-                .sort((a, b) => a.pnlPct - b.pnlPct)[0];
+              const isProfit = totalPnlAmt >= 0;
+              const pnlTextColor = isProfit ? 'text-red-400' : 'text-emerald-400';
+              const pnlBgColor = isProfit ? 'border-red-500/20 bg-red-500/[0.04]' : 'border-emerald-500/20 bg-emerald-500/[0.04]';
+
+              // 各持仓权重条
+              const weightBars = validSignals
+                .map(s => ({
+                  code: s.code,
+                  name: s.name,
+                  mv: (s.currentPrice ?? s.costPrice) * s.shares,
+                  pnlPct: s.pnlPct ?? 0,
+                }))
+                .sort((a, b) => b.mv - a.mv);
+
+              const riskCount = signals.filter(s => s.signal === 'stop_loss' || s.signal === 'reduce').length;
+
               return (
-                <div className="rounded-lg border border-white/8 bg-white/3 px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-                    <div className="text-[11px] text-white/30 font-medium uppercase tracking-wider flex-none w-full mb-0.5">组合概览</div>
-                    <div className="text-[12px] text-white/50">
-                      持仓市值 <span className="font-mono text-white/80">{(totalMarket / 10000).toFixed(2)}万</span>
-                    </div>
-                    <div className="text-[12px] text-white/50">
-                      总成本 <span className="font-mono text-white/60">{(totalCost / 10000).toFixed(2)}万</span>
-                    </div>
-                    <div className="text-[12px] text-white/50">
-                      总浮盈亏
-                      <span className={`font-mono font-semibold ml-1 ${pnlColor}`}>
-                        {totalPnlAmt >= 0 ? '+' : ''}{(totalPnlAmt / 10000).toFixed(2)}万
-                      </span>
-                      <span className={`font-mono text-[11px] ml-1 ${pnlColor}`}>
-                        ({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)
-                      </span>
-                    </div>
-                    {maxRiskSignal && (
-                      <div className="text-[12px] text-white/50">
-                        最大风险 <span className="font-mono text-red-400/80">{maxRiskSignal.name}（{maxRiskSignal.pnlPct >= 0 ? '+' : ''}{maxRiskSignal.pnlPct.toFixed(1)}%）</span>
+                <div className="rounded-xl border border-white/[0.07] bg-[#0d0d16] p-4 space-y-4">
+                  {/* 顶部三列统计 */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* 总浮盈亏 — 主指标 */}
+                    <div className={`col-span-1 rounded-lg border p-3 text-center ${pnlBgColor}`}>
+                      <div className="text-[10px] text-white/30 mb-1">总浮盈亏</div>
+                      <div className={`text-[18px] font-bold font-mono ${pnlTextColor}`}>
+                        {isProfit ? '+' : ''}{totalPnlPct.toFixed(2)}%
                       </div>
-                    )}
+                      <div className={`text-[11px] font-mono ${pnlTextColor} opacity-70`}>
+                        {isProfit ? '+' : ''}{(totalPnlAmt / 10000).toFixed(2)}万
+                      </div>
+                    </div>
+                    {/* 持仓市值 */}
+                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-center">
+                      <div className="text-[10px] text-white/30 mb-1">持仓市值</div>
+                      <div className="text-[16px] font-bold font-mono text-white/80">
+                        {(totalMarket / 10000).toFixed(2)}<span className="text-[11px] text-white/30 ml-0.5">万</span>
+                      </div>
+                      <div className="text-[11px] text-white/30 font-mono">成本 {(totalCost / 10000).toFixed(2)}万</div>
+                    </div>
+                    {/* 风险统计 */}
+                    <div className={`rounded-lg border p-3 text-center ${riskCount > 0 ? 'border-amber-500/20 bg-amber-500/[0.04]' : 'border-white/[0.06] bg-white/[0.02]'}`}>
+                      <div className="text-[10px] text-white/30 mb-1">风险信号</div>
+                      <div className={`text-[18px] font-bold font-mono ${riskCount > 0 ? 'text-amber-400' : 'text-white/30'}`}>
+                        {riskCount}
+                      </div>
+                      <div className="text-[11px] text-white/30">{signals.length}只持仓</div>
+                    </div>
                   </div>
+
+                  {/* 持仓权重分布条 */}
+                  {totalMarket > 0 && weightBars.length > 1 && (
+                    <div>
+                      <div className="text-[10px] text-white/25 mb-1.5">持仓权重分布</div>
+                      <div className="flex h-2 rounded-full overflow-hidden gap-px">
+                        {weightBars.map((b, i) => {
+                          const pct = totalMarket > 0 ? b.mv / totalMarket * 100 : 0;
+                          const colors = ['bg-cyan-500/50', 'bg-blue-500/50', 'bg-violet-500/50', 'bg-pink-500/50', 'bg-amber-500/50', 'bg-emerald-500/50'];
+                          return (
+                            <div
+                              key={b.code}
+                              className={`${colors[i % colors.length]} flex-shrink-0 transition-all`}
+                              style={{ width: `${pct}%` }}
+                              title={`${b.name || b.code} ${pct.toFixed(1)}%`}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                        {weightBars.slice(0, 5).map((b, i) => {
+                          const pct = totalMarket > 0 ? b.mv / totalMarket * 100 : 0;
+                          const dotColors = ['bg-cyan-500/60', 'bg-blue-500/60', 'bg-violet-500/60', 'bg-pink-500/60', 'bg-amber-500/60'];
+                          return (
+                            <span key={b.code} className="flex items-center gap-1 text-[10px] text-white/30">
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColors[i % dotColors.length]}`} />
+                              {b.name || b.code} {pct.toFixed(0)}%
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}
