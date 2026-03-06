@@ -12,6 +12,8 @@ import { ShareholderCard } from './ShareholderCard';
 import { PriceRangeBar } from './PriceRangeBar';
 import { TodaySnapshot } from './TodaySnapshot';
 import { KeyInsights } from './KeyInsights';
+import { DecisionCard } from './DecisionCard';
+import { SignalLights } from './SignalLights';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -110,58 +112,128 @@ const QuantPanel: React.FC<{
   );
 };
 
+/** 雷区警告横幅 —— 解禁/减持 强制首屏显示 */
+const DangerBanners: React.FC<{
+  upcomingUnlock: any;
+  insiderChanges: any;
+}> = ({ upcomingUnlock, insiderChanges }) => {
+  const banners: Array<{ key: string; level: 'red' | 'orange'; icon: string; text: string }> = [];
+
+  if (upcomingUnlock) {
+    const u = typeof upcomingUnlock === 'string' ? upcomingUnlock : JSON.stringify(upcomingUnlock);
+    const dateMatch = u.match(/\d{4}-\d{2}-\d{2}/);
+    if (dateMatch) {
+      const days = Math.round((new Date(dateMatch[0]).getTime() - Date.now()) / 86400000);
+      if (days >= 0 && days <= 30) {
+        banners.push({ key: 'unlock', level: 'red', icon: '⚠️', text: `解禁压力：${days}天后解禁（${dateMatch[0]}）` });
+      } else if (days > 30 && days <= 90) {
+        const sizeMatch = u.match(/(\d+\.?\d*)产南/) || u.match(/\d+\.?\d*亿/);
+        banners.push({ key: 'unlock', level: 'orange', icon: '📅', text: `近31日解禁: ${dateMatch[0]}${sizeMatch ? '，规模' + sizeMatch[0] : ''}` });
+      }
+    }
+  }
+
+  if (insiderChanges) {
+    const ic = typeof insiderChanges === 'string' ? insiderChanges : JSON.stringify(insiderChanges);
+    if (/净减持|大幅减持|大量减持/.test(ic)) {
+      const amtMatch = ic.match(/(\d+\.?\d*)万股/);
+      banners.push({ key: 'insider', level: 'orange', icon: '📉', text: `高管在减持${amtMatch ? '（挪售' + amtMatch[0] + '）' : '，请注意内幕交易风险'}` });
+    }
+  }
+
+  if (!banners.length) return null;
+
+  return (
+    <div className="space-y-1.5">
+      {banners.map(b => (
+        <div
+          key={b.key}
+          className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[12px] font-medium ${
+            b.level === 'red'
+              ? 'bg-red-500/10 border border-red-500/25 text-red-300'
+              : 'bg-orange-500/10 border border-orange-500/25 text-orange-300'
+          }`}
+        >
+          <span>{b.icon}</span>
+          <span>{b.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const HORIZON_LABELS: Record<string, string> = { short: '短线', mid: '中线', long: '长线' };
-const STAR_COLOR: Record<number, string> = { 0: 'text-white/15', 1: 'text-yellow-400/50', 2: 'text-yellow-400/80', 3: 'text-yellow-300' };
 
 /** 持仓时间维度建议卡片 */
+/** 持仓周期建议 —— 进度条可视化版 */
 const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) => {
-  const tiers = (['short', 'mid', 'long'] as const).map(k => ({ key: k, label: HORIZON_LABELS[k], ...horizon[k] }));
+  const items = (['short', 'mid', 'long'] as const).map(k => ({
+    key: k,
+    label: HORIZON_LABELS[k],
+    item: horizon[k],
+    isRec: horizon.recommended === k,
+  }));
+
+  const BAR_COLOR: Record<number, string> = {
+    0: 'bg-white/10',
+    1: 'bg-yellow-500/50',
+    2: 'bg-yellow-400/75',
+    3: 'bg-emerald-400',
+    4: 'bg-emerald-400',
+    5: 'bg-emerald-300',
+  };
+
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-      <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5 mb-3">
-        <span>⏱️</span> 持仓周期建议
-      </h3>
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        {tiers.map(({ key, label, stars, horizon: h, reasons }) => {
-          const isRec = horizon.recommended === key;
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-white/70">持仓周期建议</h3>
+        {horizon.summary && <span className="text-[10px] text-white/25">{horizon.summary}</span>}
+      </div>
+      <div className="space-y-3">
+        {items.map(({ key, label, item, isRec }) => {
+          const pct = Math.round((item.score / 5) * 100);
+          const barColor = BAR_COLOR[item.stars] ?? 'bg-white/20';
           return (
-            <div
-              key={key}
-              className={`rounded-lg p-2.5 border transition-all ${
-                isRec
-                  ? 'border-yellow-400/40 bg-yellow-400/[0.06]'
-                  : 'border-white/[0.05] bg-white/[0.02]'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[11px] font-semibold ${isRec ? 'text-yellow-300' : 'text-white/50'}`}>
-                  {label}
-                  {isRec && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-yellow-400/20 text-yellow-300">推荐</span>}
-                </span>
-                <span className={`text-[11px] font-mono ${STAR_COLOR[stars] ?? 'text-white/15'}`}>
-                  {'★'.repeat(stars)}{'☆'.repeat(3 - stars)}
+            <div key={key} className={`p-2.5 rounded-lg border ${
+              isRec ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-white/[0.02] border-white/[0.04]'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-xs font-semibold w-8 ${isRec ? 'text-emerald-400' : 'text-white/50'}`}>{label}</span>
+                <span className="text-[10px] text-white/25">{item.horizon}</span>
+                {isRec && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium ml-auto">推荐</span>
+                )}
+              </div>
+              {/* 进度条 */}
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className={`text-[11px] font-bold font-mono w-8 text-right ${isRec ? 'text-emerald-400' : 'text-white/40'}`}>
+                  {item.score}/5
                 </span>
               </div>
-              <div className="text-[10px] text-white/30 mb-1">{h}</div>
-              {reasons.length > 0 && (
-                <div className="text-[10px] text-white/40 leading-relaxed">
-                  {reasons.slice(0, 2).join(' · ')}
+              {item.reasons?.length > 0 && (
+                <div className="text-[10px] text-white/35 leading-relaxed">
+                  {item.reasons.slice(0, 3).join(' · ')}
                 </div>
               )}
-              {horizon[key]?.warnings && horizon[key].warnings!.length > 0 && (
-                <div className="text-[9px] text-amber-400/70 mt-0.5">
-                  ⚠️ {horizon[key].warnings![0]}
+              {item.warnings && item.warnings.length > 0 && (
+                <div className="mt-1.5 space-y-0.5">
+                  {item.warnings.map((w: string, i: number) => (
+                    <div key={i} className="text-[10px] text-orange-400/70 flex items-start gap-1">
+                      <span>⚠️</span><span>{w}</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           );
         })}
       </div>
-      {horizon.summary && (
-        <div className="text-[11px] text-white/50 border-t border-white/[0.04] pt-2">
-          💡 {horizon.summary}
-        </div>
-      )}
     </div>
   );
 };
@@ -247,6 +319,9 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
 
   return (
     <div className="space-y-3 animate-fade-in">
+      {/* 0. 雷区预警（解禁/减持，如有强制首屏）*/}
+      <DangerBanners upcomingUnlock={upcomingUnlock} insiderChanges={insiderChanges} />
+
       {/* 1. 股票概览（紧凑 Hero）*/}
       <ReportOverview
         meta={meta}
@@ -270,6 +345,17 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         resonanceLevel={resonanceLevel ?? undefined}
         capitalConflictWarning={capitalConflictWarning ?? undefined}
       />
+
+      {/* 1.5 三秒决策卡（操作/价格区间/止损/目标/盈交计算器）*/}
+      <DecisionCard
+        summary={summary}
+        strategy={strategy}
+        meta={meta}
+        totalCapital={totalCapital}
+      />
+
+      {/* 1.7 三色信号灯（技术面/基本面/资金面）*/}
+      <SignalLights quantExtras={quantExtras} />
 
       {/* 2. 持仓快照（有持仓时：紧凑一行，成本/浮盈/持有天数）*/}
       {positionInfo && (
