@@ -71,11 +71,6 @@ function maVerdict(alignment: string): { text: string; color: string } {
   return { text: alignment, color: 'text-warning' };
 }
 
-const getScoreColor = (score: number): string => {
-  if (score >= 70) return 'text-success';
-  if (score >= 40) return 'text-warning';
-  return 'text-danger';
-};
 
 // ============ 子组件 ============
 
@@ -105,7 +100,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
   const qe = data as Record<string, any>;
   if (!qe || Object.keys(qe).length === 0) return null;
 
-  const signalScore = qe.signal_score ?? qe.signalScore;
+  const buySignal = qe.buy_signal ?? qe.buySignal;
 
   // 提取指标值（兼容 snake_case / camelCase）
   const rsiVal = qe.rsi ?? qe.rsi12 ?? 50;
@@ -137,14 +132,18 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
       </button>
 
-      {/* 量化诊断结论（始终可见） */}
+      {/* 量化诊断结论（始终可见）—— 只显示信号标签，不显示数字评分 */}
       <div className="p-2.5 rounded-lg bg-white/[0.03] border border-white/[0.05] mb-3">
         <div className="flex items-center gap-2 mb-1.5">
-          <span className={`text-lg font-bold font-mono ${getScoreColor(signalScore)}`}>{signalScore ?? '--'}</span>
-          <span className="text-[11px] text-white/40">分</span>
-          {(qe.buy_signal ?? qe.buySignal) && (
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${signalScore >= 60 ? 'bg-green-500/15 text-green-400' : signalScore <= 40 ? 'bg-red-500/15 text-red-400' : 'bg-yellow-500/15 text-yellow-400'}`}>
-              {qe.buy_signal ?? qe.buySignal}
+          {buySignal && (
+            <span className={`text-sm font-semibold px-2.5 py-1 rounded ${
+              ['买入','强烈买入','激进买入','加仓'].includes(buySignal)
+                ? 'bg-green-500/15 text-green-400'
+                : ['清仓','减仓'].includes(buySignal)
+                  ? 'bg-red-500/15 text-red-400'
+                  : 'bg-yellow-500/15 text-yellow-400'
+            }`}>
+              {buySignal}
             </span>
           )}
         </div>
