@@ -585,80 +585,69 @@ class GeminiAnalyzer:
         else:
             prediction_accuracy_section = ""
 
-        # P3b: 组合 MaxDD 保守覆盖层
+        # ===== 合并守卫段：只注入已激活的约束，减少 prompt 冗余 =====
+        _constraint_items = []
+
+        # P3b: MaxDD Guard
         _mdd = context.get('max_dd_guard')
         if _mdd and isinstance(_mdd, dict) and _mdd.get('guard_level', 'normal') != 'normal':
             _gl = _mdd['guard_level']
             _dd_pct = _mdd.get('drawdown_pct', 0)
             _port_pct = _mdd.get('portfolio_return_pct', 0)
-            _guard_desc = _mdd.get('guard_desc', '')
-            _override_rule = {
-                'caution':   '仓位上限降至正常的50%，止损点收紧至1.5%内，买入信号需量化+舆情双重确认',
-                'defensive': '所有"买入"建议→改为"观望等待企稳"；所有"加仓"→改为"维持当前仓位"；止损线优先',
-                'halt':      '**所有新建仓操作暂停**。仅允许止损/减仓。已持仓若浮亏>个股止损线，立即止损。',
+            _mdd_rule = {
+                'caution':   '仓位上限降至50%，止损收紧至1.5%内，买入需量化+舆情双重确认',
+                'defensive': '"买入"→"观望"；"加仓"→"维持仓位"；止损线优先执行',
+                'halt':      '所有新建仓暂停，仅允许止损/减仓',
             }.get(_gl, '')
-            max_dd_guard_section = (
-                f"\n## 🛡️ 组合回撤保护（MaxDD Guard）\n"
-                f"- 当前状态: **{_gl.upper()}** | 组合浮盈{_port_pct:+.1f}% | 距峰值回撤{_dd_pct:+.1f}%\n"
-                f"- {_guard_desc}\n"
-                f"- **覆盖规则（优先级高于其他所有信号）**: {_override_rule}\n"
+            _constraint_items.append(
+                f"🛡️ **MaxDD Guard [{_gl.upper()}]** 组合浮盈{_port_pct:+.1f}% / 距峰值{_dd_pct:+.1f}% — {_mdd_rule}"
             )
-        else:
-            max_dd_guard_section = ""
 
-        # P9b: 信号质量守卫（IC质量退化时注入）
+        # P9b: IC Quality Guard
         _icg = context.get('ic_quality_guard')
         if _icg and isinstance(_icg, dict) and _icg.get('quality_level') not in ('strong', 'normal', None):
             _ic_val = _icg.get('ic', 0)
             _ic_level = _icg.get('quality_level', 'weak')
-            _ic_desc = _icg.get('quality_desc', '')
             _ic_n = _icg.get('n', 0)
-            ic_quality_guard_section = (
-                f"\n## 📉 信号质量守卫（IC Guard）\n"
-                f"- 近21日滚动IC={_ic_val:.4f}（基于{_ic_n}条回测样本），信号质量={_ic_level.upper()}\n"
-                f"- {_ic_desc}\n"
-                f"- **执行要求**：当IC<0时，所有买入类操作仓位减半，止损条件收紧；如已有充分止损保护则可维持仓位但不加仓。\n"
+            _ic_action = "买入类操作仓位减半，止损条件收紧" if _ic_val < 0 else "适当降低仓位，严格执行止损"
+            _constraint_items.append(
+                f"📉 **IC Guard [{_ic_level.upper()}]** 近21日IC={_ic_val:.3f}(n={_ic_n}) — {_ic_action}"
             )
-        else:
-            ic_quality_guard_section = ""
 
-        # 行业敞口守卫（集中风险时注入）
+        # Sector Exposure Guard
         _sex = context.get('sector_exposure')
         if _sex and isinstance(_sex, dict) and _sex.get('concentration_level') in ('concentrated', 'highly_concentrated'):
             _sec_breakdown = _sex.get('sector_breakdown', {})
-            _sec_lines = "; ".join(
-                f"{s}({d['pct']}%: {', '.join(d['stocks'])})"
-                for s, d in sorted(_sec_breakdown.items(), key=lambda x: -x[1]['pct'])
+            _sec_top = "; ".join(
+                f"{s}({d['pct']}%)"
+                for s, d in sorted(_sec_breakdown.items(), key=lambda x: -x[1]['pct'])[:3]
             )
-            sector_exposure_section = (
-                f"\n## 🏭 行业敞口守卫（Sector Exposure Guard）\n"
-                f"- 组合行业分布：{_sec_lines if _sec_lines else '数据不足'}\n"
-                f"- {_sex.get('concentration_desc', '')}\n"
-                f"- **执行要求**：如分析建议加仓该股且与最重仓行业一致，需额外注明行业集中风险，"
-                f"建议将单笔仓位上限降低20%，以控制行业系统性风险。\n"
+            _constraint_items.append(
+                f"🏭 **行业集中 [{_sex.get('concentration_level','').upper()}]** {_sec_top} — 本股加仓时单笔仓位上限降低20%"
             )
-        else:
-            sector_exposure_section = ""
 
-        # P2b: 宏观 Regime 覆盖层（Gemini flash 分类结果）
+        # P2b: Macro Regime Overlay
         _mac_regime = context.get('macro_regime')
         if _mac_regime and isinstance(_mac_regime, dict) and _mac_regime.get('regime'):
             _r = _mac_regime['regime']
             _conf = _mac_regime.get('confidence', 0)
             _rationale = _mac_regime.get('rationale', '')
             _regime_guidance = {
-                'BULL':   "宏观处于扩张期，流动性充裕/政策宽松，量化+基本面信号可正常执行。",
-                'NEUTRAL':"宏观中性，技术信号为主，建议合理控制仓位上限，关注政策边际变化。",
-                'BEAR':   "⚠️ 宏观处于收缩/熊市期：所有建议保守一级（买入→等待确认，加仓→维持），新建仓需更严格止损条件。",
-                'CRISIS': "🚨 宏观系统性风险期（流动性危机/极度恐慌）：**仅允许观望和止损操作，禁止新建仓**。",
+                'BULL':   "流动性充裕/政策宽松，量化+基本面信号可正常执行",
+                'NEUTRAL':"宏观中性，技术信号为主，合理控制仓位上限",
+                'BEAR':   "收缩期：买入→等待确认，加仓→维持，新建仓需更严格止损",
+                'CRISIS': "系统性风险期：仅允许观望和止损，禁止新建仓",
             }.get(_r, '')
-            macro_regime_overlay_section = (
-                f"\n## 🌐 宏观 Regime（AI分类，置信度{_conf:.0%}）\n"
-                f"- 当前状态: **{_r}** — {_rationale}\n"
-                f"- 操作指引: {_regime_guidance}\n"
-            ) if _regime_guidance else ""
-        else:
-            macro_regime_overlay_section = ""
+            if _regime_guidance:
+                _constraint_items.append(
+                    f"🌐 **宏观Regime [{_r}]** 置信度{_conf:.0%}（{_rationale}）— {_regime_guidance}"
+                )
+
+        constraints_section = (
+            "\n## ⚠️ 组合约束（优先级高于以下所有建议，必须遵守）\n"
+            + "\n".join(f"- {item}" for item in _constraint_items)
+            + "\n"
+        ) if _constraint_items else ""
 
         # P2a-2: 组合 Beta section
         _pb = context.get('portfolio_beta')
@@ -753,10 +742,14 @@ class GeminiAnalyzer:
         if not _position_sizing_hint:
             _position_sizing_hint = "{method: '2%-risk-rule', suggested_pct: 'LLM自行估算', rationale: '请基于技术分析确定合理仓位'}"
 
-        # IC衰减实证：信号在第5个交易日达到IC峰値(0.20)，第10日IC反转(-0.13)——最优持仓期不超过7个交易日
+        # 动态 IC 说明（从实时计算结果取值，不再硬编码历史样本数字）
+        _ic_hint_str = ""
+        if _icg and isinstance(_icg, dict) and _icg.get('ic') is not None:
+            _ic_cur = _icg.get('ic', 0)
+            _ic_n_val = _icg.get('n', 0)
+            _ic_hint_str = f"近21日滚动IC={_ic_cur:.2f}(n={_ic_n_val})"
         time_horizon_hint = ("'短线(日内)' 或 '短线(1-3日)'" if is_intraday
-                             else "'短线(3-5日)'（基于回测 IC分析最优） 或 '中线(1-4周)'."
-                                  "注意：当前信号在第5个交易日达到有效性峰値，超过7日信号开始衰减我们的IC分析显示10日IC=-0.13）"
+                             else f"'短线(3-5日)' 或 '中线(1-4周)'（{_ic_hint_str or '样本不足'}，信号有效性建议持仓不超过7交易日）"
                              )
 
         # 持仓信息注入（仅持仓者视角时）
@@ -936,7 +929,7 @@ Step 4（{_has_pos_label}） - 结论：
 {f10_str}{sector_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{max_dd_guard_section}{ic_quality_guard_section}{sector_exposure_section}{macro_regime_overlay_section}{portfolio_beta_section}{peer_ranking_section}{holding_horizon_section}
+{data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{holding_horizon_section}
 ## JSON 输出协议
 {'**无量化技术信号，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '**你是最终决策者**，量化技术面仅整理了原始技术信号供你参考（不含评分结论）。请基于上述所有信息独立给出评分和操作建议。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：

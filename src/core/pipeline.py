@@ -1479,6 +1479,18 @@ class StockAnalysisPipeline:
                 else:
                     result.decision_type = 'hold'
 
+            # === 市场策略蓝图：后处理规则引擎（硬约束覆盖，优先级高于所有信号）===
+            # 在 LLM+量化+仓位重映射全部完成后，根据宏观 Regime/MaxDD Guard 施加最终约束
+            try:
+                from src.core.regime_rules import apply_regime_constraints
+                apply_regime_constraints(
+                    result=result,
+                    macro_regime=macro_regime,
+                    max_dd_guard=max_dd_guard,
+                )
+            except Exception as _rre:
+                logger.debug(f"[RegimeRules] 规则引擎跳过: {_rre}")
+
             # === 改进1: 今日变化对比 ===
             history = context.get('history_summary')
             if history and isinstance(history, dict) and history.get('score') is not None:
