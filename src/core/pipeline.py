@@ -100,6 +100,11 @@ import threading as _threading
 _shareholder_warmup_lock = _threading.Lock()
 _shareholder_warmup_done = _threading.Event()
 
+# 宏观情报内存缓存：防止多个并发 pipeline 实例同时触发 Perplexity（thundering herd）
+# TTL=1800s(30min)，超过则重新拉取
+_macro_intel_mem_cache: dict = {'data': None, 'ts': 0.0}
+_macro_intel_mem_lock = _threading.Lock()
+
 class StockAnalysisPipeline:
     """
     股票分析流水线 (最终完整修复版)
@@ -254,54 +259,76 @@ class StockAnalysisPipeline:
 
     def _get_macro_intel(self, save_to_db: bool = False, portfolio_sectors: list = None) -> Optional[str]:
         """
-        获取宏观情报文本（含6大维度）。先查 news_intel DB 缓存（TTL=4h），命中则复用；
-        未命中则调用 Perplexity，结果落库。
+        获取宏观情报文本（含6大维度）。先查内存缓存（TTL=30min），再查 news_intel DB 缓存（TTL=4h），
+        未命中则调用 Perplexity，结果落库。内存锁防止多个并发 pipeline 实例重复调用（thundering herd）。
         """
+        import time as _time
         MACRO_CODE = "__MACRO__"
         MACRO_TTL_HOURS = 4
+        MACRO_MEM_TTL = 1800  # 30分钟内存缓存
 
-        # 1. 查缓存
-        try:
-            items = self.storage.get_recent_news(MACRO_CODE, days=1, limit=1, provider="perplexity")
-            if items:
-                from datetime import timedelta
-                cutoff = datetime.now() - timedelta(hours=MACRO_TTL_HOURS)
-                fresh = [n for n in items if getattr(n, "fetched_at", None) and n.fetched_at >= cutoff]
-                if fresh:
-                    logger.info("🌐 [宏观情报] 命中缓存，复用已有宏观研报")
-                    return getattr(fresh[0], "snippet", None) or getattr(fresh[0], "title", None)
-        except Exception as e:
-            logger.debug(f"[宏观情报] 缓存读取失败: {e}")
+        # 0. 快速检查内存缓存（无锁读，过期才加锁）
+        _now = _time.time()
+        if _macro_intel_mem_cache['data'] is not None and (_now - _macro_intel_mem_cache['ts']) < MACRO_MEM_TTL:
+            logger.debug("🌐 [宏观情报] 命中内存缓存，跳过 Perplexity")
+            return _macro_intel_mem_cache['data']
 
-        # 2. 缓存未命中，调用 Perplexity
-        if not self.search_service:
-            logger.debug("[宏观情报] search_service 未配置，跳过")
+        # 加锁后再检查一次内存缓存（防止等锁期间其他线程已更新）
+        with _macro_intel_mem_lock:
+            _now2 = _time.time()
+            if _macro_intel_mem_cache['data'] is not None and (_now2 - _macro_intel_mem_cache['ts']) < MACRO_MEM_TTL:
+                logger.debug("🌐 [宏观情报] 命中内存缓存（锁内二次检查），跳过 Perplexity")
+                return _macro_intel_mem_cache['data']
+
+            # 1. 查 DB 缓存
+            try:
+                items = self.storage.get_recent_news(MACRO_CODE, days=1, limit=1, provider="perplexity")
+                if items:
+                    from datetime import timedelta
+                    cutoff = datetime.now() - timedelta(hours=MACRO_TTL_HOURS)
+                    fresh = [n for n in items if getattr(n, "fetched_at", None) and n.fetched_at >= cutoff]
+                    if fresh:
+                        logger.info("🌐 [宏观情报] 命中缓存，复用已有宏观研报")
+                        _result = getattr(fresh[0], "snippet", None) or getattr(fresh[0], "title", None)
+                        if _result:
+                            _macro_intel_mem_cache['data'] = _result
+                            _macro_intel_mem_cache['ts'] = _time.time()
+                        return _result
+            except Exception as e:
+                logger.debug(f"[宏观情报] 缓存读取失败: {e}")
+
+            # 2. 缓存未命中，调用 Perplexity
+            if not self.search_service:
+                logger.debug("[宏观情报] search_service 未配置，跳过")
+                return None
+            if not getattr(self.search_service, 'provider', None):
+                return None
+
+            try:
+                logger.info("🌐 [宏观情报] 调用 Perplexity 获取6维宏观研报...")
+                resp = self.search_service.search_macro_context(portfolio_sectors=portfolio_sectors)
+                if resp and getattr(resp, 'success', False) and resp.results:
+                    content = resp.results[0].snippet or resp.results[0].title or ""
+                    if content and save_to_db:
+                        try:
+                            self.storage.save_news_intel(
+                                MACRO_CODE, "宏观情报", dimension="macro_context",
+                                query="宏观6维研报", response=resp,
+                                query_context={"query_source": "macro_batch"}
+                            )
+                        except Exception as _e:
+                            logger.debug(f"[宏观情报] 落库跳过: {_e}")
+                    if content:
+                        _macro_intel_mem_cache['data'] = content
+                        _macro_intel_mem_cache['ts'] = _time.time()
+                    logger.info("🌐 [宏观情报] 获取成功，已注入全批次")
+                    return content
+                else:
+                    reason = getattr(resp, 'error', '未知') if resp else '响应为空'
+                    logger.warning(f"🌐 [宏观情报] Perplexity 返回失败: {reason}")
+            except Exception as e:
+                logger.warning(f"🌐 [宏观情报] 搜索异常: {e}")
             return None
-        if not getattr(self.search_service, 'provider', None):
-            return None
-
-        try:
-            logger.info("🌐 [宏观情报] 调用 Perplexity 获取6维宏观研报...")
-            resp = self.search_service.search_macro_context(portfolio_sectors=portfolio_sectors)
-            if resp and getattr(resp, 'success', False) and resp.results:
-                content = resp.results[0].snippet or resp.results[0].title or ""
-                if content and save_to_db:
-                    try:
-                        self.storage.save_news_intel(
-                            MACRO_CODE, "宏观情报", dimension="macro_context",
-                            query="宏观6维研报", response=resp,
-                            query_context={"query_source": "macro_batch"}
-                        )
-                    except Exception as _e:
-                        logger.debug(f"[宏观情报] 落库跳过: {_e}")
-                logger.info("🌐 [宏观情报] 获取成功，已注入全批次")
-                return content
-            else:
-                reason = getattr(resp, 'error', '未知') if resp else '响应为空'
-                logger.warning(f"🌐 [宏观情报] Perplexity 返回失败: {reason}")
-        except Exception as e:
-            logger.warning(f"🌐 [宏观情报] 搜索异常: {e}")
-        return None
 
     def _classify_macro_regime(self, macro_intel_text: str) -> Optional[Dict[str, Any]]:
         """
