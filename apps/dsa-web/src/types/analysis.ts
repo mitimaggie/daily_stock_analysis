@@ -134,6 +134,24 @@ export interface HoldingStrategy {
   entryAdvice?: string;
 }
 
+/** 持仓时间维度单档评级 */
+export interface HoldingHorizonItem {
+  stars: number;       // 0-3
+  score: number;       // 0-5
+  reasons: string[];
+  horizon: string;     // e.g. "1-10天"
+  warnings?: string[]; // 价值陷阱等警告信息（如有）
+}
+
+/** 持仓时间维度建议（短线/中线/长线） */
+export interface HoldingHorizon {
+  short: HoldingHorizonItem;
+  mid: HoldingHorizonItem;
+  long: HoldingHorizonItem;
+  recommended: 'short' | 'mid' | 'long' | 'none';
+  summary: string;
+}
+
 /** 策略点位区 */
 export interface ReportStrategy {
   idealBuy?: string;
@@ -147,6 +165,7 @@ export interface ReportStrategy {
   takeProfitPlan?: string;
   keyPriceLevels?: KeyPriceLevel[];
   holdingStrategy?: HoldingStrategy;
+  holdingHorizon?: HoldingHorizon;
 }
 
 /** 详情区（可折叠） */

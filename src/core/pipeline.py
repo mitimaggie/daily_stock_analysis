@@ -1322,6 +1322,14 @@ class StockAnalysisPipeline:
                     _trend_obj, cost_price=_user_cost,
                 )
 
+                # === 持仓时间维度建议（短线/中线/长线）===
+                _trend_result_for_horizon = context.get('trend_result')
+                if _trend_result_for_horizon is not None:
+                    try:
+                        dashboard['holding_horizon'] = _RM.generate_holding_horizon(_trend_result_for_horizon)
+                    except Exception as _hh_e:
+                        logger.debug(f"[{code}] 持仓时间维度计算失败(非致命): {_hh_e}")
+
                 # === 场景识别+操作建议（generate_trade_advice）===
                 # 需要真实的TrendAnalysisResult对象，从_prepare_stock_context中取
                 _trend_result_obj = context.get('trend_result')
@@ -1446,6 +1454,20 @@ class StockAnalysisPipeline:
                         f"（基本面/资金风险，回测0-33%胜率avg-0.65~-4.06%）"
                     )
                     result.operation_advice = '观望'
+
+                # === 持仓感知建议重映射 ===
+                # 未持仓时，"清仓"/"减仓"/"持有" 对空仓者无意义，统一映射为 "观望"
+                # 持仓时，买入类信号映射为更贴切的 "加仓"
+                _has_pos_for_advice = bool(position_info and any(
+                    position_info.get(k) for k in ('cost_price', 'position_amount', 'total_capital')
+                ))
+                _cur_adv = (result.operation_advice or '').strip()
+                if not _has_pos_for_advice:
+                    _no_pos_map = {'清仓': '观望', '减仓': '观望', '持有': '观望'}
+                    _remapped = _no_pos_map.get(_cur_adv)
+                    if _remapped:
+                        logger.debug(f"[{code}] 空仓建议重映射: {_cur_adv} → {_remapped}")
+                        result.operation_advice = _remapped
 
                 # 决策类型
                 advice = result.operation_advice

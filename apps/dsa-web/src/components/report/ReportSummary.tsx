@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { AnalysisResult, AnalysisReport } from '../../types/analysis';
+import type { AnalysisResult, AnalysisReport, HoldingHorizon } from '../../types/analysis';
 import { ReportOverview } from './ReportOverview';
 import { TradeLog } from '../trade/TradeLog';
 import { ReportStrategy } from './ReportStrategy';
@@ -104,6 +104,62 @@ const QuantPanel: React.FC<{
         <div className="border-t border-white/[0.04] space-y-3 p-3">
           {quantExtras && <QuantAnalysis data={quantExtras} />}
           {quantVsAi && <QuantVsAi data={quantVsAi} skillUsed={skillUsed} />}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const HORIZON_LABELS: Record<string, string> = { short: '短线', mid: '中线', long: '长线' };
+const STAR_COLOR: Record<number, string> = { 0: 'text-white/15', 1: 'text-yellow-400/50', 2: 'text-yellow-400/80', 3: 'text-yellow-300' };
+
+/** 持仓时间维度建议卡片 */
+const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) => {
+  const tiers = (['short', 'mid', 'long'] as const).map(k => ({ key: k, label: HORIZON_LABELS[k], ...horizon[k] }));
+  return (
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+      <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5 mb-3">
+        <span>⏱️</span> 持仓周期建议
+      </h3>
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {tiers.map(({ key, label, stars, horizon: h, reasons }) => {
+          const isRec = horizon.recommended === key;
+          return (
+            <div
+              key={key}
+              className={`rounded-lg p-2.5 border transition-all ${
+                isRec
+                  ? 'border-yellow-400/40 bg-yellow-400/[0.06]'
+                  : 'border-white/[0.05] bg-white/[0.02]'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-[11px] font-semibold ${isRec ? 'text-yellow-300' : 'text-white/50'}`}>
+                  {label}
+                  {isRec && <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-yellow-400/20 text-yellow-300">推荐</span>}
+                </span>
+                <span className={`text-[11px] font-mono ${STAR_COLOR[stars] ?? 'text-white/15'}`}>
+                  {'★'.repeat(stars)}{'☆'.repeat(3 - stars)}
+                </span>
+              </div>
+              <div className="text-[10px] text-white/30 mb-1">{h}</div>
+              {reasons.length > 0 && (
+                <div className="text-[10px] text-white/40 leading-relaxed">
+                  {reasons.slice(0, 2).join(' · ')}
+                </div>
+              )}
+              {horizon[key]?.warnings && horizon[key].warnings!.length > 0 && (
+                <div className="text-[9px] text-amber-400/70 mt-0.5">
+                  ⚠️ {horizon[key].warnings![0]}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {horizon.summary && (
+        <div className="text-[11px] text-white/50 border-t border-white/[0.04] pt-2">
+          💡 {horizon.summary}
         </div>
       )}
     </div>
@@ -298,6 +354,11 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         positionDiagnosis={positionDiagnosis}
         suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
       />
+
+      {/* 4.5 持仓周期建议（短线/中线/长线）*/}
+      {strategy?.holdingHorizon && strategy.holdingHorizon.recommended !== 'none' && (
+        <HoldingHorizonCard horizon={strategy.holdingHorizon} />
+      )}
 
       {/* 5. 关键价位（有时才显示）*/}
       {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (

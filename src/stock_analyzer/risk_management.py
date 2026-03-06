@@ -7,7 +7,7 @@
 import logging
 import pandas as pd
 from typing import List, Tuple, Dict, Any, Optional
-from .types import TrendAnalysisResult, TrendStatus, MarketRegime, RSIStatus, VolumeStatus
+from .types import TrendAnalysisResult, TrendStatus, MarketRegime, RSIStatus, VolumeStatus, MACDStatus
 
 logger = logging.getLogger(__name__)
 
@@ -643,21 +643,33 @@ class RiskManager:
         # 3. 突破价位（阻力位）
         if result.resistance_levels:
             first_res = result.resistance_levels[0]
+            if has_position:
+                _brk_action = '突破加仓'
+                _brk_desc = f'突破{first_res:.2f}(第一阻力)→确认上攻，可加仓'
+            else:
+                _brk_action = '追入信号'
+                _brk_desc = f'突破{first_res:.2f}(第一阻力)→确认上攻，可考虑入场'
             watchlist.append({
                 'price': first_res,
                 'type': 'breakout',
-                'action': '突破加仓',
-                'desc': f'突破{first_res:.2f}(第一阻力)→确认上攻，可加仓',
+                'action': _brk_action,
+                'desc': _brk_desc,
                 'priority': 2,
             })
         
-        # 4. 止盈价位
+        # 4. 止盈/目标价位
         if result.take_profit_short > 0:
+            if has_position:
+                _tp_action = '短线止盈'
+                _tp_desc = f'到达{result.take_profit_short:.2f}→第一批止盈(1/3仓位)'
+            else:
+                _tp_action = '目标价位'
+                _tp_desc = f'到达{result.take_profit_short:.2f}→短线目标价位，可分批止盈'
             watchlist.append({
                 'price': result.take_profit_short,
                 'type': 'take_profit',
-                'action': '短线止盈',
-                'desc': f'到达{result.take_profit_short:.2f}→第一批止盈(1/3仓位)',
+                'action': _tp_action,
+                'desc': _tp_desc,
                 'priority': 3,
             })
         
@@ -739,6 +751,182 @@ class RiskManager:
             conflict_text = " | ".join(result._conflict_warnings)
             result.advice_for_empty = f"{result.advice_for_empty} [{conflict_text}]"
             result.advice_for_holding = f"{result.advice_for_holding} [{conflict_text}]"
+
+    @staticmethod
+    def generate_holding_horizon(result: TrendAnalysisResult) -> Dict[str, Any]:
+        """
+        生成持仓时间维度建议（短线/中线/长线三档评级）
+
+        基于现有技术指标和基本面数据，为不同时间周期的持仓策略给出星级评分（0-3星）和依据。
+        注意：此方法只做纯规则计算，不修改 result 字段。
+        """
+        score = result.signal_score or 0
+        trend = result.trend_status
+        macd = result.macd_status
+        rsi_status = result.rsi_status
+        bb_width = getattr(result, 'bb_width', 0) or 0
+        vr = result.volume_ratio or 1.0
+        weekly = getattr(result, 'weekly_trend', '') or ''
+        valuation_verdict = getattr(result, 'valuation_verdict', '') or ''
+        fundamental_score = getattr(result, 'fundamental_score', 5) or 5
+        fundamental_signal = getattr(result, 'fundamental_signal', '') or ''
+        pb_ratio = getattr(result, 'pb_ratio', 0) or 0
+        _is_strong_bear = trend == TrendStatus.STRONG_BEAR
+        _is_bear = trend in [TrendStatus.BEAR, TrendStatus.STRONG_BEAR]
+
+        weekly_strong_bull = '多头' in weekly and '弱' not in weekly
+        weekly_bull = '多头' in weekly or '弱多头' in weekly
+
+        # ── 短线评分 (博弈1-10天) ────────────────────────────────────
+        s_score = 0
+        s_reasons: list = []
+
+        # 修复1: RSI超卖在强空头趋势下是飞刀，不加分
+        rsi_oversold = rsi_status in [RSIStatus.OVERSOLD, RSIStatus.GOLDEN_CROSS_OVERSOLD]
+        if rsi_oversold and not _is_strong_bear:
+            s_score += 2
+            s_reasons.append("RSI超卖")
+
+        # 修复2: 布林带收口需方向确认，空头趋势收口是下杀蓄力，不是做多信号
+        if bb_width > 0 and bb_width < 0.06 and not _is_bear:
+            s_score += 2
+            s_reasons.append("布林带收口（蓄势待发）")
+
+        if vr >= 2.0:
+            s_score += 1
+            s_reasons.append(f"量比{vr:.1f}x异动")
+
+        if macd in [MACDStatus.GOLDEN_CROSS, MACDStatus.GOLDEN_CROSS_ZERO]:
+            s_score += 1
+            s_reasons.append("MACD金叉")
+
+        if trend in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
+            s_score += 1
+            s_reasons.append("日线趋势支撑")
+        elif _is_strong_bear:
+            s_score -= 1
+
+        s_score = max(0, min(5, s_score))
+        s_stars = 0 if s_score <= 1 else (1 if s_score <= 2 else (2 if s_score <= 3 else 3))
+
+        # ── 中线评分 (趋势10-30天) ───────────────────────────────────
+        m_score = 0
+        m_reasons: list = []
+
+        if weekly_strong_bull:
+            m_score += 2
+            m_reasons.append("周线强多头")
+        elif weekly_bull:
+            m_score += 1
+            m_reasons.append("周线多头")
+
+        if trend == TrendStatus.STRONG_BULL:
+            m_score += 2
+            m_reasons.append("日线强多头")
+        elif trend in [TrendStatus.BULL, TrendStatus.WEAK_BULL]:
+            m_score += 1
+            m_reasons.append("日线偏多")
+        elif _is_bear:
+            m_score -= 1
+
+        if score >= 70:
+            m_score += 1
+            m_reasons.append(f"技术面{score}分")
+        elif score < 35:
+            m_score -= 1
+
+        m_score = max(0, min(5, m_score))
+        m_stars = 0 if m_score <= 1 else (1 if m_score <= 2 else (2 if m_score <= 3 else 3))
+
+        # ── 长线评分 (价值30天+) ─────────────────────────────────────
+        # 修复3: 去掉板块强势（短中期因素），加入基本面质量检验，规避价值陷阱
+        l_score = 0
+        l_reasons: list = []
+        l_warnings: list = []
+
+        # 基本面数据可用性判断（efinance/akshare 被封时 fundamental_score 停留在默认值 5）
+        # 判据：pb_ratio>0 或 fundamental_signal 不为空 → 有真实数据
+        _fundamental_available = pb_ratio > 0 or bool(fundamental_signal) or fundamental_score != 5
+
+        if not _fundamental_available:
+            l_warnings.append("基本面数据暂不可用（可能因数据源封禁）")
+
+        # 价值陷阱检测：低PB但基本面差 = 钢铁/煤炭等周期陷阱（仅在数据可用时检测）
+        _is_value_trap = _fundamental_available and (
+            (0 < pb_ratio < 1.2 and fundamental_score < 4)
+            or any(k in fundamental_signal for k in ('亏损', '利润下滑', 'ST', '连续亏'))
+        )
+
+        if '低估' in valuation_verdict:
+            if _is_value_trap:
+                l_warnings.append("低估但基本面弱（疑似价值陷阱）")
+            else:
+                l_score += 2
+                l_reasons.append("估值低估")
+        elif '合理' in valuation_verdict:
+            l_score += 1
+            l_reasons.append("估值合理")
+        elif any(k in valuation_verdict for k in ('高估', '泡沫', '偏高')):
+            l_score -= 1
+
+        # 基本面质量 — ROE/成长性综合评分（用fundamental_score代理）
+        # 数据不可用时跳过，避免用默认值5给出虚假评分
+        if _fundamental_available:
+            if fundamental_score >= 7:
+                l_score += 2
+                l_reasons.append(f"基本面优质(评分{fundamental_score}/10)")
+            elif fundamental_score >= 5:
+                l_score += 1
+                l_reasons.append("基本面稳健")
+            elif fundamental_score < 3:
+                l_score -= 1
+                l_warnings.append("基本面偏弱")
+
+        if weekly_strong_bull:
+            l_score += 1
+            l_reasons.append("周线趋势强劲")
+
+        if score >= 78:
+            l_score += 1
+            l_reasons.append("技术面良好")
+        elif score < 35:
+            l_score -= 2
+
+        l_score = max(0, min(5, l_score))
+        l_stars = 0 if l_score <= 1 else (1 if l_score <= 2 else (2 if l_score <= 3 else 3))
+        # 有价值陷阱警告时，长线最多1星
+        if l_warnings and l_stars > 1:
+            l_stars = 1
+
+        # ── 推荐结论 ─────────────────────────────────────────────────
+        stars_map = {'short': s_stars, 'mid': m_stars, 'long': l_stars}
+        max_stars = max(stars_map.values())
+
+        if max_stars == 0:
+            recommended = 'none'
+            summary = "当前三个时间维度信号均偏弱，建议观望等待更明确信号"
+        else:
+            best = max(stars_map, key=stars_map.get)
+            recommended = best
+            if best == 'short':
+                r = '、'.join(s_reasons[:3]) if s_reasons else '短线技术信号'
+                summary = f"短线机会突出：{r}，适合博弈短期波动（1-10天）"
+            elif best == 'mid':
+                r = '、'.join(m_reasons[:3]) if m_reasons else '中线趋势信号'
+                summary = f"中线持有价值较高：{r}，建议中线参与（10-30天）"
+            else:
+                r = '、'.join(l_reasons[:3]) if l_reasons else '基本面支撑'
+                summary = f"长线布局价值突出：{r}，适合长线持有（30天+）"
+                if l_warnings:
+                    summary += f"；⚠️ {l_warnings[0]}"
+
+        return {
+            'short': {'stars': s_stars, 'score': s_score, 'reasons': s_reasons[:4], 'horizon': '1-10天'},
+            'mid':   {'stars': m_stars, 'score': m_score, 'reasons': m_reasons[:4], 'horizon': '10-30天'},
+            'long':  {'stars': l_stars, 'score': l_score, 'reasons': l_reasons[:4], 'horizon': '30天+', 'warnings': l_warnings},
+            'recommended': recommended,
+            'summary': summary,
+        }
 
     @staticmethod
     def generate_holding_strategy(

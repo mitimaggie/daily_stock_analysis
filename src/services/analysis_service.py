@@ -241,6 +241,9 @@ class AnalysisService:
         take_profit_plan = quant_extras.get("take_profit_plan", "")
         risk_reward_ratio = quant_extras.get("risk_reward_ratio", None)
         
+        # === 持仓时间维度建议（短线/中线/长线）===
+        holding_horizon = dashboard.get("holding_horizon") or {}
+        
         # 构建报告结构（全部 getattr 兼容本仓库 AnalysisResult 字段）
         report = {
             "meta": {
@@ -272,6 +275,7 @@ class AnalysisService:
                 "take_profit_plan": take_profit_plan,
                 "key_price_levels": key_price_levels,
                 "holding_strategy": holding_strategy,
+                "holding_horizon": holding_horizon,
             },
             "today_snapshot": today_snapshot,
             "details": {
