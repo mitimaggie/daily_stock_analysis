@@ -95,6 +95,11 @@ from src.enums import ReportType
 
 logger = logging.getLogger(__name__)
 
+# 全局标记：防止多个 pipeline 实例同时启动 shareholder 预热线程（libmini_racer 不支持并发）
+import threading as _threading
+_shareholder_warmup_lock = _threading.Lock()
+_shareholder_warmup_done = _threading.Event()
+
 class StockAnalysisPipeline:
     """
     股票分析流水线 (最终完整修复版)
@@ -162,14 +167,27 @@ class StockAnalysisPipeline:
             logger.warning("📊 [大盘监控] 未加载，个股分析将不注入大盘环境（请检查 data_provider.market_monitor 与 akshare）")
 
         # P3: 后台预热 shareholder_fetcher 增减持缓存，避免首次分析延迟
-        try:
-            import threading
-            from data_provider.shareholder_fetcher import _refresh_insider_cache
-            _warmup_thread = threading.Thread(target=_refresh_insider_cache, daemon=True, name="shareholder-warmup")
-            _warmup_thread.start()
-            logger.info("🔄 [股东数据] 后台预热线程已启动（增减持全量缓存）")
-        except Exception as _warm_e:
-            logger.debug(f"[股东数据] 后台预热跳过: {_warm_e}")
+        # 使用全局锁确保只有一个线程执行（libmini_racer 不支持并发，多 pipeline 并发时会崩溃）
+        if not _shareholder_warmup_done.is_set() and _shareholder_warmup_lock.acquire(blocking=False):
+            try:
+                import threading
+                from data_provider.shareholder_fetcher import _refresh_insider_cache
+
+                def _warmup_with_flag():
+                    try:
+                        _refresh_insider_cache()
+                    finally:
+                        _shareholder_warmup_done.set()
+                        _shareholder_warmup_lock.release()
+
+                _warmup_thread = threading.Thread(target=_warmup_with_flag, daemon=True, name="shareholder-warmup")
+                _warmup_thread.start()
+                logger.info("🔄 [股东数据] 后台预热线程已启动（增减持全量缓存）")
+            except Exception as _warm_e:
+                _shareholder_warmup_lock.release()
+                logger.debug(f"[股东数据] 后台预热跳过: {_warm_e}")
+        else:
+            logger.debug("🔄 [股东数据] 预热已在执行中，跳过重复启动")
 
     def fetch_and_save_stock_data(self, code: str) -> (bool, str, Any, Any):
         """获取数据并落库，保证下次可做「历史+实时」拼接。
