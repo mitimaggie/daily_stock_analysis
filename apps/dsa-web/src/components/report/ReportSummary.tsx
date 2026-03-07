@@ -238,6 +238,74 @@ const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) 
   );
 };
 
+const SKILL_NAME_CN: Record<string, string> = {
+  policy_tailwind: 'A股政策顺风',
+  northbound_smart: '北向聪明钱',
+  ashare_growth_value: 'A股成长价值',
+  default: '通用',
+};
+
+const SkillAnalysisCard: React.FC<{
+  skillAnalysis: Record<string, any>;
+  skillUsed?: string | null;
+}> = ({ skillAnalysis, skillUsed }) => {
+  const [expanded, setExpanded] = useState(false);
+  const primaryName = SKILL_NAME_CN[skillUsed ?? ''] ?? skillUsed ?? '框架';
+  const secondaryName = skillAnalysis.secondary
+    ? (SKILL_NAME_CN[skillAnalysis.secondary] ?? skillAnalysis.secondary)
+    : null;
+  const hasSecondary = !!skillAnalysis.secondary_analysis;
+  const integratedNote = skillAnalysis.integrated_note;
+
+  return (
+    <div className="rounded-xl bg-[var(--bg-card)] border border-violet-500/20">
+      <button
+        type="button"
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-bold text-violet-300/90">🧠 {primaryName}框架深度分析</span>
+          {secondaryName && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400/70 border border-violet-500/15">
+              +{secondaryName}
+            </span>
+          )}
+        </div>
+        <svg
+          className={`w-3.5 h-3.5 text-white/30 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3 border-t border-violet-500/10">
+          {skillAnalysis.primary_analysis && (
+            <div className="pt-3">
+              <div className="text-[10px] text-white/25 mb-1.5 font-mono">{primaryName} · 主框架</div>
+              <p className="text-[12px] text-white/70 leading-relaxed whitespace-pre-wrap">{skillAnalysis.primary_analysis}</p>
+            </div>
+          )}
+          {hasSecondary && skillAnalysis.secondary_analysis && (
+            <div className="border-t border-white/[0.05] pt-3">
+              <div className="text-[10px] text-white/25 mb-1.5 font-mono">
+                {secondaryName} · {skillAnalysis.convergent ? '增强确认' : '压力测试'}
+              </div>
+              <p className="text-[12px] text-white/60 leading-relaxed whitespace-pre-wrap">{skillAnalysis.secondary_analysis}</p>
+            </div>
+          )}
+          {integratedNote && (
+            <div className="rounded-lg px-3 py-2 bg-violet-500/[0.06] border border-violet-500/15 text-[11px] text-violet-300/80 leading-relaxed">
+              {integratedNote}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /**
  * 报告展示组件 — AI优先布局
  *
@@ -262,15 +330,16 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const { meta, summary, strategy, details } = report;
 
   // P3/P4 data from contextSnapshot
-  const { insiderChanges, upcomingUnlock, repurchase, priceRange52w, predictionAccuracy } = useMemo(() => {
+  const { insiderChanges, upcomingUnlock, repurchase, priceRange52w, predictionAccuracy, northboundHolding } = useMemo(() => {
     const ctx = details?.contextSnapshot as Record<string, any> | undefined;
-    if (!ctx) return { insiderChanges: undefined, upcomingUnlock: undefined, repurchase: undefined, priceRange52w: undefined, predictionAccuracy: undefined };
+    if (!ctx) return { insiderChanges: undefined, upcomingUnlock: undefined, repurchase: undefined, priceRange52w: undefined, predictionAccuracy: undefined, northboundHolding: null };
     return {
       insiderChanges: ctx.insider_changes ?? ctx.insiderChanges,
       upcomingUnlock: ctx.upcoming_unlock ?? ctx.upcomingUnlock,
       repurchase: ctx.repurchase,
       priceRange52w: ctx.price_range_52w ?? ctx.priceRange52w,
       predictionAccuracy: ctx.prediction_accuracy ?? ctx.predictionAccuracy,
+      northboundHolding: ctx.northbound_holding ?? ctx.northboundHolding ?? null,
     };
   }, [details?.contextSnapshot]);
 
@@ -280,7 +349,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
     scoreMomentumAdj, positionDiagnosis, actionNow,
     executionDifficulty, executionNote, behavioralWarning,
     skillUsed, resonanceLevel, capitalConflictWarning,
-    profitTakePlan, analysisScene,
+    profitTakePlan, analysisScene, skillAnalysis,
   } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
     if (!raw) return {
@@ -289,7 +358,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null,
       executionDifficulty: null, executionNote: null, behavioralWarning: null,
       skillUsed: null, resonanceLevel: null, capitalConflictWarning: null,
-      profitTakePlan: null, analysisScene: null,
+      profitTakePlan: null, analysisScene: null, skillAnalysis: null,
     };
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -312,6 +381,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       capitalConflictWarning: dashboard?.capital_conflict_warning ?? null,
       profitTakePlan: dashboard?.profit_take_plan ?? null,
       analysisScene: dashboard?.analysis_scene ?? null,
+      skillAnalysis: dashboard?.skill_analysis ?? null,
     };
   }, [details?.rawResult]);
 
@@ -359,8 +429,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         totalCapital={totalCapital}
       />
 
-      {/* 1.7 三色信号灯（技术面/基本面/资金面）*/}
-      <SignalLights quantExtras={quantExtras} />
+      {/* 1.7 三色信号灯（技术面/基本面/资金面/北向）*/}
+      <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
 
       {/* 2. 持仓快照（有持仓时：紧凑一行，成本/浮盈/持有天数）*/}
       {positionInfo && (
@@ -413,6 +483,11 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         defaultExpanded={true}
       />
 
+      {/* 3.1 Skills深度分析卡（standard_3call专用，有skill_analysis时展示）*/}
+      {skillAnalysis && (skillAnalysis.primary_analysis || skillAnalysis.secondary_analysis) && (
+        <SkillAnalysisCard skillAnalysis={skillAnalysis} skillUsed={skillUsed} />
+      )}
+
       {/* 3.25 重要信号（AI风险+正面摔化+量化指标）*/}
       <KeyInsights
         intelligence={intelligence ?? undefined}
@@ -446,6 +521,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
         profitTakePlan={profitTakePlan}
         analysisScene={analysisScene ?? undefined}
+        totalShares={positionInfo?.shares ?? positionInfo?.position_shares ?? undefined}
       />
 
       {/* 4.5 持仓周期建议（短线/中线/长线）*/}

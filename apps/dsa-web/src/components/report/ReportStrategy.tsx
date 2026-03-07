@@ -34,6 +34,7 @@ interface ReportStrategyProps {
   suggestedPositionPct?: number | null;
   profitTakePlan?: ProfitTakePlan | null;
   analysisScene?: string;
+  totalShares?: number;
 }
 
 const fmtPrice = (v?: string | number | null): string => {
@@ -57,7 +58,19 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
   suggestedPositionPct,
   profitTakePlan,
   analysisScene,
+  totalShares,
 }) => {
+
+  const calcStageLots = (total: number): [number, number, number] => {
+    if (!total || total <= 0) return [0, 0, 0];
+    const lot = 100;
+    const batch = Math.floor(total / 3 / lot) * lot;
+    const s1 = batch;
+    const s2 = batch;
+    const s3 = total - s1 - s2;
+    return [s1, s2, s3];
+  };
+  const stageLots = totalShares ? calcStageLots(totalShares) : null;
   if (!strategy) return null;
 
   // R:R 计算：持仓时基于当前价→目标/止损，空仓时用后端原值
@@ -222,19 +235,25 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
           </div>
           <div className="text-[10px] text-white/40 mb-2">{profitTakePlan.urgency_note}</div>
           <div className="flex flex-col gap-1.5">
-            {profitTakePlan.stages.map((s) => (
-              <div key={s.stage} className="flex items-center gap-2 text-[11px]">
-                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold bg-white/10 text-white/60 shrink-0">
-                  {s.stage}
-                </span>
-                <span className="text-white/50 shrink-0">{s.label}</span>
-                <span className="font-mono font-bold text-yellow-400">{s.exit_price.toFixed(2)}</span>
-                <span className={`text-[10px] shrink-0 ${
-                  s.exit_pct >= 0 ? 'text-green-400/70' : 'text-red-400/70'
-                }`}>{s.exit_pct >= 0 ? '+' : ''}{s.exit_pct.toFixed(1)}%</span>
-                <span className="text-white/30 text-[10px] truncate">{s.condition}</span>
-              </div>
-            ))}
+            {profitTakePlan.stages.map((s) => {
+              const lots = stageLots ? stageLots[s.stage - 1] : null;
+              return (
+                <div key={s.stage} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold bg-white/10 text-white/60 shrink-0">
+                    {s.stage}
+                  </span>
+                  <span className="text-white/50 shrink-0">{s.label}</span>
+                  <span className="font-mono font-bold text-yellow-400">{s.exit_price.toFixed(2)}</span>
+                  <span className={`text-[10px] shrink-0 ${
+                    s.exit_pct >= 0 ? 'text-green-400/70' : 'text-red-400/70'
+                  }`}>{s.exit_pct >= 0 ? '+' : ''}{s.exit_pct.toFixed(1)}%</span>
+                  {lots != null && lots > 0 && (
+                    <span className="text-[10px] text-emerald-400/70 font-mono shrink-0">↓ {lots}股</span>
+                  )}
+                  <span className="text-white/30 text-[10px] truncate">{s.condition}</span>
+                </div>
+              );
+            })}
           </div>
           <div className="mt-2 text-[10px] text-white/30">
             🛡️ ATR追踪止损（底仓保护线）：<span className="font-mono text-white/50">{profitTakePlan.atr_trailing_stop.toFixed(2)}</span>

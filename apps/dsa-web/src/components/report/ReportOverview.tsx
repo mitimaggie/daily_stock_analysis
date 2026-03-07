@@ -221,7 +221,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
           )}
           {lastUpdate && <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>}
           {/* 场景模式 badge（紧跟股票名）*/}
-          {analysisScene && analysisScene !== 'entry' && SCENE_CONFIG[analysisScene] && (
+          {analysisScene && SCENE_CONFIG[analysisScene] && (
             <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${SCENE_CONFIG[analysisScene].color}`}>
               {SCENE_CONFIG[analysisScene].icon} {SCENE_CONFIG[analysisScene].label}
             </span>

@@ -2,6 +2,7 @@ import React from 'react';
 
 interface SignalLightsProps {
   quantExtras: Record<string, any> | null;
+  northboundHolding?: Record<string, any> | null;
 }
 
 type SignalColor = 'green' | 'yellow' | 'red' | 'gray';
@@ -69,17 +70,33 @@ const TEXT_COLOR: Record<SignalColor, string> = {
   gray:   'text-white/25',
 };
 
-export const SignalLights: React.FC<SignalLightsProps> = ({ quantExtras }) => {
+function getNorthboundSignal(nb: Record<string, any> | null | undefined): { color: SignalColor; label: string } | null {
+  if (!nb) return null;
+  const pct = nb.holding_pct_a ?? nb.holdingPctA ?? 0;
+  const chg = nb.shares_change ?? nb.sharesChange ?? 0;
+  if (!pct && !chg) return null;
+  if (chg > 0) {
+    return pct >= 2 ? { color: 'green', label: '外资大幅增持' } : { color: 'green', label: '外资增持' };
+  }
+  if (chg < 0) {
+    return { color: 'red', label: '外资减持' };
+  }
+  return pct >= 2 ? { color: 'yellow', label: `外资${pct.toFixed(1)}%持仓` } : { color: 'gray', label: '外资低配' };
+}
+
+export const SignalLights: React.FC<SignalLightsProps> = ({ quantExtras, northboundHolding }) => {
   if (!quantExtras) return null;
 
   const tech    = getTechSignal(quantExtras);
   const fund    = getFundamentalSignal(quantExtras);
   const capital = getCapitalSignal(quantExtras);
+  const north   = getNorthboundSignal(northboundHolding);
 
   const signals = [
     { key: '技术面', ...tech },
     { key: '基本面', ...fund },
     { key: '资金面', ...capital },
+    ...(north ? [{ key: '北向', ...north }] : []),
   ];
 
   return (
