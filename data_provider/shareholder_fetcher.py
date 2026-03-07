@@ -22,41 +22,54 @@ _insider_cache: Dict[str, Any] = {
     'data': None,        # DataFrame: 增减持合并数据
     'ts': 0.0,           # 最后刷新时间戳
 }
+import threading as _threading
+_insider_refresh_lock = _threading.Lock()  # 防止主线程与预热线程同时刷新缓存
 
 _repurchase_cache: Dict[str, Any] = {
     'data': None,        # DataFrame: 回购数据
     'ts': 0.0,
+    'fail_ts': 0.0,      # 最近一次失败时间戳（用于 backoff）
 }
+_REPURCHASE_FAIL_BACKOFF = 30 * 60  # 失败后30分钟内不重试
 
 
-def _refresh_insider_cache() -> bool:
-    """下载最新增持+减持数据并合并，写入全局缓存。返回是否成功"""
-    import warnings
-    warnings.filterwarnings('ignore')
+def _refresh_insider_cache(blocking: bool = True) -> bool:
+    """下载最新增持+减持数据并合并，写入全局缓存。返回是否成功
+    
+    Args:
+        blocking: True=等待获取锁（后台预热线程用），False=非阻塞（主线程调用，获取失败立即返回）
+    """
+    if not _insider_refresh_lock.acquire(blocking=blocking):
+        return False  # 预热线程已在运行，主线程直接跳过
     try:
-        import akshare as ak
-        df_buy = ak.stock_hold_management_detail_cninfo(symbol="增持")
-        df_buy['变动方向'] = '增持'
-    except Exception as e:
-        logger.warning(f"[shareholder] 增持数据获取失败: {e}")
-        df_buy = pd.DataFrame()
+        import warnings
+        warnings.filterwarnings('ignore')
+        try:
+            import akshare as ak
+            df_buy = ak.stock_hold_management_detail_cninfo(symbol="增持")
+            df_buy['变动方向'] = '增持'
+        except Exception as e:
+            logger.warning(f"[shareholder] 增持数据获取失败: {e}")
+            df_buy = pd.DataFrame()
 
-    try:
-        import akshare as ak
-        df_sell = ak.stock_hold_management_detail_cninfo(symbol="减持")
-        df_sell['变动方向'] = '减持'
-    except Exception as e:
-        logger.warning(f"[shareholder] 减持数据获取失败: {e}")
-        df_sell = pd.DataFrame()
+        try:
+            import akshare as ak
+            df_sell = ak.stock_hold_management_detail_cninfo(symbol="减持")
+            df_sell['变动方向'] = '减持'
+        except Exception as e:
+            logger.warning(f"[shareholder] 减持数据获取失败: {e}")
+            df_sell = pd.DataFrame()
 
-    if df_buy.empty and df_sell.empty:
-        return False
+        if df_buy.empty and df_sell.empty:
+            return False
 
-    df = pd.concat([df_buy, df_sell], ignore_index=True)
-    _insider_cache['data'] = df
-    _insider_cache['ts'] = time.time()
-    logger.info(f"[shareholder] 增减持缓存已刷新: {len(df)} 条记录")
-    return True
+        df = pd.concat([df_buy, df_sell], ignore_index=True)
+        _insider_cache['data'] = df
+        _insider_cache['ts'] = time.time()
+        logger.info(f"[shareholder] 增减持缓存已刷新: {len(df)} 条记录")
+        return True
+    finally:
+        _insider_refresh_lock.release()
 
 
 def _refresh_repurchase_cache() -> bool:
@@ -66,20 +79,26 @@ def _refresh_repurchase_cache() -> bool:
     try:
         import akshare as ak
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-        with ThreadPoolExecutor(max_workers=1) as _ex:
-            try:
-                df = _ex.submit(ak.stock_repurchase_em).result(timeout=30)
-            except FuturesTimeout:
-                logger.warning("[shareholder] 回购数据获取超时(30s)")
-                return False
+        _ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            df = _ex.submit(ak.stock_repurchase_em).result(timeout=15)
+        except FuturesTimeout:
+            logger.warning("[shareholder] 回购数据获取超时(15s)，30分钟内不再重试")
+            _repurchase_cache['fail_ts'] = time.time()
+            return False
+        finally:
+            _ex.shutdown(wait=False)
         if df is None or df.empty:
+            _repurchase_cache['fail_ts'] = time.time()
             return False
         _repurchase_cache['data'] = df
         _repurchase_cache['ts'] = time.time()
+        _repurchase_cache['fail_ts'] = 0.0
         logger.info(f"[shareholder] 回购缓存已刷新: {len(df)} 条记录")
         return True
     except Exception as e:
         logger.warning(f"[shareholder] 回购数据获取失败: {e}")
+        _repurchase_cache['fail_ts'] = time.time()
         return False
 
 
@@ -96,7 +115,8 @@ def get_repurchase_summary(code: str) -> Dict[str, Any]:
             summary: str  一句话摘要
     """
     now = time.time()
-    if _repurchase_cache['data'] is None or (now - _repurchase_cache['ts']) > _CACHE_TTL_SECONDS:
+    in_backoff = (now - _repurchase_cache.get('fail_ts', 0.0)) < _REPURCHASE_FAIL_BACKOFF
+    if not in_backoff and (_repurchase_cache['data'] is None or (now - _repurchase_cache['ts']) > _CACHE_TTL_SECONDS):
         _refresh_repurchase_cache()
 
     df = _repurchase_cache.get('data')
@@ -194,9 +214,9 @@ def get_insider_changes(code: str, days_back: int = 90) -> Dict[str, Any]:
             summary: str  一句话摘要（供LLM直接阅读）
     """
     now = time.time()
-    # 缓存过期则刷新
+    # 缓存过期则刷新（非阻塞：若预热线程正在刷新，主线程直接用空结果，不等待）
     if _insider_cache['data'] is None or (now - _insider_cache['ts']) > _CACHE_TTL_SECONDS:
-        _refresh_insider_cache()
+        _refresh_insider_cache(blocking=False)
 
     df = _insider_cache.get('data')
     if df is None or df.empty:
@@ -286,11 +306,27 @@ def get_upcoming_unlock(code: str, days_ahead: int = 180) -> Dict[str, Any]:
     """
     import warnings
     warnings.filterwarnings('ignore')
+    _unlock_fail_cache = getattr(get_upcoming_unlock, '_fail_cache', {})
+    now_ts = time.time()
+    if (now_ts - _unlock_fail_cache.get(code, 0.0)) < _REPURCHASE_FAIL_BACKOFF:
+        return {'has_data': False, 'summary': '限售解禁数据暂不可用'}
     try:
         import akshare as ak
-        df = ak.stock_restricted_release_queue_em(symbol=code)
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        _ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            df = _ex.submit(ak.stock_restricted_release_queue_em, code).result(timeout=10)
+        except FuturesTimeout:
+            logger.debug(f"[shareholder] 解禁数据获取超时(10s): {code}")
+            _unlock_fail_cache[code] = time.time()
+            get_upcoming_unlock._fail_cache = _unlock_fail_cache
+            return {'has_data': False, 'summary': '限售解禁数据暂不可用'}
+        finally:
+            _ex.shutdown(wait=False)
     except Exception as e:
         logger.debug(f"[shareholder] 解禁数据获取失败({code}): {e}")
+        _unlock_fail_cache[code] = time.time()
+        get_upcoming_unlock._fail_cache = _unlock_fail_cache
         return {'has_data': False, 'summary': '限售解禁数据暂不可用'}
 
     if df is None or df.empty:

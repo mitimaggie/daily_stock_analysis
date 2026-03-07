@@ -589,24 +589,21 @@ class ScoringSystem:
             import time
             import random
 
-            market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
+            _p4_global_fail_ts = getattr(score_capital_flow_history, '_global_fail_ts', 0.0)
+            if (time.time() - _p4_global_fail_ts) < 1800:
+                return
 
-            # 使用项目内全局限流器
-            try:
-                from data_provider.rate_limiter import get_global_limiter
-                limiter = get_global_limiter()
-                limiter.acquire('akshare', blocking=True, timeout=3.0)
-            except Exception:
-                time.sleep(random.uniform(1.0, 2.0))
+            market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
 
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
             _p4_ex = ThreadPoolExecutor(max_workers=1)
             try:
                 df_flow = _p4_ex.submit(
                     ak.stock_individual_fund_flow, stock=stock_code, market=market
-                ).result(timeout=20)
+                ).result(timeout=10)
             except _FuturesTimeout:
-                logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(20s)，跳过")
+                logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(10s)，全局熔断30min")
+                score_capital_flow_history._global_fail_ts = time.time()
                 return
             finally:
                 _p4_ex.shutdown(wait=False)
@@ -755,7 +752,9 @@ class ScoringSystem:
 
         except Exception as e:
             import logging
-            logging.getLogger(__name__).warning(f"[P4] {stock_code} 主力资金追踪失败: {e}", exc_info=True)
+            import time as _t_p4
+            score_capital_flow_history._global_fail_ts = _t_p4.time()
+            logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金追踪失败，全局熔断30min: {e}")
 
     @staticmethod
     def score_capital_flow_trend(result: TrendAnalysisResult, df: pd.DataFrame):
@@ -3198,7 +3197,7 @@ class ScoringSystem:
     
     # ---- 市场情绪温度缓存（TTL=5分钟，避免每次分析都拉取全市场数据）----
     _sentiment_cache: dict = {'data': None, 'ts': 0.0}
-    _SENTIMENT_TTL = 300  # 5分钟
+    _SENTIMENT_TTL = 1800  # 30分钟
 
     @staticmethod
     def score_market_sentiment_adj(result: TrendAnalysisResult):

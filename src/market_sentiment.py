@@ -115,6 +115,10 @@ def get_temperature_label(temp: int) -> str:
         return "极度恐惧"
 
 
+_SENTIMENT_FAIL_TS: float = 0.0
+_SENTIMENT_FAIL_BACKOFF: float = 600.0  # 10分钟内失败不重试
+
+
 def fetch_market_sentiment() -> Optional[MarketSentiment]:
     """
     获取市场情绪数据（从akshare获取涨跌停统计）
@@ -122,6 +126,32 @@ def fetch_market_sentiment() -> Optional[MarketSentiment]:
     Returns:
         MarketSentiment 或 None
     """
+    import time as _time
+    global _SENTIMENT_FAIL_TS
+    if (_time.time() - _SENTIMENT_FAIL_TS) < _SENTIMENT_FAIL_BACKOFF:
+        return None
+    try:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+        _ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            result = _ex.submit(_fetch_market_sentiment_inner).result(timeout=12)
+        except _FuturesTimeout:
+            logger.debug("市场情绪获取超时(12s)，10分钟内不再重试")
+            _SENTIMENT_FAIL_TS = _time.time()
+            return None
+        finally:
+            _ex.shutdown(wait=False)
+        if result is None:
+            _SENTIMENT_FAIL_TS = _time.time()
+        return result
+    except Exception as e:
+        logger.warning(f"获取市场情绪失败: {e}")
+        _SENTIMENT_FAIL_TS = _time.time()
+        return None
+
+
+def _fetch_market_sentiment_inner() -> Optional[MarketSentiment]:
+    """内部实现，由 fetch_market_sentiment 的超时线程调用"""
     try:
         import akshare as ak
         
@@ -168,8 +198,16 @@ def fetch_market_sentiment() -> Optional[MarketSentiment]:
             if total_touched > 0:
                 sentiment.broken_limit_rate = sentiment.broken_limit_count / total_touched * 100
 
-        # 涨跌家数（从大盘数据获取）
-        df_market = _retry_call(lambda: ak.stock_zh_a_spot_em(), "涨跌家数")
+        # 涨跌家数：优先复用 akshare_fetcher 已缓存的全市场数据，避免重复下载
+        df_market = None
+        try:
+            from data_provider.akshare_fetcher import _realtime_cache
+            import time as _tc
+            if (_realtime_cache.get('data') is not None and
+                    _tc.time() - _realtime_cache.get('timestamp', 0) < _realtime_cache.get('ttl', 1200)):
+                df_market = _realtime_cache['data']
+        except Exception:
+            pass
         if df_market is not None and not df_market.empty:
             if '涨跌幅' in df_market.columns:
                 pct_col = df_market['涨跌幅'].astype(float)
@@ -207,5 +245,5 @@ def fetch_market_sentiment() -> Optional[MarketSentiment]:
         logger.debug("akshare未安装，跳过市场情绪获取")
         return None
     except Exception as e:
-        logger.warning(f"获取市场情绪失败: {e}")
+        logger.debug(f"_fetch_market_sentiment_inner失败: {e}")
         return None

@@ -630,11 +630,24 @@ def get_northbound_holding(stock_code: str) -> dict | None:
     except Exception:
         pass
 
+    _nb_fail_cache = getattr(get_northbound_holding, '_fail_cache', {})
+    import time as _time
+    if (_time.time() - _nb_fail_cache.get(stock_code, 0.0)) < 1800:
+        return None
+
     try:
         import akshare as ak
-        import time
-        time.sleep(2.0)  # 流控：避免批量分析时并发调用被封
-        df = ak.stock_hsgt_individual_em(symbol=stock_code)
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+        _ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            df = _ex.submit(ak.stock_hsgt_individual_em, stock_code).result(timeout=12)
+        except _FuturesTimeout:
+            logger.debug(f"[{stock_code}] 北向资金持股获取超时(12s)")
+            _nb_fail_cache[stock_code] = _time.time()
+            get_northbound_holding._fail_cache = _nb_fail_cache
+            return None
+        finally:
+            _ex.shutdown(wait=False)
         if df is None or df.empty:
             return None
         last = df.iloc[-1]
@@ -657,4 +670,6 @@ def get_northbound_holding(stock_code: str) -> dict | None:
         return result
     except Exception as e:
         logger.debug(f"[{stock_code}] 北向资金持股获取失败: {e}")
+        _nb_fail_cache[stock_code] = _time.time()
+        get_northbound_holding._fail_cache = _nb_fail_cache
         return None

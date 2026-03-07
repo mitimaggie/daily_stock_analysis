@@ -378,9 +378,20 @@ def main() -> int:
                 if _dt.datetime.now().weekday() == 0:  # 0 = 周一
                     run_gdhs_update()
             scheduler.add_daily_job("16:30", run_gdhs_weekly)
+            # 高管增减持数据：每日收盘后下载一次，预热缓存（避免首次分析时主线程等待90s）
+            def run_insider_refresh():
+                try:
+                    from data_provider.shareholder_fetcher import _refresh_insider_cache
+                    logger.info("[定时] 开始下载高管增减持数据...")
+                    ok = _refresh_insider_cache(blocking=True)
+                    logger.info(f"[定时] 高管增减持数据更新{'成功' if ok else '失败'}")
+                except Exception as e:
+                    logger.warning(f"[定时] 高管增减持数据更新失败: {e}")
+            scheduler.add_daily_job("18:30", run_insider_refresh)
             logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
             logger.info("已注册每日回测自动回填任务，执行时间: 20:00")
             logger.info("已注册股东户数周更新任务，每周一 16:30 执行")
+            logger.info("已注册高管增减持数据每日更新任务，执行时间: 18:30")
         else:
             logger.info("SCHEDULE_ENABLED=false，跳过定时分析和回测任务注册")
 

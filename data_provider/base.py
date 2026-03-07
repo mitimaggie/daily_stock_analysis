@@ -536,8 +536,8 @@ class DataFetcherManager:
 
     _sector_context_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
     _sector_industry_cache: Dict[str, Any] = {}  # {industry: {'codes': [...], 'ts': ...}}
-    _SECTOR_CONTEXT_TTL = 3600  # 1小时（板块归属不会频繁变化）
-    _SECTOR_INDUSTRY_TTL = 3600  # 行业成员列表1小时缓存
+    _SECTOR_CONTEXT_TTL = 604800  # 7天（板块归属基本不变，仅新股上市初期会调整）
+    _SECTOR_INDUSTRY_TTL = 604800  # 行业成员列表7天缓存
     def get_stock_sector_context(self, stock_code: str, stock_pct_chg: Optional[float] = None) -> Optional[SectorContext]:
         """获取个股所属板块及相对强弱（板块今日涨跌 vs 个股涨跌）"""
         # 检查缓存
