@@ -24,6 +24,32 @@ _insider_cache: Dict[str, Any] = {
 }
 import threading as _threading
 _insider_refresh_lock = _threading.Lock()  # 防止主线程与预热线程同时刷新缓存
+_INSIDER_DB_CACHE_TYPE = 'insider_trading'
+_INSIDER_DB_CACHE_KEY = 'all'
+_INSIDER_DB_TTL_HOURS = 168  # 7天（重启后不必重新下载）
+
+
+def _load_insider_cache_from_db() -> bool:
+    """从 SQLite 加载增减持缓存（服务重启后防止重新下载）"""
+    try:
+        from src.storage import DatabaseManager
+        raw = DatabaseManager.get_instance().get_data_cache(
+            _INSIDER_DB_CACHE_TYPE, _INSIDER_DB_CACHE_KEY, ttl_hours=_INSIDER_DB_TTL_HOURS
+        )
+        if raw:
+            import io
+            df = pd.read_json(io.StringIO(raw), orient='records')
+            if not df.empty:
+                _insider_cache['data'] = df
+                _insider_cache['ts'] = time.time()
+                logger.info(f"[shareholder] 增减持缓存从 DB 加载: {len(df)} 条记录")
+                return True
+    except Exception as e:
+        logger.debug(f"[shareholder] 增减持 DB 读取失败，将在预热时重新下载: {e}")
+    return False
+
+
+_load_insider_cache_from_db()  # 模块加载时自动初始化
 
 _repurchase_cache: Dict[str, Any] = {
     'data': None,        # DataFrame: 回购数据
@@ -67,6 +93,14 @@ def _refresh_insider_cache(blocking: bool = True) -> bool:
         _insider_cache['data'] = df
         _insider_cache['ts'] = time.time()
         logger.info(f"[shareholder] 增减持缓存已刷新: {len(df)} 条记录")
+        try:
+            from src.storage import DatabaseManager
+            DatabaseManager.get_instance().save_data_cache(
+                _INSIDER_DB_CACHE_TYPE, _INSIDER_DB_CACHE_KEY, df.to_json(orient='records', force_ascii=False)
+            )
+            logger.debug("[shareholder] 增减持数据已持久化到 SQLite")
+        except Exception as e:
+            logger.debug(f"[shareholder] 增减持持久化失败（可忽略）: {e}")
         return True
     finally:
         _insider_refresh_lock.release()

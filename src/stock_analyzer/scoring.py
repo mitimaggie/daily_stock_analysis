@@ -16,6 +16,8 @@ from data_provider.realtime_types import ChipDistribution
 
 logger = logging.getLogger(__name__)
 
+_P4_GLOBAL_FAIL_TS: float = 0.0  # P4主力资金全局熔断时间戳（任一失败后30min内跳过所有股票）
+
 
 class ScoringSystem:
     """评分系统：多维度评分与修正"""
@@ -584,13 +586,13 @@ class ScoringSystem:
         5. 加速/减速信号
         6. 聪明钱（超大单）持续行为
         """
+        global _P4_GLOBAL_FAIL_TS
         try:
             import akshare as ak
             import time
             import random
 
-            _p4_global_fail_ts = getattr(score_capital_flow_history, '_global_fail_ts', 0.0)
-            if (time.time() - _p4_global_fail_ts) < 1800:
+            if (time.time() - _P4_GLOBAL_FAIL_TS) < 1800:
                 return
 
             market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
@@ -603,7 +605,7 @@ class ScoringSystem:
                 ).result(timeout=10)
             except _FuturesTimeout:
                 logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(10s)，全局熔断30min")
-                score_capital_flow_history._global_fail_ts = time.time()
+                _P4_GLOBAL_FAIL_TS = time.time()
                 return
             finally:
                 _p4_ex.shutdown(wait=False)
@@ -753,7 +755,7 @@ class ScoringSystem:
         except Exception as e:
             import logging
             import time as _t_p4
-            score_capital_flow_history._global_fail_ts = _t_p4.time()
+            _P4_GLOBAL_FAIL_TS = _t_p4.time()
             logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金追踪失败，全局熔断30min: {e}")
 
     @staticmethod

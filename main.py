@@ -388,6 +388,16 @@ def main() -> int:
                 except Exception as e:
                     logger.warning(f"[定时] 高管增减持数据更新失败: {e}")
             scheduler.add_daily_job("18:30", run_insider_refresh)
+            # 市场情绪简报：午间+收盘后各抓取一次（Perplexity），供当日分析注入上下文
+            def run_sentiment_briefing():
+                try:
+                    from src.market_sentiment import fetch_market_sentiment_briefing
+                    result = fetch_market_sentiment_briefing(force_refresh=True)
+                    logger.info(f"[定时] 市场情绪简报更新{'成功' if result else '失败（无数据）'}")
+                except Exception as e:
+                    logger.warning(f"[定时] 市场情绪简报更新失败: {e}")
+            scheduler.add_daily_job("13:00", run_sentiment_briefing)
+            scheduler.add_daily_job("16:30", run_sentiment_briefing)
             logger.info(f"定时分析任务已注册，每日 {config.schedule_time} 执行")
             logger.info("已注册每日回测自动回填任务，执行时间: 20:00")
             logger.info("已注册股东户数周更新任务，每周一 16:30 执行")

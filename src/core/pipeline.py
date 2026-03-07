@@ -1407,6 +1407,16 @@ class StockAnalysisPipeline:
                 macro_prefix = "\n\n---\n## 宏观环境情报（Perplexity）\n"
                 market_overview = (market_overview or "") + macro_prefix + _macro
 
+            # 市场情绪简报注入：Perplexity 每日13:00/16:30拉取，缓存4小时
+            try:
+                from src.market_sentiment import fetch_market_sentiment_briefing
+                _briefing = fetch_market_sentiment_briefing()
+                if _briefing:
+                    market_overview = (market_overview or "") + "\n\n---\n## 今日市场情绪简报\n" + _briefing
+                    logger.info(f"[{stock_name}] 市场情绪简报已注入 ({len(_briefing)}字)")
+            except Exception:
+                pass
+
             # 分析前延迟（可配置，用于等待数据落定或降低 API 压力）
             delay = getattr(self.config, 'analysis_delay', 0) or 0
             if delay > 0:

@@ -247,3 +247,70 @@ def _fetch_market_sentiment_inner() -> Optional[MarketSentiment]:
     except Exception as e:
         logger.debug(f"_fetch_market_sentiment_inner失败: {e}")
         return None
+
+
+_BRIEFING_SYSTEM_PROMPT = (
+    "你是一位A股量化交易员助手，每日收盘后出具简洁的市场情绪日报。\n"
+    "【输出格式（100字以内，严格简短）】\n"
+    "- 成交额：XX亿（与昨日相比是放量/缩量）\n"
+    "- 涨跌家数：涨XX跌XX平XX，涨停XX家，跌停XX家\n"
+    "- 市场情绪：一句话定性（如\"做多情绪偏暖\"，\"恐慷踩踏\"，\"中性震荡\"）\n"
+    "- 主力资金：北向/南向/ETF净流入或流出多少亿（如有）\n"
+    "严格只给数字和结论，不要分析原因，不要超过150字。如没有当日数据则说\"暂无今日数据\""
+)
+
+
+def fetch_market_sentiment_briefing(force_refresh: bool = False) -> Optional[str]:
+    """通过 Perplexity 获取当日市场情绪简报（两市成交额/涨跌家数/资金动向），
+    结果缓存4小时到 SQLite，供 pipeline 注入 LLM 上下文。
+    
+    Returns:
+        str: 简报文字，如 "成交额9800亿，涨1823跌1621平402，涨停47家，情绪中性偏暖，北向净流入8亿。"
+        None: Perplexity未配置或获取失败
+    """
+    import time as _t
+    from datetime import datetime
+    _DB_TYPE = 'market_sentiment_briefing'
+    _DB_KEY = datetime.now().strftime('%Y-%m-%d')
+
+    try:
+        from src.storage import DatabaseManager
+        db = DatabaseManager.get_instance()
+
+        if not force_refresh:
+            cached = db.get_data_cache(_DB_TYPE, _DB_KEY, ttl_hours=4.0)
+            if cached:
+                logger.debug(f"[市场情绪简报] 命中缓存: {cached[:60]}...")
+                return cached
+    except Exception:
+        db = None
+
+    try:
+        import os
+        pplx_key = os.getenv("PERPLEXITY_API_KEY")
+        if not pplx_key:
+            logger.debug("[市场情绪简报] 未配置 PERPLEXITY_API_KEY，跳过")
+            return None
+
+        from src.search_service import PerplexitySearchProvider
+        provider = PerplexitySearchProvider([pplx_key])
+        today = datetime.now().strftime("%Y年%m月%d日")
+        query = f"{today} A股市场今日行情：两市成交额、涨跌家数、涨停跌停数量、北向资金净流入"
+        resp = provider.search(query, model="sonar", system_prompt_override=_BRIEFING_SYSTEM_PROMPT)
+
+        if resp.success and resp.results:
+            import re as _re
+            content = _re.sub(r'\[\d+\]', '', resp.results[0].snippet).strip()
+            if db:
+                try:
+                    db.save_data_cache(_DB_TYPE, _DB_KEY, content)
+                except Exception:
+                    pass
+            logger.info(f"[市场情绪简报] 获取成功: {content[:80]}...")
+            return content
+        else:
+            logger.debug(f"[市场情绪简报] Perplexity 返回失败: {resp.error_message}")
+            return None
+    except Exception as e:
+        logger.debug(f"[市场情绪简报] 异常: {e}")
+        return None
