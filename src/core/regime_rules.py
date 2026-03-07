@@ -45,10 +45,8 @@ REGIME_RULES: Dict[str, Dict[str, Any]] = {
     "BEAR": {
         "max_pos_pct": 10,
         "stop_mult": 0.75,        # 止损收紧至原始的75%
-        "advice_downgrade": {
-            "买入": "等待",
-            "加仓": "持有",
-        },
+        "advice_downgrade": {},   # 不强制降级建议：回测显示高分买入仍有57.8%胜率
+                                  # 只通过仓位上限(10%)和止损收紧来控制风险
         "label": "熊市",
     },
     "CRISIS": {

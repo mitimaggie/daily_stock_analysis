@@ -47,6 +47,8 @@ class AnalysisResult:
     current_price: float = 0.0
     market_snapshot: Optional[Dict[str, Any]] = None
 
+    flash_used: bool = False  # Flash+Pro 双阶段标记（True=Flash预判成功，供A/B对比胜率用）
+
     # 扩展字段（决策仪表盘 v2，兼容上游）
     trend_analysis: str = ""
     short_term_outlook: str = ""
@@ -342,14 +344,29 @@ class GeminiAnalyzer:
             else:
                 system_prompt = self.PROMPT_TRADER
 
-            # 2. 构建 User Prompt (注入 F10, 记忆, 以及新增的大盘数据)
-            prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill, ab_variant=ab_variant)
+            # 2. Flash 预判断（trader 角色 + 非 llm_only 变体时启用双阶段）
+            # Flash 读取极简技术快照 → 输出方向摘要 → Pro 用摘要替换原始技术数据
+            # Flash 失败时静默降级为单阶段（Pro 接收完整技术报告）
+            cfg = get_config()
+            flash_summary = None
+            if role == "trader" and ab_variant != "llm_only":
+                flash_ctx = self._build_flash_context(context, name)
+                flash_summary = self._flash_pre_analyze(flash_ctx, name, cfg)
+                if flash_summary:
+                    logger.info(f"[Flash] {name} 技术预判完成: {flash_summary[:60]}…")
+                else:
+                    logger.debug(f"[Flash] {name} 预判跳过，使用单阶段模式")
+
+            # 标记 Flash 使用状态（供 pipeline 写入 ab_variant='flash_pro'）
+            _flash_was_used = bool(flash_summary)
+
+            # 2b. 构建 User Prompt（若有 Flash 摘要则用其替换技术报告段）
+            prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill, ab_variant=ab_variant, flash_summary=flash_summary)
             
             response_text = ""
             
-            # 3. 调用 API（Gemini 优先，失败时尝试备选模型和 OpenAI）
+            # 3. 调用 Pro API（Gemini 优先，失败时尝试备选模型和 OpenAI）
             # 优先尝试Function Calling（强制JSON输出，减少解析错误）
-            cfg = get_config()
             enable_function_calling = getattr(cfg, 'enable_function_calling', True)  # 默认开启
             
             if enable_function_calling and self._genai_module and not self._use_openai:
@@ -363,6 +380,7 @@ class GeminiAnalyzer:
                         result.current_price = context.get('price', 0)
                         result.market_snapshot = self._build_market_snapshot(context)
                         result.skill_used = skill
+                        result.flash_used = _flash_was_used
                         return result
                 except Exception as e:
                     logger.debug(f"Function Calling失败，降级为文本解析: {e}")
@@ -379,11 +397,100 @@ class GeminiAnalyzer:
             result.current_price = context.get('price', 0)
             result.market_snapshot = self._build_market_snapshot(context)
             result.skill_used = skill
+            result.flash_used = _flash_was_used
             return result
             
         except Exception as e:
             logger.error(f"AI分析失败: {e}")
             return AnalysisResult(code, name, 50, "分析异常", "观望", success=False, error_message=str(e))
+
+    def _build_flash_context(self, context: Dict[str, Any], name: str) -> str:
+        """构建 Flash 预判所需的完整技术数据（kline叙事 + 量化指标明细）。
+
+        Flash 的职责是消化原始技术报告，输出80字方向判断。
+        因此 Flash 应读取 Pro 原本要看的完整技术内容，而非只看6个数字。
+        Pro 最终只收到 Flash 的80字摘要，从而大幅压缩输入长度。
+        """
+        kline_narrative = context.get('kline_narrative', '') or ''
+        tech_llm = context.get('technical_analysis_report_llm', '') or ''
+
+        if kline_narrative and tech_llm:
+            return f"{kline_narrative}\n\n【量化指标明细】\n{tech_llm}"
+        elif kline_narrative:
+            return kline_narrative
+        elif tech_llm:
+            return tech_llm
+        else:
+            # 无完整技术报告时退化为关键数字快照
+            price = context.get('price', 0) or 0
+            change_pct = context.get('change_pct', 0) or 0
+            trend = context.get('trend_analysis') or {}
+            parts = []
+            if price:
+                parts.append(f"价格:{price:.2f}({change_pct:+.1f}%)")
+            for k, label in [('trend_status','趋势'), ('macd_status','MACD')]:
+                v = trend.get(k, '') or ''
+                if v:
+                    parts.append(f"{label}:{v}")
+            for k, label in [('rsi6','RSI'), ('volume_ratio','量比'), ('signal_score','量化')]:
+                v = trend.get(k)
+                if v is not None:
+                    parts.append(f"{label}:{float(v):.1f}")
+            return " | ".join(parts)
+
+    def _flash_pre_analyze(self, flash_ctx: str, name: str, cfg: Any) -> Optional[str]:
+        """调用 Flash 模型对技术面做一段话预判断（≤80字），供 Pro 模型作为输入锚点。
+
+        优先使用 gemini_model_when_cached（Flash主模型），失败后尝试 gemini_model_flash_fallback。
+        两者均失败时静默返回 None，analyze() 降级为单阶段模式。
+        """
+        primary = getattr(cfg, 'gemini_model_when_cached', None)
+        fallback = getattr(cfg, 'gemini_model_flash_fallback', None)
+        models_to_try = [m for m in [primary, fallback] if m and m != primary or m == primary]
+        # 去重保持顺序
+        seen, models_to_try = set(), []
+        for m in [primary, fallback]:
+            if m and m not in seen:
+                seen.add(m)
+                models_to_try.append(m)
+
+        if not models_to_try or not self._genai_module:
+            return None
+
+        flash_system = (
+            "你是一位专业的A股技术面分析师。"
+            "你的职责是消化原始K线数据和量化指标，"
+            "输出简洁准确的技术面判断结论，供基金经理做最终决策参考。"
+        )
+        flash_prompt = (
+            f"请用≤150字总结{name}的技术面判断，包含四个部分："
+            f"①方向（多/空/中性）及核心依据；"
+            f"②关键支撑位/压力位（具体价格）；"
+            f"③动能/量能判断；"
+            f"④最主要风险。"
+            f"禁止注入基本面/舆情，只分析技术面。"
+            f"\n\n原始技术数据：\n{flash_ctx}"
+        )
+        api_timeout = getattr(cfg, 'gemini_request_timeout', 120)
+
+        for model_name in models_to_try:
+            try:
+                model = self._genai_module.GenerativeModel(
+                    model_name, system_instruction=flash_system
+                )
+                with ThreadPoolExecutor(max_workers=1) as _tp:
+                    fut = _tp.submit(model.generate_content, flash_prompt)
+                    resp = fut.result(timeout=min(api_timeout, 15))
+                text = (resp.text or "").strip()
+                if text:
+                    if model_name != primary:
+                        logger.debug(f"[Flash] {name} 使用备选模型 {model_name}")
+                    return text[:400]
+            except Exception as e:
+                logger.debug(f"[Flash] {name} 模型 {model_name} 失败: {e}")
+
+        logger.debug(f"[Flash] {name} 所有Flash模型失败，降级为单阶段")
+        return None
 
     def _call_api_with_fallback(
         self, system_prompt: str, prompt: str, use_light_model: bool, cfg: Any
@@ -446,20 +553,25 @@ class GeminiAnalyzer:
             raise last_err
         raise RuntimeError("无可用 AI 模型")
 
-    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default", ab_variant: str = "standard") -> str:
+    def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default", ab_variant: str = "standard", flash_summary: Optional[str] = None) -> str:
         code = context.get('code', 'Unknown')
 
-        # A. 技术面数据 (量化模型产出 - 使用精简版供 LLM)
-        tech_report_llm = context.get('technical_analysis_report_llm') or ''
-        kline_narrative = context.get('kline_narrative', '')
-        if kline_narrative and tech_report_llm:
-            tech_report = f"{kline_narrative}\n\n【量化指标明细】\n{tech_report_llm}"
-        elif kline_narrative:
-            tech_report = kline_narrative  # llm_only: 只有叙事，无量化指标
-        elif tech_report_llm:
-            tech_report = tech_report_llm
+        # A. 技术面数据
+        # 双阶段模式：若有 Flash 预判摘要，用摘要替换原始技术报告（大幅缩短 Pro 的输入）
+        # 单阶段模式（Flash失败/ab_variant=llm_only）：注入完整技术报告
+        if flash_summary and ab_variant != 'llm_only':
+            tech_report = f"【技术面分析师结论】{flash_summary}"
         else:
-            tech_report = context.get('technical_analysis_report', '无数据')
+            tech_report_llm = context.get('technical_analysis_report_llm') or ''
+            kline_narrative = context.get('kline_narrative', '')
+            if kline_narrative and tech_report_llm:
+                tech_report = f"{kline_narrative}\n\n【量化指标明细】\n{tech_report_llm}"
+            elif kline_narrative:
+                tech_report = kline_narrative
+            elif tech_report_llm:
+                tech_report = tech_report_llm
+            else:
+                tech_report = context.get('technical_analysis_report', '无数据')
         
         # B. 基本面数据 (F10 - 精简格式)
         f10 = context.get('fundamental', {})
@@ -922,7 +1034,7 @@ Step 4（{_has_pos_label}） - 结论：
 ## 历史回溯
 {history_str}
 
-## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else '量化技术面原始信号（供你参考，你是最终决策者）'}
+## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else ('技术面分析师结论（已由Flash模型消化原始技术数据，以下为其判断结论）' if flash_summary else '量化技术面原始信号（供你参考，你是最终决策者）')}
 {tech_report}
 
 ## 基本面 (F10)
@@ -934,34 +1046,29 @@ Step 4（{_has_pos_label}） - 结论：
 {'**无量化技术信号，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '**你是最终决策者**，量化技术面仅整理了原始技术信号供你参考（不含评分结论）。请基于上述所有信息独立给出评分和操作建议。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
 只输出 JSON，不要 markdown 代码块包裹。字段：
 
-stock_name, trend_prediction, time_horizon({time_horizon_hint}),
-analysis_summary(格式固定为3句话：①明确的方向性结论（多/空/观望）及核心理由，必须引用具体数字；②基本面/行业/舆情中最关键的支撑或压制因素；③明确的操作建议，含具体触发条件或价位。**禁止重复量化报告中的MACD/KDJ/RSI等技术指标描述，禁止使用"公司具有护城河"等泛化表述**),
+stock_name, trend_prediction,
+analysis_summary(3句话: ①方向结论+核心数字 ②最关键基本面/舆情因素 ③操作建议+触发条件，禁止重复技术指标词汇),
 risk_warning,
-sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望") — 你是持仓者，请根据分析给出适当建议' if has_position else 'operation_advice("买入"/"观望"/"等待") — 你是空仓者，禁止输出减仓/清仓/持有'},
+sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望") — 持仓者视角' if has_position else 'operation_advice("买入"/"观望"/"等待") — 空仓者视角，禁止输出减仓/清仓/持有'},
 llm_score(同sentiment_score), llm_advice(同operation_advice),
-llm_reasoning(说明支撑你最终结论的2-3个最关键证据，必须引用具体数字/事件；禁止写"综合以上分析""数据显示"等空洞表述),
-confidence_reasoning(判断置信度，如"舆情充分置信度高"或"缺少关键数据置信度低"),
+llm_reasoning(2-3个关键证据，必须含具体数字/事件，禁止"综合以上分析"等空洞表述),
 dashboard: {{
   core_conclusion: {{
-    one_sentence: "{one_sentence_hint}（必须引用具体数字，禁止泛化表述）",
+    one_sentence: "{one_sentence_hint}（必须含数字，禁止泛化）",
     {position_advice_protocol}
   }},
-  intelligence: {{ risk_alerts: ["每条必须具体，禁止泛化"], positive_catalysts: ["每条必须具体，禁止泛化"], sentiment_summary: "", earnings_outlook: "" }},
-  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, {battle_plan_rr}, position_sizing: {_position_sizing_hint}, holding_horizon: "建议3-5个交易日内完成获利了结（回测IC分析：信号有效性在5日达峰，第7日起开始衰减，10日后IC反转为-0.13）" }},
-  override_intel: {{ triggered: false, tier: "", {'reason: "无Tier-0/1风险事件（若有请填写：监管/退市/实控人减持/业绩暴雷等，并在此说明为何选择了保守建议）"' if ab_variant == 'llm_only' else 'reason: "无Tier-0/1风险事件"'}, downgrade_to: "" }},
-  counter_arguments: ["必填！看多时写2-3条可能错误的理由", "禁止为空数组"],
-  action_now: "≤30字，直接说现在怎么操作（空仓：入场触发条件+价位+止损；持仓：加减仓触发价+止损线）",
-  execution_difficulty: "低（条件已满足）或中（需等待确认）或高（逆势操作）",
-  execution_note: "简短说明执行难度判断依据（1句话）"
+  intelligence: {{ risk_alerts: ["具体风险，含数字/事件"], positive_catalysts: ["具体催化剂，含数字/事件"], sentiment_summary: "" }},
+  battle_plan: {{ sniper_points: {{ ideal_buy: {_ideal_buy or _sniper_fallback}, stop_loss: {_stop_loss or _sniper_fallback}, target: {_take_profit or _sniper_fallback} }}, position_sizing: {_position_sizing_hint}, holding_horizon: "{_ic_hint_str or '样本不足'}，建议持仓≤7交易日" }},
+  override_intel: {{ triggered: false, tier: "", reason: "无Tier-0/1风险事件", downgrade_to: "" }},
+  counter_arguments: ["必填≥2条，看多时写可能错误的理由，必须含数字/事件"],
+  action_now: "≤30字，入场触发条件+价位+止损",
+  execution_difficulty: "低/中/高"
 }}
 
-### 输出质量规则（违反则重新生成）：
-1. **one_sentence** 必须含具体数字。✅"PEG=0.68+量化57分+板块+0.17%，但顶背离+缺口未回补，等78.5支撑确认" ❌"基本面良好建议关注"
-2. **one_sentence vs action_now 职责严格分离**：one_sentence 只描述"当前市场判断是什么"（基本面/情绪/趋势等），action_now 只说"现在具体做什么操作"（精确到价位/止损/数量）。**两者内容绝对不得重复**，禁止把操作指令写进 one_sentence，也禁止把市场判断写进 action_now。
-3. **analysis_summary** 禁止出现：MACD/KDJ/RSI/均线/趋势/评分等量化词汇（这些已在量化报告里）
-4. **counter_arguments** 不得为空数组，最少2条，每条引用具体数字或事件
-5. **catalysts/risk_alerts** 每条必须有具体公司名/数字/事件，禁止行业通稿泛化
-示例 counter_arguments（看多时）：["若Q4净利润增速跌破15%，PEG估值支撑失效", "家电以旧换新政策若退出，终端需求将骤降10-15%"]
+输出规则（违反则重新生成）：
+①one_sentence必须含具体数字，禁泛化表述
+②one_sentence仅描述判断，action_now仅写操作指令，两者内容不得重叠
+③counter_arguments必须≥2条，每条含具体数字或事件
 
 开始分析：
 """

@@ -5,6 +5,7 @@
 """
 
 import logging
+import numpy as np
 import pandas as pd
 from typing import Dict, Union, Optional
 from .types import TrendAnalysisResult, BuySignal, MarketRegime, TrendStatus
@@ -945,15 +946,14 @@ class ScoringSystem:
             except Exception as e:
                 logger.debug(f"[P5-C] {stock_code} 股东人数查询失败: {e}")
 
-        # 两个线程并行启动，共享5秒超时窗口（原串行10s→并行5s）
+        # 两个线程并行启动，各自独立5秒超时（防止大宗交易耗尽时间导致股东人数无法执行）
         import time as _time
         t_dz = threading.Thread(target=_fetch_dzjy, daemon=True)
         t_holder = threading.Thread(target=_fetch_holder, daemon=True)
         t_dz.start()
         t_holder.start()
-        _deadline = _time.time() + 5
-        t_dz.join(timeout=max(0, _deadline - _time.time()))
-        t_holder.join(timeout=max(0, _deadline - _time.time()))
+        t_dz.join(timeout=5)      # 大宗交易：独立5s
+        t_holder.join(timeout=5)  # 股东人数：独立5s（两者并行，最坏10s，实际多为同步完成）
         if t_dz.is_alive():
             logger.debug(f"[P5-C] {stock_code} 大宗交易查询超时，已跳过")
         if t_holder.is_alive():

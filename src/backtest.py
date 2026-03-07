@@ -179,15 +179,16 @@ class BacktestRunner:
         """
         try:
             # 从 index_daily 表获取沪深300数据
+            _limit = holding_days + 2
             sql = text("""
                 SELECT date, close
                 FROM index_daily
                 WHERE code = '上证指数' AND date >= :start_date
                 ORDER BY date ASC
                 LIMIT :limit
-            """)
+            """).bindparams(start_date=str(start_date), limit=_limit)
             with self.db._engine.connect() as conn:
-                df = pd.read_sql(sql, conn, params={"start_date": start_date, "limit": holding_days + 2})
+                df = pd.read_sql(sql, conn)
             
             if df.empty or len(df) < holding_days:
                 return None

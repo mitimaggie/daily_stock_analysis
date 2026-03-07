@@ -1620,7 +1620,8 @@ class StockAnalysisPipeline:
                     _sector_name_save = _sc_ctx.get('sector_name') if isinstance(_sc_ctx, dict) else None
                 except Exception:
                     pass
-                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None, ab_variant=ab_variant, sector_name=_sector_name_save)
+                _save_ab_variant = ('flash_pro' if getattr(result, 'flash_used', False) and ab_variant == 'standard' else ab_variant)
+                self.storage.save_analysis_history(result=result, query_id=per_stock_query_id, report_type=report_type.value if hasattr(report_type, 'value') else str(report_type), news_content=search_content, context_snapshot=context if self.save_context_snapshot else None, ab_variant=_save_ab_variant, sector_name=_sector_name_save)
                 # 同步 sector_name 到持仓表（供行业敞口分析使用）
                 if _sector_name_save and position_info:
                     try:

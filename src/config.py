@@ -47,7 +47,8 @@ class Config:
     gemini_api_key: Optional[str] = None
     gemini_model: str = "gemini-3-pro-preview"  # 主模型（3 Pro Preview，最强推理能力）
     gemini_model_fallback: str = "gemini-3-flash-preview"  # 备选模型（API 失败时回退）
-    gemini_model_when_cached: Optional[str] = "gemini-3-flash-preview"  # 命中舆情缓存时用的轻量模型，节省成本
+    gemini_model_when_cached: Optional[str] = "gemini-3-flash-preview"  # Flash主模型（Flash预判断 + 命中缓存）
+    gemini_model_flash_fallback: Optional[str] = "gemini-3-flash-preview"  # Flash备选模型（Flash主模型失败时回退）
     gemini_temperature: float = 0.2  # 温度参数（0.0-2.0，低温减少幻觉，默认0.2）
 
     # Gemini API 请求配置（防止 429 限流）
@@ -326,6 +327,7 @@ class Config:
             gemini_model=os.getenv('GEMINI_MODEL', 'gemini-3-pro-preview'),
             gemini_model_fallback=os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-3-flash-preview'),
             gemini_model_when_cached=os.getenv('GEMINI_MODEL_WHEN_CACHED', 'gemini-3-flash-preview').strip() or 'gemini-3-flash-preview',
+            gemini_model_flash_fallback=os.getenv('GEMINI_MODEL_FLASH_FALLBACK', 'gemini-3-flash-preview').strip() or 'gemini-3-flash-preview',
             gemini_temperature=float(os.getenv('GEMINI_TEMPERATURE', '0.2')),
             gemini_request_delay=float(os.getenv('GEMINI_REQUEST_DELAY', '2.0')),
             gemini_max_retries=int(os.getenv('GEMINI_MAX_RETRIES', '5')),

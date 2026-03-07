@@ -127,52 +127,59 @@ def fetch_market_sentiment() -> Optional[MarketSentiment]:
         
         sentiment = MarketSentiment()
         
-        # 获取涨跌停统计
-        try:
-            df_limit = ak.stock_zt_pool_em(date=None)
-            if df_limit is not None and not df_limit.empty:
-                sentiment.limit_up_count = len(df_limit)
-                # 连板统计
-                if '连板数' in df_limit.columns:
-                    boards = df_limit['连板数'].astype(int)
-                    sentiment.continuous_limit_count = int((boards >= 2).sum())
-                    sentiment.highest_board = int(boards.max()) if len(boards) > 0 else 0
-        except Exception as e:
-            logger.debug(f"获取涨停池失败: {e}")
+        import time as _time
 
-        try:
-            df_dt = ak.stock_zt_pool_dtgc_em(date=None)
-            if df_dt is not None and not df_dt.empty:
-                sentiment.limit_down_count = len(df_dt)
-        except Exception as e:
-            logger.debug(f"获取跌停池失败: {e}")
+        def _retry_call(fn, name: str, max_retries: int = 2, delay: float = 2.0):
+            """SSL/连接错误自动重试（最多 max_retries 次，间隔 delay 秒）"""
+            last_err = None
+            for attempt in range(max_retries):
+                try:
+                    return fn()
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e).lower()
+                    is_transient = any(k in err_str for k in ('ssl', 'connection', 'remote end', 'eof', 'timeout', 'tls'))
+                    if is_transient and attempt < max_retries - 1:
+                        logger.debug(f"获取{name}失败(attempt {attempt+1})，{delay}s后重试: {e}")
+                        _time.sleep(delay)
+                    else:
+                        logger.debug(f"获取{name}失败: {e}")
+                        return None
+            return None
+
+        # 获取涨跌停统计
+        df_limit = _retry_call(lambda: ak.stock_zt_pool_em(date=None), "涨停池")
+        if df_limit is not None and not df_limit.empty:
+            sentiment.limit_up_count = len(df_limit)
+            if '连板数' in df_limit.columns:
+                boards = df_limit['连板数'].astype(int)
+                sentiment.continuous_limit_count = int((boards >= 2).sum())
+                sentiment.highest_board = int(boards.max()) if len(boards) > 0 else 0
+
+        df_dt = _retry_call(lambda: ak.stock_zt_pool_dtgc_em(date=None), "跌停池")
+        if df_dt is not None and not df_dt.empty:
+            sentiment.limit_down_count = len(df_dt)
 
         # 炸板数据
-        try:
-            df_zb = ak.stock_zt_pool_zbgc_em(date=None)
-            if df_zb is not None and not df_zb.empty:
-                sentiment.broken_limit_count = len(df_zb)
-                total_touched = sentiment.limit_up_count + sentiment.broken_limit_count
-                if total_touched > 0:
-                    sentiment.broken_limit_rate = sentiment.broken_limit_count / total_touched * 100
-        except Exception as e:
-            logger.debug(f"获取炸板池失败: {e}")
+        df_zb = _retry_call(lambda: ak.stock_zt_pool_zbgc_em(date=None), "炸板池")
+        if df_zb is not None and not df_zb.empty:
+            sentiment.broken_limit_count = len(df_zb)
+            total_touched = sentiment.limit_up_count + sentiment.broken_limit_count
+            if total_touched > 0:
+                sentiment.broken_limit_rate = sentiment.broken_limit_count / total_touched * 100
 
         # 涨跌家数（从大盘数据获取）
-        try:
-            df_market = ak.stock_zh_a_spot_em()
-            if df_market is not None and not df_market.empty:
-                if '涨跌幅' in df_market.columns:
-                    pct_col = df_market['涨跌幅'].astype(float)
-                    sentiment.up_count = int((pct_col > 0).sum())
-                    sentiment.down_count = int((pct_col < 0).sum())
-                    sentiment.flat_count = int((pct_col == 0).sum())
-                    total = len(pct_col)
-                    if total > 0:
-                        sentiment.up_gt5_pct = (pct_col > 5).sum() / total * 100
-                        sentiment.down_gt5_pct = (pct_col < -5).sum() / total * 100
-        except Exception as e:
-            logger.debug(f"获取涨跌家数失败: {e}")
+        df_market = _retry_call(lambda: ak.stock_zh_a_spot_em(), "涨跌家数")
+        if df_market is not None and not df_market.empty:
+            if '涨跌幅' in df_market.columns:
+                pct_col = df_market['涨跌幅'].astype(float)
+                sentiment.up_count = int((pct_col > 0).sum())
+                sentiment.down_count = int((pct_col < 0).sum())
+                sentiment.flat_count = int((pct_col == 0).sum())
+                total = len(pct_col)
+                if total > 0:
+                    sentiment.up_gt5_pct = (pct_col > 5).sum() / total * 100
+                    sentiment.down_gt5_pct = (pct_col < -5).sum() / total * 100
 
         # 计算情绪温度
         sentiment.temperature = calc_sentiment_temperature(

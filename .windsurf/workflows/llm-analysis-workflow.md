@@ -4,7 +4,7 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
 
 # A股LLM智能分析系统 — 完整工作流
 
-> 最后更新：2026-03-06（评分双轨制 + 前端UI优化 + 代码注释清理）
+> 最后更新：2026-03-07（Agent策略问股 + 交易日检测 + 配置校验 + Prompt精简 + 市场策略蓝图规则引擎 + Flash+Pro双阶段LLM + JSON Schema压缩）
 > 维护者：cascade AI pair programmer
 
 ---
@@ -12,6 +12,10 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
 ## 系统架构总览
 
 ```
+main.py 启动
+  ├─ config.validate_structured()  配置校验（启动时输出 ✓/✗/⚠ 报告）
+  └─ trading_calendar.is_cn_trading_day()  交易日检测（非交易日跳过分析）
+
 用户触发分析（Telegram/WebUI/API）
          ↓
   [pipeline.py] 数据采集层
@@ -19,12 +23,26 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
   [scoring.py] 量化处理层（只输出事实，不输出结论）
          ↓
   [analyzer.py] LLM prompt构建层
+    └─ constraints_section（合并守卫：MaxDD/IC/行业集中/宏观Regime → 单段激活约束）
          ↓
-  [Gemini LLM] 最终决策者
+  ★ 双阶段 LLM（trader角色，2026-03新增）
+  ┌─ Stage 1: Flash（gemini_model_when_cached / 失败→gemini_model_flash_fallback）
+  │    输入: 完整原始技术报告（kline_narrative + technical_analysis_report_llm，~1000-2000字）
+  │    任务: 消化原始技术数据，输出≤80字方向判断（多/空/中性 + 核心理由 + 主要风险）
+  │    超时: 15s，失败→静默降级为单阶段（Pro接收完整技术报告）
+  └─ Stage 2: Pro（gemini_model）
+       输入: Flash摘要~80字（替换原始技术报告段）+ F10 + 新闻 + 约束段（~2000字 vs 原~4000字）
+       输出: 精简JSON（移除time_horizon/confidence_reasoning等非核心字段）
          ↓
-  [pipeline.py] 后处理层（LLM否决权规则）
+  [pipeline.py] 后处理层
+    ├─ LLM否决权规则（量化买入+LLM保守→降档）
+    └─ regime_rules.apply_regime_constraints()  市场策略蓝图规则引擎（硬约束覆盖）
          ↓
   输出推送（Telegram/WebUI）
+
+用户 Agent 问股（WebUI Chat）
+  ├─ GET /chat/strategies  列出可用策略
+  └─ POST /chat/stream  strategy_id → system_prompt_addon → AgentExecutor.chat()
 ```
 
 ---
@@ -129,9 +147,36 @@ description: A股LLM智能分析系统 - 完整工作流与架构文档
 [市场背景] = 大盘形态（牛市/熊市/震荡/修复中）
 [历史记忆] = 昨日分析观点对比
 [数据缺失提示] = 降低相关维度置信度
-[各守卫模块] = MaxDD/IC Quality/Sector Exposure/Portfolio Beta/Macro Regime
+[constraints_section] = ⚠️ 组合约束（合并守卫，仅注入已激活项）
+  ★ MaxDD Guard: 仓位上限降低 / 止损收紧规则
+  ★ IC Guard: 信号质量退化时仓位建议
+  ★ 行业集中: 加仓时单笔上限降低20%
+  ★ 宏观Regime: BEAR/CRISIS操作指引
+  → 4个守卫段合并为1段，未激活项不注入（2026-03新增优化）
+[Portfolio Beta/同行业排名/持仓周期胜率] = 仅在有数据时注入
 [JSON输出规范] = 字段格式要求
 ```
+
+**time_horizon_hint 动态化（2026-03新增）**：
+- 旧版：硬编码"第5日IC=0.20/第10日IC=-0.13"（历史一次性样本数字）
+- 新版：实时读取 `ic_quality_guard` 中本轮计算的近21日滚动IC值和样本量（n）
+
+### 3.3 双阶段 Flash+Pro JSON Schema 精简（2026-03-07新增）
+
+**已移除字段**（不存 DB，无下游依赖）：`time_horizon`、`confidence_reasoning`、`execution_note`、`earnings_outlook`、`battle_plan.risk_reward`
+
+**保留字段**（DB 存储 / 前端展示）：`trend_prediction`、`analysis_summary`、`operation_advice`、`llm_score`、`llm_advice`、`llm_reasoning`、`dashboard.*`
+
+**质量规则**：从6条压缩为3条核心原则：
+1. `one_sentence` 必须含具体数字，禁泛化
+2. `one_sentence`（判断）vs `action_now`（操作）职责严格分离
+3. `counter_arguments` 必须 ≥2条且含数字/事件
+
+**实测效果（2026-03-07 贵州茅台）**：
+- Flash（gemini-3-flash-preview）：~9秒，输出"**方向：偏空。**"
+- Pro（gemini-3.1-pro-preview）：~13秒，输出完整分析
+- JSON 输出协议从 ~600字 压缩至 ~300字
+- `time_horizon` / `confidence_reasoning` 字段已确认不出现在输出中
 
 ### 3.2 Market Background Section（原reliability_section，已重构）
 **旧版**：显示"量化评分82分，量化信号：买入"，要求LLM表明认同/不认同  
@@ -180,6 +225,30 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 3. **IC Quality Guard**：信号质量退化时仓位减半
 4. **Sector Exposure Guard**：行业集中度过高时警告
 5. **LLM否决权**：量化买入但LLM保守则降档
+6. **市场策略蓝图规则引擎**（2026-03新增，见5.4）
+
+### 5.4 市场策略蓝图规则引擎（`src/core/regime_rules.py`）
+
+**调用时机**：`process_single_stock()` 中 LLM+量化+仓位重映射全部完成后
+
+**规则表**（经回测验证调参）：
+
+| Regime | 仓位上限 | 止损系数 | 建议降级 | 验证依据 |
+|--------|---------|---------|---------|---------|
+| BULL | 30% | 1.0x | 无 | 当前无BULL数据 |
+| NEUTRAL | 20% | 1.0x | 无 | — |
+| BEAR | 10% | 0.75x | **无**（仅限仓+收紧止损） | 高分买入仍有57.8%胜率，不强制降级 |
+| CRISIS | 0% | 0.5x | 买入/加仓/持有→观望 | 系统性危机紧急保护 |
+
+**MaxDD Guard叠加层**：
+- `caution`：仓位×0.5，止损×0.9
+- `defensive`：仓位×0.3，止损×0.8，"买入"→"观望"
+- `halt`：仓位×0.0，止损×0.7，所有建议→"观望"
+
+**BEAR规则设计依据**：  
+回测 15,357条记录（sideways环境），高分(≥80)买入信号5日胜率57.8%/avg+1.03%。数据不支持盲目降级有效买入信号，故只通过仓位上限和止损收紧来控制风险。
+
+**注**：规则引擎异常时静默跳过（fail-safe），不影响正常分析。
 
 ### 5.3 评分双轨制（2026-03-06新增）
 
@@ -241,8 +310,17 @@ if 量化信号=买入 and LLM建议∈{观望,持有}: final_advice = 观望
 
 | 文件 | 职责 |
 |-----|------|
-| `src/core/pipeline.py` | 数据采集、Context组装、后处理（LLM否决权） |
-| `src/analyzer.py` | Prompt构建、LLM调用、结果解析 |
+| `src/core/pipeline.py` | 数据采集、Context组装、后处理（LLM否决权 + 规则引擎） |
+| `src/core/regime_rules.py` | **市场策略蓝图规则引擎**（BULL/NEUTRAL/BEAR/CRISIS硬约束）★新增 |
+| `src/core/trading_calendar.py` | **交易日检测**（akshare获取交易日历，进程级缓存，fail-open）★新增 |
+| `src/analyzer.py` | Prompt构建、LLM调用、结果解析（constraints_section已合并守卫段） |
+| `src/config.py` | 配置管理（含 `trading_day_check_enabled` + `validate_structured()`）★更新 |
+| `main.py` | 启动入口（含 validate_structured + trading_day_check）★更新 |
+| `src/agent/executor.py` | Agent执行器（支持 `strategy_id` 注入 system_prompt_addon）★更新 |
+| `src/agent/strategy_manager.py` | **Agent策略管理器**（加载/列出/获取YAML策略）★新增 |
+| `src/agent/strategies/*.yaml` | **5个YAML预设策略**（趋势动量/价值回调/突破买点/风险排查/盘中狙击）★新增 |
+| `src/services/chat_service.py` | 聊天服务（chat/chat_stream已支持 `strategy_id` 透传）★更新 |
+| `api/v1/endpoints/chat.py` | Chat API（ChatRequest含strategy_id + GET /strategies接口）★更新 |
 | `src/stock_analyzer/scoring.py` | 量化评分、指标计算、信号判断 |
 | `src/stock_analyzer/formatter.py` | format_for_llm（技术摘要给LLM用） |
 | `src/stock_analyzer/kline_narrator.py` | K线叙事生成（MA交互/连续K线/缺口/52周区间等） |
@@ -372,16 +450,79 @@ L3:   网络请求（东财API 10s超时）      → 首次拉取
 
 ---
 
-## 十三、待实现功能（Backlog）
+## 十三、Agent 策略问股（2026-03新增）
+
+### 文件：`src/agent/strategies/` + `src/agent/strategy_manager.py`
+
+**5个预设YAML策略**：
+
+| strategy_id | 名称 | 核心关注点 |
+|------------|------|---------|
+| `trend_momentum` | 趋势动量策略 | 多头排列 + 量能配合 + 强势板块 |
+| `value_rebound` | 价值回调策略 | 超跌 + 低估值 + 筹码分布 |
+| `breakout_entry` | 突破买点策略 | 关键压力位 + 放量突破 + 量价配合 |
+| `risk_check` | 风险排查模式 | 全面风险扫描（解禁/减持/止损） |
+| `intraday_sniper` | 盘中狙击模式 | 盘中短线 + 实时价格 + 快进快出 |
+
+**调用链路**：
+```
+POST /chat/stream { strategy_id: "trend_momentum", ... }
+  ChatRequest.strategy_id
+  chat_service.chat_stream(strategy_id=...)
+  AgentExecutor.chat(strategy_id=...)
+  strategy_manager.get_system_prompt_addon(strategy_id)
+  system_prompt = SYSTEM_PROMPT + addon 注入Gemini
+```
+
+**GET /chat/strategies** 返回所有策略的 id/name/description 列表。
+
+---
+
+## 十四、交易日自动检测（2026-03新增）
+
+### 文件：`src/core/trading_calendar.py`
+
+- `is_cn_trading_day(date)` → bool：判断是否为A股交易日
+- `get_trading_day_status(date)` → str：返回人类可读状态
+
+**数据**：`akshare.tool_trade_date_hist_sina()` 获取完整交易日历，进程级内存缓存
+
+**Fail-open**：akshare失败时周末强制排除，非周末放行（避免误删分析）
+
+**配置**：`TRADING_DAY_CHECK_ENABLED=false` 可完全禁用
+
+**main.py**：`run_full_analysis()` 开头检测，非交易日打印 ⏭️ 直接返回
+
+---
+
+## 十五、结构化配置校验（2026-03新增）
+
+### 文件：`src/config.py` → `validate_structured()`
+
+main.py 启动时调用，打印三级报告：
+
+```
+✓ GEMINI_API_KEY    已配置
+✗ STOCK_LIST        未配置（必须设置）
+⚠ SEARCH_ENGINE     未配置（舆情功能不可用）
+⚠ TELEGRAM_BOT_TOKEN 未配置（推送功能不可用）
+✓ 交易日检测        已启用
+```
+
+---
+
+## 十六、待实现功能（Backlog）
 
 | 优先 | 功能 | 预计工时 |
 |-----|------|---------|
 | P5 | 北向资金个股持仓数据 | 4h（数据质量不稳定） |
 | P6 | 大盘状态常驻显示（macro_regime需暴露到前端） | 2h |
+| P7 | Agent策略选择器前端UI（策略下拉选单） | 2h |
+| P8 | BEAR/CRISIS回测验证（需积累bear期数据后补充） | 待定 |
 
 ---
 
-## 十三、关键回测结论（截至2026-03）
+## 十七、关键回测结论（截至2026-03）
 
 | 规则 | 依据 |
 |-----|------|
@@ -390,3 +531,5 @@ L3:   网络请求（东财API 10s超时）      → 首次拉取
 | 量化买入+LLM观望 → 降为观望 | 4条记录，0%胜率，avg=-4.06% |
 | 弱共振+非多头周线 → 降级 | 5日胜率46.8%，avg=-0.36% |
 | KDJ超卖金叉+多头周线 → +8分 | 20日胜率84.6%，avg=+3.57% |
+| 高分(≥80)买入 → sideways胜率57.8% | avg5d=+1.03%（n=332），BEAR规则不强制降级依据 |
+| BEAR规则：仅限仓10%+止损×0.75 | 无建议降级（高分买入有效性支撑，2026-03验证） |
