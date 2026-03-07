@@ -190,6 +190,7 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
             {cfg.label}
           </span>
           <button onClick={() => setShowLogs(v => !v)} className="text-[11px] text-white/20 hover:text-white/50 transition" title="操作日志">📋</button>
+          <button onClick={() => window.open(`/portfolio/${signal.code}/simple`, '_blank')} className="text-[11px] text-white/20 hover:text-sky-400 transition" title="简化视图">📊</button>
           <button onClick={() => onRemove(signal.code)} className="text-[11px] text-white/20 hover:text-red-400 transition">×</button>
         </div>
       </div>
@@ -207,6 +208,14 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
           <span>ATR止损 <span className="font-mono text-amber-400/80">{signal.atrStop.toFixed(2)}</span></span>
           <span>锁住浮盈 <span className={`font-mono ${signal.stopPnlPct >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>{signal.stopPnlPct >= 0 ? '+' : ''}{signal.stopPnlPct.toFixed(1)}%</span></span>
           {signal.highestPrice > 0 && <span>持仓高点 <span className="font-mono text-white/50">{signal.highestPrice.toFixed(2)}</span></span>}
+        </div>
+      )}
+
+      {/* 再分析提醒日期 */}
+      {(signal as MonitorSignal & { nextReviewAt?: string }).nextReviewAt && (
+        <div className="text-[11px] text-white/35 flex items-center gap-1">
+          <span>📅 再分析提醒:</span>
+          <span className="font-mono">{(signal as MonitorSignal & { nextReviewAt?: string }).nextReviewAt}</span>
         </div>
       )}
 

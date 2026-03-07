@@ -941,6 +941,23 @@ class GeminiAnalyzer:
         else:
             holding_horizon_section = ""
 
+        # P4: 北向资金个股持股 section
+        _north = context.get('northbound_holding')
+        if _north and isinstance(_north, dict) and _north.get('holding_pct_a', 0) > 0:
+            _n_pct = _north['holding_pct_a']
+            _n_chg = _north.get('shares_change', 0)
+            _n_amt = _north.get('amount_change', 0)
+            _n_dt = _north.get('latest_date', '')
+            _n_trend = "增持" if _n_chg > 0 else ("减持" if _n_chg < 0 else "持平")
+            _n_chg_str = f"{_n_trend}{abs(_n_chg)/10000:.1f}万股 {abs(_n_amt):.0f}万元" if _n_chg != 0 else "持平"
+            northbound_section = (
+                f"\n## 🌐 北向资金持股（{_n_dt}）\n"
+                f"- 持股占A股比例：**{_n_pct:.2f}%**\n"
+                f"- 今日变动：{_n_chg_str}\n"
+            )
+        else:
+            northbound_section = ""
+
         # I3: 量化锁点提取（供 R/R 比计算和行动方案小组底层）
         trend_result_obj = context.get('trend_result')
         _ideal_buy = getattr(trend_result_obj, 'ideal_buy', None) if trend_result_obj else None
@@ -1200,7 +1217,7 @@ Step 4（{_has_pos_label}） - 结论：
 {f10_str}{sector_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{holding_horizon_section}
+{data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}
 ## JSON 输出协议
 {_json_constraint}
 只输出 JSON，不要 markdown 代码块包裹。字段：

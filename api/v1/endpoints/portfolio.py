@@ -14,7 +14,7 @@ from src.services.portfolio_service import (
     add_watchlist, remove_watchlist, list_watchlist, update_watchlist_analysis,
     monitor_portfolio,
     add_portfolio_log, list_portfolio_logs, update_portfolio_horizon,
-    get_ai_horizon_suggestion,
+    get_ai_horizon_suggestion, update_next_review_date,
 )
 
 router = APIRouter()
@@ -89,7 +89,15 @@ def api_update_horizon(code: str, req: HorizonUpdateRequest):
     ok = update_portfolio_horizon(code, req.holding_horizon_label)
     if not ok:
         raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
+    # P5: 同时更新再分析日期
+    update_next_review_date(code, req.holding_horizon_label)
     return {"success": True}
+
+
+@router.post("/portfolio/{code}/refresh-review-date", summary="重新计算再分析日期")
+def api_refresh_review_date(code: str):
+    review_date = update_next_review_date(code)
+    return {"next_review_at": review_date}
 
 
 @router.delete("/portfolio/{code}", summary="删除持仓")
@@ -106,6 +114,78 @@ def api_get_portfolio(code: str):
     if not item:
         raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
     return {"item": item}
+
+
+# ─── P6: 散户简化视图 ───────────────────────
+
+@router.get("/portfolio/{code}/simple", summary="散户简化视图（大字版信号+一句话建议）")
+def api_simple_view(code: str):
+    """
+    返回最简化的持仓信息，供散户快速决策。
+    包含：信号灯颜色、P&L、止损价、一句话操作建议。
+    """
+    import json as _json
+    try:
+        holding = get_portfolio(code)
+        from src.storage import DatabaseManager, AnalysisHistory
+        from sqlalchemy import select, desc as _desc
+        db = DatabaseManager.get_instance()
+        with db.get_session() as session:
+            rec = session.execute(
+                select(AnalysisHistory)
+                .where(AnalysisHistory.code == code)
+                .order_by(_desc(AnalysisHistory.created_at))
+                .limit(1)
+            ).scalar_one_or_none()
+
+        signal_data = {'signal': 'unknown', 'current_price': None, 'pnl_pct': None, 'atr_stop': None}
+        try:
+            signals = monitor_portfolio()
+            sig = next((s for s in signals if s.get('code') == code), None)
+            if sig:
+                signal_data = sig
+        except Exception:
+            pass
+
+        advice_short = ''
+        analysis_summary = ''
+        score = None
+        analyzed_at = None
+        if rec:
+            advice_short = rec.operation_advice or ''
+            score = rec.sentiment_score
+            analyzed_at = rec.created_at.isoformat() if rec.created_at else None
+            try:
+                raw = _json.loads(rec.raw_result or '{}')
+                full_summary = raw.get('dashboard', {}).get('analysis_summary') or raw.get('analysis_summary', '')
+                analysis_summary = (full_summary[:120] + '…') if len(full_summary) > 120 else full_summary
+            except Exception:
+                pass
+
+        signal = signal_data.get('signal', 'unknown')
+        color_map = {'stop_loss': 'red', 'reduce': 'orange', 'add_watch': 'green', 'hold': 'blue', 'unknown': 'gray'}
+        emoji_map = {'stop_loss': '🔴', 'reduce': '🟠', 'add_watch': '🟢', 'hold': '🔵', 'unknown': '⚫'}
+
+        return {
+            'code': code,
+            'name': holding.get('name', '') if holding else '',
+            'signal': signal,
+            'signal_color': color_map.get(signal, 'gray'),
+            'signal_emoji': emoji_map.get(signal, '⚫'),
+            'signal_text': signal_data.get('signal_text', ''),
+            'current_price': signal_data.get('current_price'),
+            'pnl_pct': signal_data.get('pnl_pct'),
+            'atr_stop': signal_data.get('atr_stop'),
+            'cost_price': holding.get('cost_price') if holding else None,
+            'holding_horizon_label': holding.get('holding_horizon_label') if holding else None,
+            'next_review_at': holding.get('next_review_at') if holding else None,
+            'advice_short': advice_short,
+            'analysis_summary': analysis_summary,
+            'score': score,
+            'analyzed_at': analyzed_at,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── 持仓监控 ────────────────────────────────

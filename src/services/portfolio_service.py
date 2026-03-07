@@ -695,3 +695,105 @@ def update_portfolio_horizon(
         record.updated_at = datetime.now()
         session.commit()
         return True
+
+
+# ─────────────────────────────────────────────
+# P5: 再分析日期提醒
+# ─────────────────────────────────────────────
+
+import re as _re
+
+_HORIZON_TO_DAYS = [
+    (r'短线.*?(\d+)[^\d]*(\d+).*?交易日', lambda m: int(m.group(2))),
+    (r'短线.*?(\d+)[^\d]*(\d+).*?日',     lambda m: int(m.group(2))),
+    (r'中线.*?(\d+)[^\d]*(\d+).*?周',     lambda m: int(m.group(2)) * 7),
+    (r'中线.*?(\d+)[^\d]*(\d+).*?月',     lambda m: int(m.group(2)) * 30),
+    (r'长线.*?(\d+).*?月',                lambda m: int(m.group(1)) * 30),
+    (r'(\d+).*?-.*?(\d+).*?交易日',       lambda m: int(m.group(2))),
+    (r'(\d+).*?-.*?(\d+).*?日',           lambda m: int(m.group(2))),
+    (r'(\d+).*?-.*?(\d+).*?周',           lambda m: int(m.group(2)) * 7),
+    (r'(\d+).*?-.*?(\d+).*?月',           lambda m: int(m.group(2)) * 30),
+]
+
+
+def _parse_horizon_days(horizon_label: str) -> Optional[int]:
+    """从持仓周期字符串中解析建议天数（取区间上限）。"""
+    if not horizon_label:
+        return None
+    for pattern, extractor in _HORIZON_TO_DAYS:
+        m = _re.search(pattern, horizon_label)
+        if m:
+            try:
+                return max(1, extractor(m))
+            except Exception:
+                pass
+    return None
+
+
+def update_next_review_date(code: str, horizon_label: Optional[str] = None) -> Optional[str]:
+    """
+    根据持仓周期标签计算并写入下次再分析日期。
+    自动从 AI 历史分析记录提取，也可传入 horizon_label 覆盖。
+    返回计算出的日期字符串（YYYY-MM-DD），或 None。
+    """
+    from datetime import date, timedelta
+    label = horizon_label or get_ai_horizon_suggestion(code)
+    if not label:
+        return None
+    days = _parse_horizon_days(label)
+    if not days:
+        return None
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        record = session.execute(
+            select(Portfolio).where(Portfolio.code == code)
+        ).scalar_one_or_none()
+        if not record:
+            return None
+        base_date = record.entry_date or date.today()
+        review_date = base_date + timedelta(days=days)
+        record.next_review_at = review_date
+        if label and not record.holding_horizon_label:
+            record.holding_horizon_label = label
+        record.updated_at = datetime.now()
+        session.commit()
+        return review_date.isoformat()
+
+
+def run_review_reminder_job() -> None:
+    """
+    每日定时任务：检查持仓中到期/即将到期的再分析提醒，
+    通过 PushPlus 和 Web 推送通知。
+    """
+    from datetime import date, timedelta
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        holdings = session.execute(select(Portfolio)).scalars().all()
+        due = [
+            h for h in holdings
+            if h.next_review_at and h.next_review_at <= tomorrow
+        ]
+
+    if not due:
+        logger.debug("[review_reminder] 今日无到期再分析提醒")
+        return
+
+    lines = []
+    for h in due:
+        overdue = (today - h.next_review_at).days if h.next_review_at <= today else 0
+        overdue_str = f"（已过期{overdue}天）" if overdue > 0 else "（明日到期）"
+        lines.append(f"- **{h.name}({h.code})**：{h.holding_horizon_label or '未知周期'} {overdue_str}")
+
+    title = f"📅 持仓复盘提醒：{len(due)} 只股到期"
+    content = f"## {title}\n\n" + "\n".join(lines) + "\n\n⏰ 建议今日重新运行完整分析，更新持仓决策。"
+    try:
+        from src.notification import NotificationManager
+        nm = NotificationManager.get_instance()
+        nm.send_to_pushplus(content=content, title=title)
+        logger.info(f"[review_reminder] 推送 {len(due)} 只到期再分析提醒")
+    except Exception as e:
+        logger.warning(f"[review_reminder] 推送失败: {e}")

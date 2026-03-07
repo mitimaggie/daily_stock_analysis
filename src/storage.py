@@ -280,6 +280,7 @@ class Portfolio(Base):
     last_monitored_at = Column(DateTime, nullable=True)
     sector_name = Column(String(64), nullable=True)       # 行业/板块（自动从分析中同步）
     holding_horizon_label = Column(String(32), nullable=True)  # 持仓周期标签（如'短线(3-5日)'/'中线(1-4周)'）
+    next_review_at = Column(Date, nullable=True)               # 下次建议再分析日期
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -299,6 +300,7 @@ class Portfolio(Base):
             'last_monitored_at': self.last_monitored_at.isoformat() if self.last_monitored_at else None,
             'sector_name': self.sector_name,
             'holding_horizon_label': self.holding_horizon_label,
+            'next_review_at': self.next_review_at.isoformat() if self.next_review_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -436,6 +438,7 @@ class DatabaseManager:
             'portfolio': {
                 'sector_name': 'VARCHAR(64)',
                 'holding_horizon_label': 'VARCHAR(32)',
+                'next_review_at': 'DATE',
             },
             'analysis_history': {
                 'actual_pct_1d':          'FLOAT',

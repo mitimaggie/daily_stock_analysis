@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import NotFoundPage from './pages/NotFoundPage';
 import PortfolioPage from './pages/PortfolioPage';
+import SimpleViewPage from './pages/SimpleViewPage';
 import './App.css';
 
 const App: React.FC = () => {
@@ -12,6 +13,7 @@ const App: React.FC = () => {
                 <Routes>
                     <Route path="/" element={<HomePage />} />
                     <Route path="/portfolio" element={<PortfolioPage />} />
+                    <Route path="/portfolio/:code/simple" element={<SimpleViewPage />} />
                     <Route path="*" element={<NotFoundPage />} />
                 </Routes>
             </div>

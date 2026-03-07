@@ -882,6 +882,16 @@ class StockAnalysisPipeline:
         except Exception as e:
             logger.debug(f"[{code}] 持仓周期胜率获取失败: {e}")
 
+        # P4: 北向资金个股持股数据（每日数据，TTL=6h，串行调用不封禁）
+        if not fast_mode:
+            try:
+                from data_provider.akshare_fetcher import get_northbound_holding
+                north_data = get_northbound_holding(code)
+                if north_data:
+                    context['northbound_holding'] = north_data
+            except Exception as e:
+                logger.debug(f"[{code}] 北向资金持股数据获取失败: {e}")
+
         return context
 
     def _log(self, msg: str, *args, **kwargs) -> None:

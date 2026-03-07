@@ -408,6 +408,13 @@ def main() -> int:
         except Exception as e:
             logger.warning(f"盘中持仓监控任务注册失败（可忽略）: {e}")
 
+        # P5: 每日晨间再分析提醒（9:00 推送当日/明日到期的持仓复盘提醒）
+        try:
+            from src.services.portfolio_service import run_review_reminder_job as _review_job
+            scheduler.add_daily_job("09:00", _review_job)
+        except Exception as e:
+            logger.warning(f"再分析提醒任务注册失败（可忽略）: {e}")
+
         logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
         logger.info("按 Ctrl+C 退出")
         scheduler.run()

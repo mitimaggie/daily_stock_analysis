@@ -72,6 +72,25 @@ export interface WatchlistItem {
   createdAt: string | null;
 }
 
+export interface SimpleViewData {
+  code: string;
+  name: string;
+  signal: string;
+  signal_color: string;
+  signal_emoji: string;
+  signal_text: string;
+  current_price: number | null;
+  pnl_pct: number | null;
+  atr_stop: number | null;
+  cost_price: number | null;
+  holding_horizon_label: string | null;
+  next_review_at: string | null;
+  advice_short: string;
+  analysis_summary: string;
+  score: number | null;
+  analyzed_at: string | null;
+}
+
 // ─── API 客户端 ───────────────────────────────
 
 export const portfolioApi = {
@@ -146,6 +165,20 @@ export const portfolioApi = {
     await apiClient.post(`/api/v1/watchlist/${code}/sync`, null, {
       params: { score, advice, summary },
     });
+  },
+
+  // P6: 散户简化视图
+  getSimpleView: async (code: string): Promise<SimpleViewData> => {
+    const res = await apiClient.get<SimpleViewData>(`/api/v1/portfolio/${code}/simple`);
+    return res.data;
+  },
+
+  // P5: 刷新再分析日期
+  refreshReviewDate: async (code: string): Promise<string | null> => {
+    try {
+      const res = await apiClient.post<{ next_review_at: string | null }>(`/api/v1/portfolio/${code}/refresh-review-date`);
+      return res.data.next_review_at;
+    } catch { return null; }
   },
 
   // 操作日志

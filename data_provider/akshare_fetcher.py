@@ -596,3 +596,65 @@ class AkshareFetcher(BaseFetcher):
         except Exception as e:
             logger.debug(f"[{stock_code}] 筹码本地估算失败: {e}")
             return None
+
+
+# ─────────────────────────────────────────────────────────────
+# P4: 北向资金个股持股（模块级函数，带 data_cache TTL=6h）
+# ─────────────────────────────────────────────────────────────
+_NORTH_TTL_HOURS = 6.0
+
+def get_northbound_holding(stock_code: str) -> dict | None:
+    """
+    获取北向资金个股最新持股数据（沪/深股通）。
+
+    数据源：akshare.stock_hsgt_individual_em
+    返回字段：
+        holding_pct_a   持股数量占A股百分比
+        shares_change   今日增持股数（正=增持，负=减持）
+        amount_change   今日增持资金（万元，正=增持）
+        mv_change       今日持股市值变化（万元）
+        latest_date     数据日期
+        close_price     当日收盘价
+    缓存：data_cache TTL=6h，避免频繁调用被封。
+    """
+    CACHE_KEY = f"northbound_{stock_code}"
+    CACHE_TYPE = "northbound_holding"
+
+    try:
+        from src.storage import DatabaseManager
+        import json as _json
+        db = DatabaseManager.get_instance()
+        cached = db.get_data_cache(CACHE_TYPE, CACHE_KEY, ttl_hours=_NORTH_TTL_HOURS)
+        if cached:
+            return _json.loads(cached)
+    except Exception:
+        pass
+
+    try:
+        import akshare as ak
+        import time
+        time.sleep(2.0)  # 流控：避免批量分析时并发调用被封
+        df = ak.stock_hsgt_individual_em(symbol=stock_code)
+        if df is None or df.empty:
+            return None
+        last = df.iloc[-1]
+        result = {
+            'holding_pct_a': float(last.get('持股数量占A股百分比', 0) or 0),
+            'shares_change': float(last.get('今日增持股数', 0) or 0),
+            'amount_change': round(float(last.get('今日增持资金', 0) or 0) / 10000, 2),
+            'mv_change': round(float(last.get('今日持股市值变化', 0) or 0) / 10000, 2),
+            'latest_date': str(last.get('持股日期', '')),
+            'close_price': float(last.get('当日收盘价', 0) or 0),
+        }
+        try:
+            import json as _json
+            from src.storage import DatabaseManager
+            DatabaseManager.get_instance().save_data_cache(
+                CACHE_TYPE, CACHE_KEY, _json.dumps(result, ensure_ascii=False)
+            )
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        logger.debug(f"[{stock_code}] 北向资金持股获取失败: {e}")
+        return None

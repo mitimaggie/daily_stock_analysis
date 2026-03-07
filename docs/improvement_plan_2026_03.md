@@ -329,3 +329,75 @@
 1. **任何涉及"基于X推导Y"的方案，必须先确认系统里有没有X的数据**
 2. **任何涉及回测结论的方案，必须先查数据库确认数字，再说结论**
 3. **每次修改分析逻辑之前，必须先进行回测验证，回测OK再动代码**
+
+---
+
+## Prompt 体系全景（截至 2026-03-07）
+
+### 现有 9 种 Prompt
+
+| # | 名称 | 所在文件 | 角色 | 触发条件 | A/B变体 |
+|---|------|---------|------|---------|---------|
+| 1 | **Flash 技术预判**（通用） | `src/analyzer.py:583` | 持仓风险诊断师（技术面） | 每次 standard 分析前 | 仅 flash_pro |
+| 2 | **Pro 主分析**（standard） | `src/analyzer.py:_format_prompt` | 基金经理 | 每次完整分析，消费 Flash 摘要 | standard |
+| 3 | **Pro 主分析**（llm_only） | `src/analyzer.py:_format_prompt` | 基金经理 | 移除量化数据，纯 LLM 判断 | llm_only |
+| 4 | **Skill: Druckenmiller** | `src/analyzer.py:1113` | 宏观流动性框架 | skill=druckenmiller | standard |
+| 5 | **Skill: Soros** | `src/analyzer.py:1129` | 反身性框架 | skill=soros | standard |
+| 6 | **Skill: Lynch** | `src/analyzer.py:1145` | 成长股侦察框架 | skill=lynch | standard |
+| 7 | **大盘复盘**（role=macro） | `src/core/market_review.py` | 宏观分析师 | 每日大盘复盘推送 | — |
+| 8 | **监控 Flash**（新增） | `src/services/monitor_analyzer.py` | 持仓风险诊断师 | 止损/目标价/加仓信号触发 | — |
+| 9 | **监控 Pro**（新增） | `src/services/monitor_analyzer.py` | 基金经理应急决策 | 止损/目标价触发，输出 A/B/C 三选一 | — |
+
+### Flash Prompt 设计原则（2026-03 修订）
+- **通用 Flash（#1）**：技术面纯量化判断，≤300字，输出方向（多/空/中性）+ 核心依据（2个信号）+ 失效条件
+- **监控 Flash（#8）**：持仓风险诊断师角色，≤150字，聚焦破位有效性、盘中支撑/压力、信号失效条件
+- Flash 输出均作为**参考，非指令**；Pro 看到的是"独立技术分析师结论"，不知来自 Flash
+
+### 建议后续扩展（优先级排序）
+| 优先级 | 场景 | 描述 |
+|--------|------|------|
+| ⭐⭐⭐ | **止盈退出计划**（exit_planner） | 浮盈>15%时，自动规划分批止盈节点，扩展 battle_plan |
+| ⭐⭐⭐ | **关注股入场扫描**（watchlist_entry） | 每日对关注列表判断"今天是否接近入场区间" |
+| ⭐⭐ | **复盘归因**（post_mortem） | 有 stop_exit 日志时，分析止损原因 |
+| ⭐⭐ | **财报解读**（earnings_reader） | 快速解析季报关键财务变化 |
+| ⭐ | **板块轮动扫描**（sector_rotation） | 跨股识别资金板块流向 |
+
+---
+
+## 2026-03 新功能实施记录（第6轮）
+
+### P1: 持仓盘中止损监控
+- `src/scheduler.py`: 新增 `add_intraday_monitor_job()` 分钟级交易时段任务
+- `main.py`: 注册每10分钟持仓监控（daemon + schedule 两路径均注册）
+- `src/services/monitor_analyzer.py`（新建）: 监控专属 Flash+Pro 诊断引擎
+  - Flash 角色：持仓风险诊断师（技术破位有效性）
+  - Pro 角色：基金经理应急决策（A/B/C 三选一）
+  - 限流：每股每日最多3次，同类型最小间隔2小时
+  - 诊断结果写入 `monitor_diagnoses` 表 + PushPlus 推送
+
+### P2: 亏损加仓行为偏差规则
+- `src/core/pipeline.py`: 规则4 — 亏损中加仓时生成行为偏差预警
+
+### P3: 市场环境→仓位上限联动
+- `src/analyzer.py`: bear 市 max 50%，sideways max 80%
+
+### P4: 北向资金个股数据集成
+- `data_provider/akshare_fetcher.py`: `get_northbound_holding()` 函数（TTL=6h DB缓存，2s流控）
+- `src/core/pipeline.py`: 非快速模式下注入 `context['northbound_holding']`
+- `src/analyzer.py`: Pro Prompt 新增 `northbound_section`（持股占比 + 今日变动）
+
+### P5: 再分析日期提醒
+- `src/storage.py`: Portfolio 新增 `next_review_at DATE` 字段
+- `src/services/portfolio_service.py`: `update_next_review_date()` + `run_review_reminder_job()`（持仓周期字符串解析→天数→date）
+- `main.py`: 每日 09:00 推送到期/明日到期提醒
+- API: `POST /api/v1/portfolio/{code}/refresh-review-date`
+
+### P6: 散户简化视图
+- API: `GET /api/v1/portfolio/{code}/simple`（信号灯颜色 + P&L + ATR止损 + AI一句话）
+- 前端: `SimpleViewPage.tsx`（手机友好大字版） + 路由 `/portfolio/:code/simple`
+- 持仓卡片新增 📊 按钮直接打开
+
+### P7: 前端持仓看板增强
+- `src/storage.py`: 新增 `PortfolioLog` 表、`MonitorDiagnosis` 表
+- `src/services/portfolio_service.py`: log CRUD + horizon 双轨制 + AI自动提取
+- 前端: 操作日志面板（📋 按钮展开）、持仓周期标签、AI建议自动预填、再分析日期 badge
