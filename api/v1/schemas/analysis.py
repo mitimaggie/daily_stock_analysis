@@ -70,8 +70,14 @@ class AnalyzeRequest(BaseModel):
     )
     ab_variant: str = Field(
         "standard",
-        description="A/B实验分组: 'standard'(量化+LLM) | 'llm_only'(纯LLM，无量化数据)",
-        pattern="^(standard|llm_only)$"
+        description=(
+            "A/B实验分组: "
+            "'standard'(量化+LLM+A股框架Skills，2次调用) | "
+            "'no_skills'(量化+LLM，无Skills框架，对照组) | "
+            "'standard_3call'(量化+LLM+A股框架Skills，3次调用，测试多调用效益) | "
+            "'llm_only'(纯LLM，无量化数据)"
+        ),
+        pattern="^(standard|no_skills|standard_3call|llm_only)$"
     )
 
     class Config:

@@ -26,25 +26,30 @@ interface ReportOverviewProps {
   skillUsed?: string;
   resonanceLevel?: string;
   capitalConflictWarning?: string;
+  analysisScene?: string;
 }
 
 /**
  * 报告概览区组件 - 终端风格
  */
 const SKILL_LABEL: Record<string, string> = {
+  policy_tailwind: '政策顺风',
+  northbound_smart: '北向聪明钱',
+  ashare_growth_value: 'A股成长价值',
+  default: '通用',
   druckenmiller: 'Druckenmiller',
   lynch: 'Lynch',
-  buffett: 'Buffett',
   soros: 'Soros',
-  default: '通用',
 };
 
 const SKILL_DESC: Record<string, string> = {
+  policy_tailwind: 'A股政策催化框架',
+  northbound_smart: '北向外资方向框架',
+  ashare_growth_value: 'A股成长价值框架',
+  default: '综合框架',
   druckenmiller: '宏观流动性框架',
   soros: '反身性情绪框架',
   lynch: '成长股侦察框架',
-  buffett: '价值投资框架',
-  default: '综合框架',
 };
 
 const DIFFICULTY_COLOR: Record<string, string> = {
@@ -73,7 +78,16 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   skillUsed,
   resonanceLevel,
   capitalConflictWarning,
+  analysisScene,
 }) => {
+
+  const SCENE_CONFIG: Record<string, { label: string; color: string; icon: string }> = {
+    profit_take: { label: '止盈模式', color: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30', icon: '💰' },
+    crisis:      { label: '危机应对', color: 'bg-red-500/15 text-red-300 border-red-500/30', icon: '🚨' },
+    holding:     { label: '持仓管理', color: 'bg-blue-500/10 text-blue-300/80 border-blue-500/20', icon: '📊' },
+    entry:       { label: '入场侦察', color: 'bg-emerald-500/10 text-emerald-300/80 border-emerald-500/20', icon: '🎯' },
+    post_mortem: { label: '复盘总结', color: 'bg-purple-500/10 text-purple-300/80 border-purple-500/20', icon: '🔍' },
+  };
   // 内联持仓编辑状态
   const [editingPosition, setEditingPosition] = useState(false);
   const [editShares, setEditShares] = useState('');
@@ -206,6 +220,12 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
             </span>
           )}
           {lastUpdate && <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>}
+          {/* 场景模式 badge（紧跟股票名）*/}
+          {analysisScene && analysisScene !== 'entry' && SCENE_CONFIG[analysisScene] && (
+            <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${SCENE_CONFIG[analysisScene].color}`}>
+              {SCENE_CONFIG[analysisScene].icon} {SCENE_CONFIG[analysisScene].label}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {onRefresh && (

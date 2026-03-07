@@ -106,7 +106,8 @@ class AnalysisService:
                 logger.warning(f"分析股票 {stock_code} 返回空结果")
                 return None
 
-            # A/B 自动配对：standard 分析完后，后台异步触发一次 llm_only 对照实验
+            # A/B 自动配对：standard 分析完后，后台异步触发 no_skills 对照实验（测试 Skills 框架效益）
+            # standard_3call 对照由手动触发（测试多调用效益，成本较高）
             if ab_variant == 'standard' and getattr(config, 'ab_auto_pair', False):
                 import threading
                 def _run_pair():
@@ -115,7 +116,7 @@ class AnalysisService:
                         time.sleep(120)  # 错开 120 秒，等主分析批次完成后再启动，避免并发冲击 Gemini API
                         pair_pipeline = StockAnalysisPipeline(
                             config=config,
-                            query_id=f"{query_id}_ab",
+                            query_id=f"{query_id}_no_skills",
                             query_source="ab_auto"
                         )
                         pair_pipeline.process_single_stock(
@@ -124,11 +125,11 @@ class AnalysisService:
                             single_stock_notify=False,
                             report_type=rt,
                             position_info=position_info,
-                            ab_variant='llm_only',
+                            ab_variant='no_skills',
                         )
-                        logger.info(f"[AB] llm_only 配对分析完成: {stock_code}")
+                        logger.info(f"[AB] no_skills 配对分析完成: {stock_code}")
                     except Exception as e:
-                        logger.warning(f"[AB] llm_only 配对分析失败: {stock_code}: {e}")
+                        logger.warning(f"[AB] no_skills 配对分析失败: {stock_code}: {e}")
                 threading.Thread(target=_run_pair, daemon=True, name=f"ab_pair_{stock_code}").start()
 
             # 构建响应

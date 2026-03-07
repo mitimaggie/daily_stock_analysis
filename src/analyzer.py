@@ -409,8 +409,8 @@ class GeminiAnalyzer:
             result.flash_used = _flash_was_used
             result.flash_summary = _flash_summary_text
 
-            # 5. 三次调用 Skills 架构（仅 trader 角色 + 非 llm_only 且有触发框架时）
-            if role == "trader" and ab_variant != "llm_only" and _skill_meta.get('primary', 'default') != 'default':
+            # 5. Skills 架构：standard_3call = 独立第三次调用; standard = 内嵌Pro prompt(2次调用); no_skills/llm_only = 不调用
+            if role == "trader" and ab_variant == "standard_3call" and _skill_meta.get('primary', 'default') != 'default':
                 try:
                     skill_output = self._run_skill_calls(
                         result=result,
@@ -488,32 +488,35 @@ class GeminiAnalyzer:
         )
 
         _skill_primary_prompts = {
-            'druckenmiller': (
-                f"## 分析框架：Druckenmiller 宏观流动性框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
-                f"基于以下 Pro 主分析结论，从宏观流动性角度深化分析：\n{main_conclusion}\n\n"
-                f"请完成以下4步（每步必须有具体数据依据，禁止模糊表述）：\n"
-                f"Step 1 - 流动性环境：当前大盘成交量趋势 + 政策方向是「资金进场」还是「撤退」？\n"
-                f"Step 2 - 行业主线对齐：该股板块是否顺应当前市场资金主线？\n"
-                f"Step 3 - 催化剂检验：是否存在改变趋势的具体催化剂？「估值低」不算催化剂。\n"
-                f"Step 4（{_has_pos_label}）- 操作结论：{'宏观顺风→加仓触发价？宏观逆风但个股强→止损移至成本价附近' if has_position else '宏观+行业+个股三对齐→入场价区间？部分对齐→前置条件？'}\n\n"
+            'policy_tailwind': (
+                f"## 分析框架：A股政策顺风框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
+                f"A股是政策市：政策支持期可放宽仓位；政策收紧期无论技术面多好都需减仓。\n"
+                f"基于以下 Pro 主分析结论，从政策催化角度深化分析：\n{main_conclusion}\n\n"
+                f"请完成以下4步（每步必须有具体政策事件或新闻依据，禁止模糊表述）：\n"
+                f"Step 1 - 政策方向确认：该股/板块当前处于政策「支持期」「中性」还是「收紧期」？列出1-2个具体政策信号。\n"
+                f"Step 2 - 政策催化强度：是「明确政策红利」还是「预期中」？政策落地确定性如何？\n"
+                f"Step 3 - 板块位置：政策主题行情通常分为「认知期→共识期→兑现期→退潮期」，当前在哪个阶段？\n"
+                f"Step 4（{_has_pos_label}）- 操作结论：{'政策顺风持续→加仓条件？政策预期已充分定价→止盈计划？' if has_position else '政策催化+量价启动→入场价区间？政策预期偏强→仓位上限？'}\n\n"
                 f"输出≤300字，结论优先。"
             ),
-            'soros': (
-                f"## 分析框架：索罗斯反身性框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
-                f"基于以下 Pro 主分析结论，从反身性角度深化分析：\n{main_conclusion}\n\n"
-                f"Step 1 - 主流偏见识别：市场对该股/行业的「共识叙事」是什么？是否还成立？\n"
-                f"Step 2 - 反身性阶段：A初始/B自我强化/C临界/D崩溃，明确选一个并说明依据。\n"
-                f"Step 3 - 反向论据：2-3条「市场集体忽视的风险或机会」。\n"
-                f"Step 4（{_has_pos_label}）- 结论：{'阶段C临界→减仓触发价？阶段D崩溃→逆势机会条件？' if has_position else '阶段A/B早期→可参与但仓位上限？阶段C→等待修正？'}\n\n"
+            'northbound_smart': (
+                f"## 分析框架：北向聪明钱框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
+                f"外资是A股最可靠的聪明钱代理：外资增持+国内看空=逆向做多机会；外资减持+国内看多=警惕分配出货。\n"
+                f"基于以下 Pro 主分析结论，从北向资金视角深化分析：\n{main_conclusion}\n\n"
+                f"Step 1 - 外资立场确认：北向持股比例+方向（增持/减持/平稳），这个方向和国内散户情绪是否背离？\n"
+                f"Step 2 - 背离强度判断：如背离，外资在「股价下跌时加仓」还是「股价上涨时减仓」？哪种信号更强？\n"
+                f"Step 3 - 外资逻辑推断：外资通常用DCF定价（重视长期盈利确定性），他们看中这只股票的什么？\n"
+                f"Step 4（{_has_pos_label}）- 结论：{'外资持续增持→可跟随加仓？外资开始减持→需注意是否先于市场出货？' if has_position else '外资逆向增持+国内恐慌=高确信逆向机会→建仓条件？外资减持中→等待外资方向反转后再入场？'}\n\n"
                 f"输出≤300字，结论优先。"
             ),
-            'lynch': (
-                f"## 分析框架：彼得·林奇成长股侦察框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
-                f"基于以下 Pro 主分析结论，从成长股视角深化分析：\n{main_conclusion}\n\n"
-                f"Step 1 - 股票分类：快速增长/稳定增长/困境反转/隐蔽资产/周期股（必须选一个）。\n"
-                f"Step 2 - PEG检验：PEG<1通常低估/1-2合理/>2需有故事支撑；无数据则说明。\n"
-                f"Step 3 - 成长可持续性：增长来源 + 能否持续3-5年 + 天花板风险。\n"
-                f"Step 4（{_has_pos_label}）- 结论：{'成长逻辑完整→加仓条件？逻辑出现裂缝→减仓信号？' if has_position else '林奇最优建仓条件满足→建仓仓位%？部分满足→缺少什么条件？'}\n\n"
+            'ashare_growth_value': (
+                f"## 分析框架：A股成长价值框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
+                f"A股对成长股有30-50%溢价（流动性溢价+散户资金），PEG合理阈值修正为1.5（非美股的1.0）。\n"
+                f"基于以下 Pro 主分析结论，从A股成长价值角度深化分析：\n{main_conclusion}\n\n"
+                f"Step 1 - 成长性验证：净利润/营收增速是否>20%？增长来源（量增/价增/并购）是否可持续3年？\n"
+                f"Step 2 - A股PEG检验：当前PEG vs 1.5阈值。若无PEG数据，用PE/行业平均PE相对估值代替。\n"
+                f"Step 3 - 市值空间：当前流通市值 vs 行业天花板，成长空间还有几倍？散户资金是否尚未充分发现？\n"
+                f"Step 4（{_has_pos_label}）- 结论：{'成长逻辑完整+估值合理→加仓条件？增速开始放缓→减仓信号？' if has_position else 'PEG<1.5+增速>20%+市值<100亿→最优建仓条件？部分满足→缺少什么？'}\n\n"
                 f"输出≤300字，结论优先。"
             ),
         }
@@ -522,7 +525,11 @@ class GeminiAnalyzer:
         if not primary_prompt:
             return None
 
-        _skill_name_cn = {'druckenmiller': 'Druckenmiller宏观流动性', 'soros': '索罗斯反身性', 'lynch': '彼得·林奇成长股'}
+        _skill_name_cn = {
+            'policy_tailwind': 'A股政策顺风',
+            'northbound_smart': '北向聪明钱',
+            'ashare_growth_value': 'A股成长价值',
+        }
 
         # Call 2 - Primary Skill
         primary_analysis = ''
@@ -1395,55 +1402,56 @@ class GeminiAnalyzer:
 - 当前市场形态：{_regime_label}{_volatility_hint}
 - ⚠️ **请基于以上技术面数据、基本面、舆情独立判断**。必须在 llm_reasoning 中说明支持结论的2-3个最关键数据依据，禁止写"数据显示"等模糊表述。"""
 
-        # Layer C: Skill 步骤框架注入（只在 trader 角色时注入；llm_only 变体不注入，让 LLM 完全自主推理）
+        # Layer C: Skill 步骤框架注入（只在 trader 角色时注入；llm_only/no_skills 变体不注入）
         skill_section = ""
-        if role not in ('macro', 'researcher') and skill != 'default' and ab_variant != 'llm_only':
+        if role not in ('macro', 'researcher') and skill != 'default' and ab_variant not in ('llm_only', 'no_skills'):
             _has_pos_label = "持仓者" if has_position else "空仓者"
-            if skill == 'druckenmiller':
+            if skill == 'policy_tailwind':
                 if has_position:
-                    _skill_step4 = """宏观顺风 → 当前浮盈/亏％下是否可加仓（给出加仓触发价和幅度）
-宏观逆风但个股强 → 降低持仓比例，移动止损至成本价附近
-宏观+个股同步转弱 → 建议止损或减仓，说明止损触发价（结合量化键点）"""
+                    _skill_step4 = """政策顺风持续 → 浮盈时可以适当加仓，给出加仓触发价和幅度
+政策预期已充分定价 → 建议按分批止盈计划执行，不要等待更高价
+政策方向反转信号出现 → 立即减仓，止损设在成本价附近"""
                 else:
-                    _skill_step4 = """宏观+行业+个股三者对齐 → 给出建议入场价位区间（参考量化锐点）和初始仓位%
-仅部分对齐 → 列出需要满足的前置条件，等待确认再建仓
-宏观明显不利 → 即使技术面好看也建议观望，说明观望的具体条件变化"""
-                skill_section = f"""## 分析框架：Druckenmiller 宏观流动性框架（{_has_pos_label}视角）
-当前市场处于宏观转折期，按以下步骤分析（每步必须基于数据）：
-Step 1 - 流动性环境：大盘成交量趋势 + 近期政策方向，判断资金是"进场"还是"沦退"状态。
-Step 2 - 行业主线对齐：该股板块是否顺应当前市场资金主线？顺应=加分，逆势=警告。
-Step 3 - 催化剂检验：是否存在改变趋势的具体催化剂（政策/业绩拐点/行业事件）？"估值低""/""超跌"不算催化剂。
+                    _skill_step4 = """政策催化+量价启动同时出现 → 给出建议入场价区间和初始仓位%
+政策明确但尚未量价配合 → 列出观察指标，等待入场确认信号
+政策预期过热/已在高位 → 观望，等待政策兑现后的回调入场机会"""
+                skill_section = f"""## 分析框架：A股政策顺风框架（{_has_pos_label}视角）
+A股是政策市，政策方向决定资金流向，技术面是确认信号而非主导信号。
+Step 1 - 政策方向确认：该股/板块当前处于「支持期」「中性」还是「收紧期」？列出1-2个具体政策信号（文件/发言/补贴）。
+Step 2 - 政策催化强度：「明确红利」还是「市场预期」？政策落地确定性如何？市场是否已充分定价？
+Step 3 - 板块位置：政策主题行情分为「认知期→共识期→兑现期→退潮期」，当前在哪个阶段？
 Step 4（{_has_pos_label}） - 结论：
 {_skill_step4}"""
-            elif skill == 'soros':
+            elif skill == 'northbound_smart':
                 if has_position:
-                    _skill_step4 = """阶段A/B早期：继续持仓，移动止损至近期低点，是否加仓取决于浮盈幅度
-阶段C临界：建议减仓，说明减仓触发价（结合量化键点和成本价保本点）
-阶段D崩溃：若浮亏已超止损线则止损；若浮盈，考虑部分锁仓"""
+                    _skill_step4 = """外资持续增持 → 与外资同向持仓，给出加仓条件
+外资开始减持 → 警惕先于市场出货，降低仓位，移动止损
+外资快速撤离 → 可能有内幕或宏观风险，建议快速减仓"""
                 else:
-                    _skill_step4 = """阶段A/B早期：可参与但仓位上限不超过量化建议仓位，硬止损设在量化键点
-阶段C临界：不建议新建仓，等待情绪修正后更好入场点，给出观察指标
-阶段D崩溃：逆势机会需大盘企稳信号确认，给出观察指标"""
-                skill_section = f"""## 分析框架：索罗斯反身性框架（{_has_pos_label}视角）
-当前市场情绪处于极端区间，技术指标参考价値降低，优先基于舆情和基本面判断。
-Step 1 - 主流偏见识别：用一句话描述市场对该股/行业的"共识叙事"（对还是错）。
-Step 2 - 反身性阶段：A初始（顺势可进）/ B自我强化（保持警惕）/ C临界（准备减仓）/ D崩溃（逆势机会）（必须明确选一个，说明判断依据）。
-Step 3 - 反向论据：列出 2-3 条"市场集体忽视的风险或机会"，这是 counter_arguments 的核心。
-Step 4（{_has_pos_label}） - 操作建议：
+                    _skill_step4 = """外资逆向增持+国内恐慌 → 高置信逆向机会，给出建仓条件和仓位%
+外资温和增持+国内中性 → 可跟随，但仓位不超过量化建议上限
+外资减持中 → 等待外资方向反转后再考虑入场"""
+                skill_section = f"""## 分析框架：北向聪明钱框架（{_has_pos_label}视角）
+外资是A股最可靠的聪明钱代理，用DCF长期视角定价，其方向与散户情绪的背离是最强信号。
+Step 1 - 外资立场：北向持股比例+最近方向（增持/减持/平稳），与国内散户情绪是否背离？
+Step 2 - 背离质量：「股价下跌时外资加仓」=高质量逆向信号；「股价上涨时外资减仓」=出货警告。
+Step 3 - 外资逻辑推断：外资通常重视长期盈利确定性，他们看中该股什么（品牌/垄断/成长/现金流）？
+Step 4（{_has_pos_label}） - 结论：
 {_skill_step4}"""
-            elif skill == 'lynch':
+            elif skill == 'ashare_growth_value':
                 if has_position:
-                    _skill_step4 = """成长逻辑完整：继续持仓，基本面支持下跌时加仓（给出加仓条件和幅度）
-成长逻辑出现裂缝（增速下滑/估值过高）：建议减仓，说明触发止损的具体基本面信号
-成长逻辑已破坏：建议清仓，给出清仓触发价（结合量化止损键点）"""
+                    _skill_step4 = """成长逻辑完整+估值在PEG1.5以内 → 继续持仓，业绩验证期跌幅是加仓机会
+增速开始放缓或估值超PEG2.0 → 建议分批减仓，说明具体减仓触发信号
+成长逻辑出现根本性破坏 → 清仓，止损触发条件（量化键点+基本面信号双确认）"""
                 else:
-                    _skill_step4 = """林奇式最优建仓：机构持仓低+业绩持续增长+PEG合理 = 建议建仓，给出建议仓位%
-部分满足：说明缺少哪个条件，给出观察触发点
-不满足：基本面不支持，即使技术面好看也不建议建仓（说明理由）"""
-                skill_section = f"""## 分析框架：彼得·林奇成长股侦察框架（{_has_pos_label}视角）
-Step 1 - 股票分类：必须明确归类（快速增长/稳定增长/困境反转/隐蔽资产/周期股），每类对应不同估值逻辑。
-Step 2 - PEG检验：PEG<1通常低估 / 1-2合理 / >2需有故事支撑；无数据则说明。
-Step 3 - 成长可持续性：增长来源（量/价/新产品/并购）+ 能否持续3-5年 + 天花板风险。
+                    _skill_step4 = """PEG<1.5+增速>20%+市值<100亿 → 最优建仓，给出仓位%和入场价
+部分满足 → 列出缺少的条件，给出等待观察指标
+不满足 → 基本面不支持，即使技术面强势也建议观望（成长股高估风险）"""
+                skill_section = f"""## 分析框架：A股成长价值框架（{_has_pos_label}视角）
+A股对成长股有30-50%溢价（流动性溢价+散户资金），PEG合理阈值修正为1.5（非美股的1.0）。
+Step 1 - 成长性验证：净利润/营收增速是否>20%？增长来源（量增/价增/并购/政策）可持续性？
+Step 2 - A股PEG检验：当前PEG vs 1.5阈值。无PEG数据则用PE/行业平均PE进行相对估值。
+Step 3 - 市值空间：当前市值 vs 行业天花板，理论成长空间还有几倍？散户资金是否尚未充分发现？
 Step 4（{_has_pos_label}） - 结论：
 {_skill_step4}"""
 
@@ -1535,6 +1543,13 @@ dashboard: {{
 ①one_sentence必须含具体数字，禁泛化表述
 ②one_sentence仅描述判断，action_now仅写操作指令，两者内容不得重叠
 ③counter_arguments必须≥2条，每条含具体数字或事件
+
+---
+⚠️ CRITICAL CONSTRAINTS REMINDER（开始输出前再次确认）：
+• 当前场景：{_scene.upper() if _scene else 'UNKNOWN'} | 当前角色：{role.upper()}
+• 你的核心任务：①{('判断是否执行止盈退出计划' if _scene == 'profit_take' else ('评估危机严重程度并给出止损决策' if _scene == 'crisis' else '给出入场/持仓/出场的具体操作建议'))}  ②识别Tier-0/Tier-1风险事件  ③填写counter_arguments≥2条（禁止重复）
+• stop_loss / ideal_buy / target 必须是具体数字，禁止输出 null 或 0
+• analysis_summary 3句话格式：①方向+核心数字 ②最关键因素 ③操作建议+触发条件
 
 开始分析：
 """

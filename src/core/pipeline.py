@@ -221,8 +221,13 @@ class StockAnalysisPipeline:
     @staticmethod
     def _score_skills(context: dict) -> dict:
         """
-        Skills 评分模型：为三个分析框架各打分(0-10)，返回主副框架推荐。
-        取代旧的硬规则 _select_skill()，支持双框架主副机制。
+        Skills 评分模型：为三个A股特有框架各打分(0-10)，返回主副框架推荐。
+        A股驱动顺序：政策 > 流动性 > 资金面 > 基本面（与美股相反）
+
+        框架说明：
+          policy_tailwind      - 政策顺风框架：板块是否处于政策明确支持期
+          northbound_smart     - 北向聪明钱框架：外资方向 vs 国内散户情绪背离
+          ashare_growth_value  - A股成长价值框架：A股溢价修正后的PEG + 成长性验证
 
         Returns:
             {
@@ -230,14 +235,13 @@ class StockAnalysisPipeline:
               'secondary': str|None,    # 副框架 skill name 或 None
               'primary_score': int,     # 主框架得分
               'secondary_score': int,   # 副框架得分（0=无副框架）
-              'scores': dict,           # {druckenmiller: x, soros: x, lynch: x}
+              'scores': dict,           # {policy_tailwind: x, northbound_smart: x, ashare_growth_value: x}
               'convergent': bool,       # True=双框架同向（增强模式），False=分歧（压力测试模式）
             }
         """
         try:
             trend = context.get('trend_analysis') or {}
             regime = trend.get('market_regime', 'sideways')
-            score_val = trend.get('signal_score', 50)
 
             sec = context.get('sector_context') or {}
             sector_5d = sec.get('sector_5d_pct')
@@ -257,70 +261,84 @@ class StockAnalysisPipeline:
             north_pct = north.get('holding_pct_a', 0) or 0
             north_chg = north.get('shares_change', 0) or 0
 
+            news_intel = context.get('news_intel') or {}
+            news_text = str(news_intel.get('summary') or news_intel.get('content') or '')
+
             daily_df = context.get('daily_df')
 
-            # ── Druckenmiller 评分 ──────────────────────────────
-            d_score = 0
+            # ── 政策顺风框架 (policy_tailwind) ─────────────────────
+            # A股是政策市：政策支持期 → 可放宽仓位；政策收紧期 → 无论技术面多好都减仓
+            p_score = 0
+            _policy_support_kw = {'政策支持', '专项债', '补贴', '工信部', '发改委', '国家队', '央企', '国家战略',
+                                   '产业政策', '重点支持', '财政补贴', '政策红利', '利好政策', '两会'}
+            _policy_restrict_kw = {'监管收紧', '整顿', '反垄断', '防止资本', '整改', '处罚', '罚款', '调查',
+                                    '违规', '暂停', '禁止', '叫停', '清查'}
+            has_policy_support = any(kw in news_text for kw in _policy_support_kw)
+            has_policy_restrict = any(kw in news_text for kw in _policy_restrict_kw)
+            if has_policy_support and not has_policy_restrict:
+                p_score += 4
+            elif has_policy_support and has_policy_restrict:
+                p_score += 1
+            _policy_sectors = {'半导体', '人工智能', 'AI', '机器人', '新能源', '光伏', '储能', '军工',
+                                '航天', '北斗', '信创', '国产替代', '大数据', '数字经济', '碳中和',
+                                '核电', '高端装备', '专精特新'}
+            if any(s in sector_name for s in _policy_sectors):
+                p_score += 3
+            if isinstance(sector_5d, (int, float)) and sector_5d >= 5:
+                p_score += 2  # 板块强势，可能有政策催化
             if regime in ('bull', 'recovery'):
-                d_score += 3
-            elif regime == 'bear':
-                d_score += 2  # 熊市也适合用宏观逆向视角
-            _macro_sectors = {'银行', '证券', '保险', '地产', '房地产', '有色', '基建', '建筑', '煤炭', '钢铁', '消费', '白酒'}
-            if any(s in sector_name for s in _macro_sectors):
-                d_score += 2
-            macro_regime = context.get('macro_regime') or {}
-            if macro_regime.get('regime') in ('BULL', 'BEAR'):
-                d_score += 2  # 有宏观情报且处于极端方向
-            if north_chg > 0 and regime in ('bull', 'recovery'):
-                d_score += 1  # 北向同向加持
-            if isinstance(sector_5d, (int, float)) and abs(sector_5d) >= 5:
-                d_score += 1  # 板块联动明显，宏观驱动特征
-            d_score = min(d_score, 10)
+                p_score += 1
+            p_score = min(p_score, 10)
 
-            # ── Soros 评分 ──────────────────────────────────────
-            s_score = 0
-            if daily_df is not None and len(daily_df) >= 7:
+            # ── 北向聪明钱框架 (northbound_smart) ──────────────────
+            # 外资是最好的"聪明钱"代理：外资增持+国内看空=逆向做多；外资减持+国内看多=警惕出货
+            n_score = 0
+            if isinstance(north_pct, (int, float)) and north_pct >= 2.0:
+                n_score += 3  # 外资持股占比≥2%，有明显表态
+            elif isinstance(north_pct, (int, float)) and north_pct >= 1.0:
+                n_score += 1
+            if isinstance(north_chg, (int, float)):
+                if north_chg > 0:
+                    n_score += 3  # 外资净增持
+                elif north_chg < 0:
+                    n_score -= 2  # 外资净减持，降分
+            _bluechip_sectors = {'银行', '证券', '保险', '白酒', '消费', '医药', '食品饮料', '家电', '新能源车'}
+            if any(s in sector_name for s in _bluechip_sectors):
+                n_score += 2  # 外资偏好板块
+            if daily_df is not None and len(daily_df) >= 20:
                 try:
-                    ret_7d = (daily_df['close'].iloc[-1] / daily_df['close'].iloc[-7] - 1) * 100
-                    if ret_7d > 20:
-                        s_score += 3
-                    elif ret_7d < -15:
-                        s_score += 2  # 急跌后反身性反弹机会
+                    ret_20d = (daily_df['close'].iloc[-1] / daily_df['close'].iloc[-20] - 1) * 100
+                    if north_chg > 0 and ret_20d < -10:
+                        n_score += 2  # 外资在股价下跌时加仓=高置信逆向信号
                 except Exception:
                     pass
-            if isinstance(pe, (int, float)) and isinstance(industry_pe, (int, float)) and industry_pe > 0:
-                deviation = abs(pe - industry_pe) / industry_pe
-                if deviation > 0.5:
-                    s_score += 3
-                elif deviation > 0.3:
-                    s_score += 1
-            if isinstance(score_val, (int, float)) and score_val > 85:
-                s_score += 2
-            if isinstance(sector_5d, (int, float)) and abs(sector_5d) >= 15:
-                s_score += 2  # 极端板块情绪
-            s_score = min(s_score, 10)
+            n_score = max(0, min(n_score, 10))
 
-            # ── Lynch 评分 ──────────────────────────────────────
-            l_score = 0
+            # ── A股成长价值框架 (ashare_growth_value) ──────────────
+            # A股对成长股有30-50%溢价（流动性溢价+散户资金），PEG阈值修正为1.5
+            g_score = 0
             rev = growth_rev if isinstance(growth_rev, (int, float)) else growth_net
             if isinstance(rev, (int, float)) and rev > 25:
-                l_score += 3
+                g_score += 3  # 净利润/营收增速>25%，成长性明确
+            elif isinstance(rev, (int, float)) and rev > 15:
+                g_score += 1
             if isinstance(total_mv, (int, float)) and total_mv > 0:
-                mv_100b = total_mv / 10000  # 转为亿元
-                if mv_100b < 50:
-                    l_score += 3
-                elif mv_100b < 100:
-                    l_score += 2
-            if isinstance(north_pct, (int, float)) and 0 <= north_pct < 1.5:
-                l_score += 2  # 机构持仓低，尚未被充分发现
-            _growth_sectors = {'半导体', '人工智能', 'AI', '机器人', '新能源', '光伏', '储能', '创新药', '医疗器械', '军工'}
-            if any(s in sector_name for s in _growth_sectors):
-                l_score += 1
+                mv_bn = total_mv / 10000  # 转为亿元
+                if mv_bn < 50:
+                    g_score += 3  # 小市值，成长空间大
+                elif mv_bn < 150:
+                    g_score += 2
             if isinstance(peg, (int, float)) and 0 < peg < 1.5:
-                l_score += 1
-            l_score = min(l_score, 10)
+                g_score += 2  # A股修正PEG阈值1.5（非美股的1.0）
+            if isinstance(pe, (int, float)) and isinstance(industry_pe, (int, float)) and industry_pe > 0:
+                rel_pe = pe / industry_pe
+                if 0.7 < rel_pe < 1.2:
+                    g_score += 1  # 估值相对合理（不过贵也不过便宜）
+            if isinstance(north_pct, (int, float)) and 0 <= north_pct < 1.5:
+                g_score += 1  # 外资持仓低=未被充分发现，成长股早期特征
+            g_score = min(g_score, 10)
 
-            scores = {'druckenmiller': d_score, 'soros': s_score, 'lynch': l_score}
+            scores = {'policy_tailwind': p_score, 'northbound_smart': n_score, 'ashare_growth_value': g_score}
 
             # 主框架：最高分且≥5
             ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -337,12 +355,17 @@ class StockAnalysisPipeline:
             has_secondary = secondary_score >= 5
 
             # 收敛性判断（两个框架是否指向同一交易方向）
+            # policy_tailwind + northbound_smart = A股最强收敛（政策+外资双确认）
+            # policy_tailwind + ashare_growth_value = 收敛（政策催化+成长双确认）
+            # northbound_smart + ashare_growth_value = 分歧（外资聪明钱逻辑 vs 散户成长逻辑可能冲突）
             convergent = False
             if has_secondary:
-                # Druckenmiller(顺势) vs Soros(极端情绪) = 往往分歧
-                # Druckenmiller + Lynch = 成长宏观双确认 = 收敛
-                # Soros + Lynch = 分歧（成长逻辑 vs 泡沫警告）
-                _converge_pairs = {('druckenmiller', 'lynch'), ('lynch', 'druckenmiller')}
+                _converge_pairs = {
+                    ('policy_tailwind', 'northbound_smart'),
+                    ('northbound_smart', 'policy_tailwind'),
+                    ('policy_tailwind', 'ashare_growth_value'),
+                    ('ashare_growth_value', 'policy_tailwind'),
+                }
                 convergent = (primary, secondary) in _converge_pairs
 
             return {
@@ -393,7 +416,7 @@ class StockAnalysisPipeline:
             intraday_chg = intraday.get('price_change_pct', 0) or 0
             atr_stop = position_info.get('atr_stop') or 0
             if (
-                (isinstance(intraday_chg, (int, float)) and intraday_chg < -5)
+                (isinstance(intraday_chg, (int, float)) and intraday_chg < -7)
                 or (atr_stop > 0 and current_price > 0 and current_price < atr_stop)
             ):
                 return 'crisis'
@@ -2081,6 +2104,21 @@ class StockAnalysisPipeline:
                     f"📊 评分趋同提醒: {total}只股票评分极差仅{max_diff}分（均值{avg:.0f}），"
                     f"可能存在分析趋同，建议关注个股差异化因素"
                 )
+
+        # 6. 危机联动检测（2+持仓同日进入 crisis 场景 = 系统性风险信号）
+        crisis_stocks = []
+        for r in results:
+            scene = None
+            if r.dashboard and isinstance(r.dashboard, dict):
+                scene = r.dashboard.get('analysis_scene')
+            if scene == 'crisis':
+                crisis_stocks.append(r.name or r.code)
+        if len(crisis_stocks) >= 2:
+            warnings.append(
+                f"🚨 组合危机联动警告: {len(crisis_stocks)}只持仓同日触发危机检测"
+                f"（{', '.join(crisis_stocks)}），"
+                f"可能存在系统性风险，建议全组合降仓20-30%，重新评估大盘环境"
+            )
 
         return warnings
 

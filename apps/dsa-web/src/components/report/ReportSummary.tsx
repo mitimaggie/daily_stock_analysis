@@ -348,6 +348,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         skillUsed={skillUsed ?? undefined}
         resonanceLevel={resonanceLevel ?? undefined}
         capitalConflictWarning={capitalConflictWarning ?? undefined}
+        analysisScene={analysisScene ?? undefined}
       />
 
       {/* 1.5 三秒决策卡（操作/价格区间/止损/目标/盈交计算器）*/}
