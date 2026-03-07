@@ -1470,6 +1470,24 @@ Step 4（{_has_pos_label}） - 结论：
                 '可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'
             )
 
+        # 止盈退出计划 section（仅 profit_take 场景时注入）
+        profit_take_plan_section = ""
+        _ptp = context.get('_profit_take_plan')
+        if _ptp and _scene == 'profit_take':
+            _stages = _ptp.get('stages', [])
+            _stage_lines = "\n".join(
+                f"  - Stage {s['stage']} {s['label']}: 退出价 **{s['exit_price']:.2f}**（浮盈{s['exit_pct']:+.1f}%） | {s['condition']}"
+                for s in _stages
+            )
+            profit_take_plan_section = f"""
+## 💰 分阶段退出计划（量化预生成，供你决策参考）
+- 当前浮盈：**{_ptp['pnl_pct']:+.1f}%** | ATR：{_ptp['atr']:.2f} | 紧迫度：**{_ptp['urgency']}**（{_ptp['urgency_note']}）
+- 最高价：{_ptp['highest_price']:.2f} | ATR追踪止损（底仓保护线）：**{_ptp['atr_trailing_stop']:.2f}**
+{_stage_lines}
+
+> 指令：请在 `analysis_summary` 中明确说明你是否认同上述分阶段退出计划，若不认同请给出修改后的退出价位及理由。
+"""
+
         # 组装精简 Prompt
         return f"""{header}
 {etf_constraint}
@@ -1489,7 +1507,7 @@ Step 4（{_has_pos_label}） - 结论：
 {f10_str}{sector_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}
+{data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}{profit_take_plan_section}
 ## JSON 输出协议
 {_json_constraint}
 只输出 JSON，不要 markdown 代码块包裹。字段：

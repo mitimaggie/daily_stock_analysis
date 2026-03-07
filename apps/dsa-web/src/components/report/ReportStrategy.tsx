@@ -1,6 +1,27 @@
 import type React from 'react';
 import type { ReportStrategy as ReportStrategyType } from '../../types/analysis';
 
+interface ProfitTakeStage {
+  stage: number;
+  label: string;
+  exit_price: number;
+  exit_pct: number;
+  condition: string;
+  source: string;
+}
+
+interface ProfitTakePlan {
+  current_price: number;
+  cost_price: number;
+  pnl_pct: number;
+  atr: number;
+  atr_trailing_stop: number;
+  highest_price: number;
+  urgency: 'HIGH' | 'MEDIUM' | 'LOW';
+  urgency_note: string;
+  stages: ProfitTakeStage[];
+}
+
 interface ReportStrategyProps {
   strategy?: ReportStrategyType;
   hasPositionInfo?: boolean;
@@ -11,6 +32,8 @@ interface ReportStrategyProps {
   maxDrawdown60d?: number;
   positionDiagnosis?: Record<string, any> | null;
   suggestedPositionPct?: number | null;
+  profitTakePlan?: ProfitTakePlan | null;
+  analysisScene?: string;
 }
 
 const fmtPrice = (v?: string | number | null): string => {
@@ -32,6 +55,8 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
   maxDrawdown60d,
   positionDiagnosis,
   suggestedPositionPct,
+  profitTakePlan,
+  analysisScene,
 }) => {
   if (!strategy) return null;
 
@@ -177,6 +202,46 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
           📋 {strategy.takeProfitPlan}
         </div>
       ) : null}
+
+      {/* 止盈退出计划（profit_take 场景专用）*/}
+      {profitTakePlan && analysisScene === 'profit_take' && (
+        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold text-yellow-400/90 flex items-center gap-1">
+              💰 分阶段退出计划
+            </span>
+            <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+              profitTakePlan.urgency === 'HIGH'
+                ? 'bg-red-500/15 text-red-400'
+                : profitTakePlan.urgency === 'MEDIUM'
+                ? 'bg-yellow-500/15 text-yellow-400'
+                : 'bg-blue-500/15 text-blue-400'
+            }`}>
+              {profitTakePlan.urgency === 'HIGH' ? '⚡ 高紧迫' : profitTakePlan.urgency === 'MEDIUM' ? '⚠️ 中紧迫' : '📊 低紧迫'}
+            </span>
+          </div>
+          <div className="text-[10px] text-white/40 mb-2">{profitTakePlan.urgency_note}</div>
+          <div className="flex flex-col gap-1.5">
+            {profitTakePlan.stages.map((s) => (
+              <div key={s.stage} className="flex items-center gap-2 text-[11px]">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold bg-white/10 text-white/60 shrink-0">
+                  {s.stage}
+                </span>
+                <span className="text-white/50 shrink-0">{s.label}</span>
+                <span className="font-mono font-bold text-yellow-400">{s.exit_price.toFixed(2)}</span>
+                <span className={`text-[10px] shrink-0 ${
+                  s.exit_pct >= 0 ? 'text-green-400/70' : 'text-red-400/70'
+                }`}>{s.exit_pct >= 0 ? '+' : ''}{s.exit_pct.toFixed(1)}%</span>
+                <span className="text-white/30 text-[10px] truncate">{s.condition}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-[10px] text-white/30">
+            🛡️ ATR追踪止损（底仓保护线）：<span className="font-mono text-white/50">{profitTakePlan.atr_trailing_stop.toFixed(2)}</span>
+            &nbsp;|&nbsp;ATR={profitTakePlan.atr.toFixed(2)}
+          </div>
+        </div>
+      )}
 
       {/* 仓位-评分矩阵（A股专用） */}
       {suggestedPositionPct != null && (

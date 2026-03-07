@@ -408,6 +408,128 @@ class StockAnalysisPipeline:
             pass
         return 'holding'
 
+    @staticmethod
+    def _build_profit_take_plan(context: dict, position_info: dict) -> Optional[dict]:
+        """
+        分阶段止盈退出计划（profit_take 场景专用）。
+
+        输入数据（全部从 context 和 position_info 取，无外部 API 调用）：
+          - cost_price, current_price, target_price, atr_stop, highest_price, atr
+          - daily_df → 计算 ATR（若 position_info 未提供）
+          - trend_analysis → short/mid resistance levels
+
+        退出计划三阶段：
+          Stage 1 (1/3 仓位): 第一个关键压力位或 +1*ATR，设时间限制（5个交易日内）
+          Stage 2 (1/3 仓位): 第二个关键压力位或 +2.5*ATR
+          Stage 3 (底仓 1/3): ATR追踪止损 — 用 highest_price - 1.5*ATR 保护浮盈
+
+        Returns:
+            None if cost_price or price missing, else dict with staged exit levels
+        """
+        try:
+            cost_price = float(position_info.get('cost_price') or 0)
+            current_price = float(context.get('price') or 0)
+            if cost_price <= 0 or current_price <= 0:
+                return None
+
+            pnl_pct = (current_price - cost_price) / cost_price * 100
+            target_price = float(position_info.get('target_price') or 0)
+
+            # ── ATR 值获取（三层降级）────────────────────────────────────────
+            atr_val = float(position_info.get('atr') or 0)
+            if atr_val <= 0:
+                # 从 daily_df 计算14日ATR
+                daily_df = context.get('daily_df')
+                try:
+                    import pandas as pd
+                    if daily_df is not None and hasattr(daily_df, '__len__') and len(daily_df) >= 14:
+                        df = daily_df.tail(20).copy()
+                        df['tr'] = pd.concat([
+                            df['high'] - df['low'],
+                            (df['high'] - df['close'].shift(1)).abs(),
+                            (df['low'] - df['close'].shift(1)).abs(),
+                        ], axis=1).max(axis=1)
+                        atr_val = float(df['tr'].tail(14).mean())
+                except Exception:
+                    pass
+            if atr_val <= 0:
+                # 最终降级：用1.5%作为ATR估算（蓝筹）
+                atr_val = current_price * 0.015
+
+            # ── 关键压力位（从 trend_analysis 提取）──────────────────────────
+            trend = context.get('trend_analysis') or {}
+            take_profit_short = float(trend.get('take_profit_short') or 0)
+            take_profit_mid = float(trend.get('take_profit_mid') or 0)
+            # 也接受来自 position_info 的目标价
+            if target_price > current_price:
+                take_profit_mid = take_profit_mid or target_price
+
+            # ── 三阶段止盈价位计算 ────────────────────────────────────────────
+            # Stage 1: 优先用量化压力位，否则用 +1*ATR
+            stage1_price = take_profit_short if take_profit_short > current_price else round(current_price + atr_val, 2)
+            stage1_pct = round((stage1_price - cost_price) / cost_price * 100, 1)
+
+            # Stage 2: 优先用中期压力位，否则用 +2.5*ATR
+            stage2_price = take_profit_mid if (take_profit_mid > stage1_price) else round(current_price + 2.5 * atr_val, 2)
+            stage2_pct = round((stage2_price - cost_price) / cost_price * 100, 1)
+
+            # Stage 3: ATR追踪止损（以最高价为基准）
+            highest_price = float(position_info.get('highest_price') or current_price)
+            atr_stop_existing = float(position_info.get('atr_stop') or 0)
+            stage3_trailing = atr_stop_existing if atr_stop_existing > 0 else round(highest_price - 1.5 * atr_val, 2)
+            stage3_locked_pct = round((stage3_trailing - cost_price) / cost_price * 100, 1) if cost_price > 0 else 0.0
+
+            # ── 动态紧迫感（基于当前浮盈水位）───────────────────────────────
+            if pnl_pct >= 30:
+                urgency = 'HIGH'
+                urgency_note = f'浮盈{pnl_pct:.1f}%，建议加快减仓节奏，不要贪顶'
+            elif pnl_pct >= 20:
+                urgency = 'MEDIUM'
+                urgency_note = f'浮盈{pnl_pct:.1f}%，可按计划分批止盈'
+            else:
+                urgency = 'LOW'
+                urgency_note = f'浮盈{pnl_pct:.1f}%，刚触及止盈触发线，保持追踪'
+
+            return {
+                'current_price': current_price,
+                'cost_price': cost_price,
+                'pnl_pct': round(pnl_pct, 1),
+                'atr': round(atr_val, 3),
+                'atr_trailing_stop': stage3_trailing,
+                'highest_price': round(highest_price, 2),
+                'urgency': urgency,
+                'urgency_note': urgency_note,
+                'stages': [
+                    {
+                        'stage': 1,
+                        'label': '第一批 (1/3仓)',
+                        'exit_price': stage1_price,
+                        'exit_pct': stage1_pct,
+                        'condition': f'价格触及 {stage1_price:.2f}，或5个交易日内动量衰减',
+                        'source': 'resistance' if take_profit_short > current_price else 'atr_1x',
+                    },
+                    {
+                        'stage': 2,
+                        'label': '第二批 (1/3仓)',
+                        'exit_price': stage2_price,
+                        'exit_pct': stage2_pct,
+                        'condition': f'价格触及 {stage2_price:.2f}，或出现量价背离',
+                        'source': 'target_price' if (take_profit_mid > stage1_price) else 'atr_2.5x',
+                    },
+                    {
+                        'stage': 3,
+                        'label': '底仓 (1/3仓)',
+                        'exit_price': stage3_trailing,
+                        'exit_pct': stage3_locked_pct,
+                        'condition': f'ATR追踪止损 {stage3_trailing:.2f}（已锁住{stage3_locked_pct:+.1f}%浮盈）',
+                        'source': 'atr_trailing',
+                    },
+                ],
+            }
+        except Exception as _e:
+            logger.debug(f"[ProfitTakePlan] 计算失败: {_e}")
+            return None
+
     def _get_macro_intel(self, save_to_db: bool = False, portfolio_sectors: list = None) -> Optional[str]:
         """
         获取宏观情报文本（含6大维度）。先查内存缓存（TTL=30min），再查 news_intel DB 缓存（TTL=4h），
@@ -996,6 +1118,7 @@ class StockAnalysisPipeline:
         code = context.get('code', '')
         if not code:
             return context
+        fast_mode = getattr(self.config, 'fast_mode', False)
 
         # 评分趋势+拐点
         try:
@@ -1286,6 +1409,14 @@ class StockAnalysisPipeline:
             # 将 skill_meta 和 scene 注入 context 供 analyzer 使用
             context['_skill_meta'] = _skill_meta
             context['_scene'] = _scene
+
+            # 止盈场景：计算分阶段退出计划并注入 context
+            _profit_take_plan = None
+            if _scene == 'profit_take' and position_info:
+                _profit_take_plan = self._build_profit_take_plan(context, position_info)
+                if _profit_take_plan:
+                    context['_profit_take_plan'] = _profit_take_plan
+                    logger.info(f"[{stock_name}] 止盈计划已生成: urgency={_profit_take_plan['urgency']} pnl={_profit_take_plan['pnl_pct']}%")
             analysis_timeout = getattr(self.config, 'analysis_timeout_seconds', 180) or 180
             def _run_analyze():
                 return self.analyzer.analyze(
@@ -1417,6 +1548,8 @@ class StockAnalysisPipeline:
                 dashboard['analysis_scene'] = _scene
                 if getattr(result, 'skill_analysis', None):
                     dashboard['skill_analysis'] = result.skill_analysis
+                if _profit_take_plan:
+                    dashboard['profit_take_plan'] = _profit_take_plan
 
                 # === P3 增强3: 心理陷阱预警（纯规则，不调用 AI）===
                 _behavioral_warning = ""

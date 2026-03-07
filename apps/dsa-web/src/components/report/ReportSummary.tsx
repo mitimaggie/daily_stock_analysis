@@ -280,6 +280,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
     scoreMomentumAdj, positionDiagnosis, actionNow,
     executionDifficulty, executionNote, behavioralWarning,
     skillUsed, resonanceLevel, capitalConflictWarning,
+    profitTakePlan, analysisScene,
   } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
     if (!raw) return {
@@ -288,6 +289,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       scoreMomentumAdj: 0, positionDiagnosis: null, actionNow: null,
       executionDifficulty: null, executionNote: null, behavioralWarning: null,
       skillUsed: null, resonanceLevel: null, capitalConflictWarning: null,
+      profitTakePlan: null, analysisScene: null,
     };
     const dashboard = raw.dashboard ?? raw;
     const cc = dashboard?.core_conclusion ?? dashboard?.coreConclusion ?? {};
@@ -308,6 +310,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       skillUsed: dashboard?.skill_used ?? null,
       resonanceLevel: (dashboard?.quant_extras ?? dashboard?.quantExtras)?.resonance_level ?? null,
       capitalConflictWarning: dashboard?.capital_conflict_warning ?? null,
+      profitTakePlan: dashboard?.profit_take_plan ?? null,
+      analysisScene: dashboard?.analysis_scene ?? null,
     };
   }, [details?.rawResult]);
 
@@ -439,6 +443,8 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         maxDrawdown60d={quantExtras?.max_drawdown_60d ?? quantExtras?.maxDrawdown60d}
         positionDiagnosis={positionDiagnosis}
         suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
+        profitTakePlan={profitTakePlan}
+        analysisScene={analysisScene ?? undefined}
       />
 
       {/* 4.5 持仓周期建议（短线/中线/长线）*/}
