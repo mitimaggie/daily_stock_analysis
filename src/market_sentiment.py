@@ -249,14 +249,65 @@ def _fetch_market_sentiment_inner() -> Optional[MarketSentiment]:
         return None
 
 
+def parse_sentiment_from_briefing() -> Optional['MarketSentiment']:
+    """从已缓存的 Perplexity 简报中解析涨停/跌停数量，构造 MarketSentiment 对象。
+    当 akshare 接口被封/超时时作为 score_market_sentiment_adj 的 fallback。
+    
+    解析目标：涨停XX家、跌停XX家、炸板XX家（可选）
+    Returns: MarketSentiment（温度已计算），或 None（解析失败）
+    """
+    import re
+    from datetime import datetime
+    try:
+        from src.storage import DatabaseManager
+        today = datetime.now().strftime('%Y-%m-%d')
+        text = DatabaseManager.get_instance().get_data_cache(
+            'market_sentiment_briefing', today, ttl_hours=10.0
+        )
+        if not text:
+            return None
+
+        # 解析涨停家数：匹配 "涨停47家" / "涨停：47家" / "涨停 47 家"
+        m_up = re.search(r'涨停[：:]?\s*(\d+)\s*家', text)
+        m_down = re.search(r'跌停[：:]?\s*(\d+)\s*家', text)
+        m_broken = re.search(r'炸板[：:]?\s*(\d+)\s*家', text)
+
+        limit_up = int(m_up.group(1)) if m_up else 0
+        limit_down = int(m_down.group(1)) if m_down else 0
+        broken = int(m_broken.group(1)) if m_broken else 0
+
+        if limit_up == 0 and limit_down == 0:
+            return None  # 简报没有足够数字数据
+
+        s = MarketSentiment()
+        s.limit_up_count = limit_up
+        s.limit_down_count = limit_down
+        s.broken_limit_count = broken
+        total_touched = limit_up + broken
+        if total_touched > 0:
+            s.broken_limit_rate = broken / total_touched * 100
+
+        s.temperature = calc_sentiment_temperature(
+            limit_up=limit_up, limit_down=limit_down,
+            up_count=0, down_count=0,  # 无全量涨跌家数，只用涨停维度
+            up_gt5_pct=0, broken_rate=s.broken_limit_rate
+        )
+        logger.debug(f"[市场情绪] 简报解析: 涨停{limit_up}跌停{limit_down}炸板{broken} → 温度{s.temperature}")
+        return s
+    except Exception as e:
+        logger.debug(f"[市场情绪] 简报解析失败: {e}")
+        return None
+
+
 _BRIEFING_SYSTEM_PROMPT = (
     "你是一位A股量化交易员助手，每日收盘后出具简洁的市场情绪日报。\n"
-    "【输出格式（100字以内，严格简短）】\n"
-    "- 成交额：XX亿（与昨日相比是放量/缩量）\n"
-    "- 涨跌家数：涨XX跌XX平XX，涨停XX家，跌停XX家\n"
-    "- 市场情绪：一句话定性（如\"做多情绪偏暖\"，\"恐慷踩踏\"，\"中性震荡\"）\n"
-    "- 主力资金：北向/南向/ETF净流入或流出多少亿（如有）\n"
-    "严格只给数字和结论，不要分析原因，不要超过150字。如没有当日数据则说\"暂无今日数据\""
+    "【严格输出格式，每行必须使用以下固定格式，不得更改措辞】\n"
+    "- 成交额：XX亿（放量/缩量）\n"
+    "- 涨跌家数：涨XX家跌XX家平XX家，涨停XX家，跌停XX家，炸板XX家\n"
+    "- 市场情绪：一句话定性\n"
+    "- 主力资金：北向净流入/净流出XX亿（如有数据）\n"
+    "【关键要求】涨停、跌停、炸板必须用\"XX家\"格式填入具体数字，无数据时填0家。"
+    "不要分析原因，不要超过120字。非交易日说\"今日非交易日\"。"
 )
 
 

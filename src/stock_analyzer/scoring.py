@@ -3232,6 +3232,14 @@ class ScoringSystem:
 
         sentiment = cache['data']
         if sentiment is None:
+            try:
+                from src.market_sentiment import parse_sentiment_from_briefing
+                sentiment = parse_sentiment_from_briefing()
+                if sentiment is not None:
+                    logger.debug("[市场情绪] akshare不可用，改用Perplexity简报fallback")
+            except Exception:
+                pass
+        if sentiment is None:
             return
 
         temp = sentiment.temperature

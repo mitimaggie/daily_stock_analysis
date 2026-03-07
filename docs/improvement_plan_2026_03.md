@@ -579,3 +579,138 @@ GROUP BY ab_variant ORDER BY win5d_pct DESC;
 在Pro prompt末尾新增场景提醒节，对抗non-reasoning LLM的注意力中间稀释问题。
 重复关键约束：当前场景/核心任务/禁止null/分析摘要格式。
 基于"prompt repetition improves non-reasoning LLMs"研究，只重复关键约束而非全文。
+
+---
+
+## 性能优化与数据可靠性改进（2026-03 第8轮）
+
+### 背景
+分析流程存在多个阻塞点，冷启动时间从 276s 降至 ~105s 后仍有优化空间。核心问题：
+1. `stock_zh_a_spot_em()` 全市场数据被 `market_sentiment` 重复下载
+2. 高管增减持每次分析都可能触发 90s 全量下载
+3. P4 资金流单股失败时每股独立 backoff，未全局熔断
+4. 市场情绪和板块缓存 TTL 过短，频繁重新请求
+
+---
+
+### ✅ Fix1 — ThreadPoolExecutor 超时后仍阻塞 bug
+
+**根因**：`with ThreadPoolExecutor() as ex:` 语法在超时后仍等待线程结束（因为 `__exit__` 调用 `shutdown(wait=True)`），导致超时无效。
+
+**修复文件**：`data_provider/shareholder_fetcher.py`（repurchase/unlock/northbound fetchers）
+
+**实现**：改为手动 `executor = ThreadPoolExecutor()` + `finally: executor.shutdown(wait=False)` 模式，超时后立即放弃线程。
+
+---
+
+### ✅ Fix2 — market_sentiment 重复下载全市场数据
+
+**根因**：`src/market_sentiment.py` 中计算涨跌家数时直接调用 `ak.stock_zh_a_spot_em()`，与 `akshare_fetcher._get_em_quote()` 形成重复下载（每次各自拉取 5000 只股票数据）。
+
+**修复文件**：`src/market_sentiment.py`
+
+**实现**：改为从 `akshare_fetcher._realtime_cache` 读取已缓存的全市场 DataFrame，避免重复下载。
+
+---
+
+### ✅ Fix3 — P4 全局熔断（circuit breaker）
+
+**根因**：P4 资金流失败时只对单股 backoff（存在 `_fail_cache` 字典），其他股票仍会逐一尝试，网络故障时造成多次超时叠加。
+
+**修复文件**：`src/stock_analyzer/scoring.py`
+
+**实现**：
+- 删除 per-stock `_fail_cache` 字典
+- 改用模块级 `_P4_GLOBAL_FAIL_TS: float = 0.0` 变量
+- 任一股票 P4 失败/超时 → 全局熔断 30 分钟，所有股票跳过 P4
+- `global _P4_GLOBAL_FAIL_TS` 声明在方法体顶部（避免 Python `SyntaxError: name used prior to global declaration`）
+
+---
+
+### ✅ Fix4 — 高管增减持缓存非阻塞锁
+
+**根因**：主分析线程在 `_insider_cache` 为空时会调用 `_refresh_insider_cache()`，与预热线程争锁，导致主线程等待 90s 全量下载。
+
+**修复文件**：`data_provider/shareholder_fetcher.py`
+
+**实现**：
+- 新增 `_insider_refresh_lock = threading.Lock()`
+- `_refresh_insider_cache(blocking=True)` — 预热线程用，阻塞等锁
+- `_refresh_insider_cache(blocking=False)` — 主线程用，获取失败立即返回空
+- 整个函数体包在 `try/finally` 确保锁释放
+
+---
+
+### ✅ Fix5 — 缓存 TTL 延长
+
+| 缓存 | 旧 TTL | 新 TTL | 改动文件 |
+|------|--------|--------|---------|
+| 市场情绪（akshare 涨停池） | 5 分钟 | 30 分钟 | `scoring.py` |
+| 板块归属（sector_context） | 1 小时 | 7 天 | `data_provider/base.py` |
+| 行业成员列表（industry） | 1 小时 | 7 天 | `data_provider/base.py` |
+
+---
+
+### ✅ Fix6 — 高管增减持数据持久化到 SQLite
+
+**问题**：服务重启后 `_insider_cache` 清空，首次分析重新等 90s 下载。
+
+**修复文件**：`data_provider/shareholder_fetcher.py`
+
+**实现**：
+- 模块加载时自动调用 `_load_insider_cache_from_db()`，从 `data_cache` 表恢复（TTL=7天）
+- 每次下载成功后调用 `DatabaseManager.save_data_cache('insider_trading', 'all', df.to_json())`
+- 每日 18:30 定时任务刷新（注册在 `main.py` daemon 模式）
+
+---
+
+### ✅ Fix7 — Perplexity 市场情绪简报系统
+
+**设计动机**：akshare 涨停池接口不稳定（封禁/超时），导致 `score_market_sentiment_adj` 的 ±5 分长期失效。
+
+**架构**：
+
+```
+【获取链路】
+每日 13:00 / 16:30 定时任务（daemon 模式）
+  → fetch_market_sentiment_briefing(force_refresh=True)
+  → PerplexitySearchProvider.search(sonar 模型)
+  → 正则去除 [1][2] 引用标记
+  → save_data_cache('market_sentiment_briefing', today, content)  ← SQLite 缓存 4h
+
+【注入链路：定性上下文】
+pipeline.py 分析前
+  → fetch_market_sentiment_briefing()  ← 命中 SQLite 缓存，无额外 API 调用
+  → market_overview += "## 今日市场情绪简报\n" + briefing
+  → Flash + Pro 均可见（market_overview 传入两者）
+
+【注入链路：量化评分 fallback】
+score_market_sentiment_adj()
+  → fetch_market_sentiment()  ← akshare 涨停池（正常路径）
+  → 失败时: parse_sentiment_from_briefing()
+    → 从 SQLite 缓存读取今日简报
+    → 正则提取"涨停XX家/跌停XX家/炸板XX家"
+    → calc_sentiment_temperature() → adj ±2~±6 分
+```
+
+**Perplexity System Prompt 设计**：强制输出"涨停XX家，跌停XX家，炸板XX家"格式（无数据填 0 家），非交易日说"今日非交易日"。
+
+**修改文件**：
+- `src/market_sentiment.py`：新增 `fetch_market_sentiment_briefing()`, `parse_sentiment_from_briefing()`
+- `src/core/pipeline.py`：简报注入 market_overview
+- `src/stock_analyzer/scoring.py`：score_market_sentiment_adj 新增 fallback 逻辑
+- `main.py`：注册 13:00 / 16:30 / 18:30 定时任务
+
+---
+
+### 定时任务总览（daemon 模式，需 SCHEDULE_ENABLED=true）
+
+| 时间 | 任务 | 说明 |
+|------|------|------|
+| 按配置时间 | 主分析任务 | 日常股票分析 |
+| 13:00 | Perplexity 情绪简报刷新 | 午间盘中数据 |
+| 16:30 | Perplexity 情绪简报刷新 + 股东户数周更新（周一） | 收盘后数据 |
+| 18:30 | 高管增减持数据下载 | 预热缓存，下次分析无需等待 |
+| 20:00 | 回测自动回填 | backtest_simulated 更新 |
+| 每 2h | 新闻抓取（9:00-22:00 窗口） | data_provider/news_fetcher |
+| 每 10min | 持仓盘中监控（交易时段） | 止损/目标价触发 |
