@@ -13,6 +13,8 @@ from src.services.portfolio_service import (
     add_portfolio, remove_portfolio, list_portfolio, get_portfolio,
     add_watchlist, remove_watchlist, list_watchlist, update_watchlist_analysis,
     monitor_portfolio,
+    add_portfolio_log, list_portfolio_logs, update_portfolio_horizon,
+    get_ai_horizon_suggestion,
 )
 
 router = APIRouter()
@@ -27,6 +29,19 @@ class PortfolioAddRequest(BaseModel):
     shares: int = 0
     entry_date: Optional[date] = None
     notes: str = ''
+    holding_horizon_label: Optional[str] = None
+
+
+class PortfolioLogRequest(BaseModel):
+    action: str
+    price: Optional[float] = None
+    shares: Optional[int] = None
+    reason: str = ''
+    triggered_by: str = 'manual'
+
+
+class HorizonUpdateRequest(BaseModel):
+    holding_horizon_label: str
 
 
 class WatchlistAddRequest(BaseModel):
@@ -58,8 +73,23 @@ def api_add_portfolio(req: PortfolioAddRequest):
         shares=req.shares,
         entry_date=req.entry_date,
         notes=req.notes,
+        holding_horizon_label=req.holding_horizon_label,
     )
     return {"item": item}
+
+
+@router.get("/portfolio/{code}/horizon-suggestion", summary="获取 AI 建议的持仓周期")
+def api_get_horizon_suggestion(code: str):
+    suggestion = get_ai_horizon_suggestion(code)
+    return {"suggestion": suggestion}
+
+
+@router.put("/portfolio/{code}/horizon", summary="更新持仓周期标签")
+def api_update_horizon(code: str, req: HorizonUpdateRequest):
+    ok = update_portfolio_horizon(code, req.holding_horizon_label)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
+    return {"success": True}
 
 
 @router.delete("/portfolio/{code}", summary="删除持仓")

@@ -140,6 +140,38 @@ class Scheduler:
             logger.info("立即执行一次周期任务...")
             self._safe_run_task_with(task)
     
+    def add_intraday_monitor_job(self, interval_minutes: int, task: Callable,
+                                  run_immediately: bool = False):
+        """
+        添加盘中固定分钟间隔监控任务（仅在交易时段触发）。
+        交易时段：09:30-11:30 及 13:00-15:00
+
+        Args:
+            interval_minutes: 执行间隔（分钟）
+            task: 要执行的任务函数（无参数）
+            run_immediately: 是否在注册后立即执行一次
+        """
+        def guarded_task():
+            now = datetime.now()
+            h, m = now.hour, now.minute
+            is_market = (
+                (h == 9 and m >= 30) or
+                (10 <= h <= 10) or
+                (h == 11 and m <= 30) or
+                (13 <= h <= 14) or
+                (h == 15 and m == 0)
+            )
+            if is_market:
+                self._safe_run_task_with(task)
+            else:
+                logger.debug(f"盘中监控任务跳过（当前 {h:02d}:{m:02d} 不在交易时段）")
+
+        self.schedule.every(interval_minutes).minutes.do(guarded_task)
+        logger.info(f"已添加盘中监控任务: 每 {interval_minutes}min 执行（交易时段内）")
+
+        if run_immediately:
+            self._safe_run_task_with(task)
+
     def _safe_run_task(self):
         """安全执行主任务（带异常捕获）"""
         if self._task_callback is None:

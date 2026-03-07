@@ -1,6 +1,17 @@
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { portfolioApi, type MonitorSignal, type WatchlistItem } from '../api/portfolio';
+import { portfolioApi, type MonitorSignal, type WatchlistItem, type PortfolioLog } from '../api/portfolio';
+
+const HORIZON_OPTIONS = ['短线(1-3日)', '短线(3-5日)', '中线(1-4周)', '中线(1-3月)', '长线(3月以上)'];
+
+const actionLabel: Record<string, string> = {
+  buy: '买入', add: '加仓', reduce: '减仓', stop_exit: '止损出场',
+  take_profit: '止盈出场', manual: '手动记录',
+};
+const actionColor: Record<string, string> = {
+  buy: 'text-emerald-400', add: 'text-emerald-300', reduce: 'text-amber-400',
+  stop_exit: 'text-red-400', take_profit: 'text-sky-400', manual: 'text-white/40',
+};
 
 // ─── 信号颜色映射 ─────────────────────────────
 const signalConfig = {
@@ -19,8 +30,19 @@ const AddPortfolioForm: React.FC<{ onAdded: () => void }> = ({ onAdded }) => {
   const [shares, setShares] = useState('');
   const [entryDate, setEntryDate] = useState('');
   const [notes, setNotes] = useState('');
+  const [horizonLabel, setHorizonLabel] = useState('');
+  const [horizonSuggestion, setHorizonSuggestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const handleCodeBlur = async () => {
+    if (!code.trim()) return;
+    const suggestion = await portfolioApi.getHorizonSuggestion(code.trim());
+    if (suggestion) {
+      setHorizonSuggestion(suggestion);
+      if (!horizonLabel) setHorizonLabel(suggestion);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,8 +56,9 @@ const AddPortfolioForm: React.FC<{ onAdded: () => void }> = ({ onAdded }) => {
         shares: shares ? parseInt(shares) : 0,
         entryDate: entryDate || undefined,
         notes: notes.trim(),
+        holdingHorizonLabel: horizonLabel || undefined,
       });
-      setCode(''); setName(''); setCostPrice(''); setShares(''); setEntryDate(''); setNotes('');
+      setCode(''); setName(''); setCostPrice(''); setShares(''); setEntryDate(''); setNotes(''); setHorizonLabel(''); setHorizonSuggestion(null);
       onAdded();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '添加失败');
@@ -46,12 +69,31 @@ const AddPortfolioForm: React.FC<{ onAdded: () => void }> = ({ onAdded }) => {
     <form onSubmit={handleSubmit} className="space-y-3 p-4 rounded-lg border border-white/10 bg-white/3">
       <div className="text-[11px] text-white/40 font-medium uppercase tracking-wider">新增持仓</div>
       <div className="grid grid-cols-2 gap-2">
-        <input value={code} onChange={e => setCode(e.target.value)} placeholder="股票代码*" className="col-span-1 bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
+        <input value={code} onChange={e => setCode(e.target.value)} onBlur={handleCodeBlur} placeholder="股票代码*" className="col-span-1 bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
         <input value={name} onChange={e => setName(e.target.value)} placeholder="股票名称" className="col-span-1 bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
         <input value={costPrice} onChange={e => setCostPrice(e.target.value)} placeholder="成本价*" type="number" step="0.01" className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
         <input value={shares} onChange={e => setShares(e.target.value)} placeholder="持股数量（股）" type="number" className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
         <input value={entryDate} onChange={e => setEntryDate(e.target.value)} type="date" className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white/70 focus:outline-none focus:border-white/30" />
         <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="备注（可选）" className="bg-white/5 border border-white/10 rounded px-3 py-1.5 text-[13px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
+      </div>
+      {/* 持仓周期 */}
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-white/30">持仓周期意图</span>
+          {horizonSuggestion && (
+            <span className="text-[10px] text-sky-400/70">AI建议: {horizonSuggestion}</span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {HORIZON_OPTIONS.map(h => (
+            <button key={h} type="button" onClick={() => setHorizonLabel(h)}
+              className={`text-[11px] px-2 py-0.5 rounded border transition ${
+                horizonLabel === h
+                  ? 'border-sky-500/40 bg-sky-500/15 text-sky-400'
+                  : 'border-white/8 text-white/30 hover:text-white/50 hover:border-white/15'
+              }`}>{h}</button>
+          ))}
+        </div>
       </div>
       {error && <p className="text-[11px] text-red-400">{error}</p>}
       <button type="submit" disabled={loading} className="w-full py-1.5 rounded bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 text-[12px] hover:bg-emerald-600/50 transition disabled:opacity-50">
@@ -61,12 +103,73 @@ const AddPortfolioForm: React.FC<{ onAdded: () => void }> = ({ onAdded }) => {
   );
 };
 
+// ─── 操作日志面板 ─────────────────────────────
+const LogPanel: React.FC<{ code: string }> = ({ code }) => {
+  const [logs, setLogs] = useState<PortfolioLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [addAction, setAddAction] = useState('manual');
+  const [addPrice, setAddPrice] = useState('');
+  const [addReason, setAddReason] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const loadLogs = useCallback(async () => {
+    setLoading(true);
+    try { setLogs(await portfolioApi.getLogs(code, 10)); }
+    finally { setLoading(false); }
+  }, [code]);
+
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await portfolioApi.addLog(code, { action: addAction, price: addPrice ? parseFloat(addPrice) : undefined, reason: addReason });
+      setAddPrice(''); setAddReason('');
+      await loadLogs();
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="border-t border-white/5 pt-2 space-y-2">
+      <div className="text-[10px] text-white/25 font-medium uppercase tracking-wider">操作日志</div>
+      {loading ? <div className="text-[11px] text-white/20">加载中…</div> : (
+        <div className="space-y-1">
+          {logs.length === 0 && <div className="text-[11px] text-white/20">暂无记录</div>}
+          {logs.map(log => (
+            <div key={log.id} className="flex items-center gap-2 text-[11px]">
+              <span className={`font-medium ${actionColor[log.action] || 'text-white/40'}`}>{actionLabel[log.action] || log.action}</span>
+              {log.price != null && <span className="font-mono text-white/50">{log.price.toFixed(2)}</span>}
+              {log.reason && <span className="text-white/30 truncate">{log.reason}</span>}
+              <span className="ml-auto text-white/15 flex-shrink-0">{log.createdAt ? new Date(log.createdAt).toLocaleDateString('zh-CN') : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 快速记录 */}
+      <form onSubmit={handleAdd} className="flex gap-1.5 pt-1">
+        <select value={addAction} onChange={e => setAddAction(e.target.value)}
+          className="bg-white/5 border border-white/8 rounded px-2 py-1 text-[11px] text-white/60 focus:outline-none">
+          {Object.entries(actionLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <input value={addPrice} onChange={e => setAddPrice(e.target.value)} placeholder="价格" type="number" step="0.01"
+          className="w-20 bg-white/5 border border-white/8 rounded px-2 py-1 text-[11px] text-white placeholder-white/20 focus:outline-none" />
+        <input value={addReason} onChange={e => setAddReason(e.target.value)} placeholder="备注"
+          className="flex-1 bg-white/5 border border-white/8 rounded px-2 py-1 text-[11px] text-white placeholder-white/20 focus:outline-none" />
+        <button type="submit" disabled={saving}
+          className="px-2 py-1 rounded border border-white/10 text-[11px] text-white/40 hover:text-white/60 transition disabled:opacity-40">记录</button>
+      </form>
+    </div>
+  );
+};
+
 // ─── 持仓监控卡片 ─────────────────────────────
 const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) => void }> = ({ signal, onRemove }) => {
   const cfg = signalConfig[signal.signal] || signalConfig.unknown;
   const pnl = signal.pnlPct;
   const pnlColor = pnl == null ? 'text-white/40' : pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
   const pnlStr = pnl == null ? '--' : `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
+  const [showLogs, setShowLogs] = useState(false);
 
   return (
     <div className={`rounded-lg border p-3 space-y-2 ${cfg.bg}`}>
@@ -76,11 +179,17 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
           <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
           <span className="font-mono text-[13px] text-white/80">{signal.code}</span>
           <span className="text-[12px] text-white/50">{signal.name}</span>
+          {(signal as MonitorSignal & { holdingHorizonLabel?: string }).holdingHorizonLabel && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-sky-500/20 bg-sky-500/8 text-sky-400/70">
+              {(signal as MonitorSignal & { holdingHorizonLabel?: string }).holdingHorizonLabel}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.color}`}>
             {cfg.label}
           </span>
+          <button onClick={() => setShowLogs(v => !v)} className="text-[11px] text-white/20 hover:text-white/50 transition" title="操作日志">📋</button>
           <button onClick={() => onRemove(signal.code)} className="text-[11px] text-white/20 hover:text-red-400 transition">×</button>
         </div>
       </div>
@@ -121,7 +230,6 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
               className={`absolute inset-y-0 ${pnl >= 0 ? 'left-1/2' : 'right-1/2'} ${pnl >= 0 ? 'bg-red-400/40' : 'bg-emerald-400/40'} rounded-full`}
               style={{ width: `${Math.min(50, Math.abs(pnl) * 2)}%` }}
             />
-            {/* 中心基准线 */}
             <div className="absolute left-1/2 inset-y-0 w-px bg-white/15" />
           </div>
           <div className="flex justify-between mt-0.5 text-[9px] text-white/15 font-mono">
@@ -129,6 +237,9 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
           </div>
         </div>
       )}
+
+      {/* 操作日志面板（按需展开） */}
+      {showLogs && <LogPanel code={signal.code} />}
     </div>
   );
 };

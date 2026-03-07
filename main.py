@@ -396,6 +396,18 @@ def main() -> int:
             )
         except Exception as e:
             logger.warning(f"新闻抓取任务注册失败（可忽略）: {e}")
+
+        # 盘中持仓监控（每 10 分钟，仅交易时段，workers=1 避免封禁）
+        try:
+            from src.services.portfolio_service import monitor_portfolio as _monitor_portfolio
+            scheduler.add_intraday_monitor_job(
+                interval_minutes=10,
+                task=_monitor_portfolio,
+                run_immediately=False,
+            )
+        except Exception as e:
+            logger.warning(f"盘中持仓监控任务注册失败（可忽略）: {e}")
+
         logger.info(f"API 文档: http://{args.host}:{args.port}/docs")
         logger.info("按 Ctrl+C 退出")
         scheduler.run()
@@ -501,6 +513,12 @@ def main() -> int:
                 )
             except Exception as e:
                 logger.warning(f"新闻抓取任务注册失败: {e}")
+            # 盘中持仓监控（每 10 分钟，仅交易时段）
+            try:
+                from src.services.portfolio_service import monitor_portfolio as _monitor_portfolio
+                scheduler.add_intraday_monitor_job(interval_minutes=10, task=_monitor_portfolio)
+            except Exception as e:
+                logger.warning(f"盘中持仓监控任务注册失败: {e}")
             scheduler.run()
             return 0
         

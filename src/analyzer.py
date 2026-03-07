@@ -48,6 +48,7 @@ class AnalysisResult:
     market_snapshot: Optional[Dict[str, Any]] = None
 
     flash_used: bool = False  # Flash+Pro 双阶段标记（True=Flash预判成功，供A/B对比胜率用）
+    flash_summary: Optional[str] = None  # Flash技术分析师的预判结论文本
 
     # 扩展字段（决策仪表盘 v2，兼容上游）
     trend_analysis: str = ""
@@ -135,6 +136,8 @@ class AnalysisResult:
             'execution_note': self.execution_note,
             'behavioral_warning': self.behavioral_warning,
             'skill_used': self.skill_used,
+            'flash_used': self.flash_used,
+            'flash_summary': self.flash_summary,
         }
 
     def get_core_conclusion(self) -> str:
@@ -359,6 +362,7 @@ class GeminiAnalyzer:
 
             # 标记 Flash 使用状态（供 pipeline 写入 ab_variant='flash_pro'）
             _flash_was_used = bool(flash_summary)
+            _flash_summary_text = flash_summary
 
             # 2b. 构建 User Prompt（若有 Flash 摘要则用其替换技术报告段）
             prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill, ab_variant=ab_variant, flash_summary=flash_summary)
@@ -381,6 +385,7 @@ class GeminiAnalyzer:
                         result.market_snapshot = self._build_market_snapshot(context)
                         result.skill_used = skill
                         result.flash_used = _flash_was_used
+                        result.flash_summary = _flash_summary_text
                         return result
                 except Exception as e:
                     logger.debug(f"Function Calling失败，降级为文本解析: {e}")
@@ -398,6 +403,7 @@ class GeminiAnalyzer:
             result.market_snapshot = self._build_market_snapshot(context)
             result.skill_used = skill
             result.flash_used = _flash_was_used
+            result.flash_summary = _flash_summary_text
             return result
             
         except Exception as e:
@@ -405,38 +411,155 @@ class GeminiAnalyzer:
             return AnalysisResult(code, name, 50, "分析异常", "观望", success=False, error_message=str(e))
 
     def _build_flash_context(self, context: Dict[str, Any], name: str) -> str:
-        """构建 Flash 预判所需的完整技术数据（kline叙事 + 量化指标明细）。
+        """构建 Flash 预判所需的完整技术数据（kline叙事 + 量化指标明细 + 周线摘要 + 盘中分时）。
 
-        Flash 的职责是消化原始技术报告，输出80字方向判断。
+        Flash 的职责是消化原始技术报告，输出150字方向判断。
         因此 Flash 应读取 Pro 原本要看的完整技术内容，而非只看6个数字。
-        Pro 最终只收到 Flash 的80字摘要，从而大幅压缩输入长度。
+        Pro 最终只收到 Flash 的摘要，从而大幅压缩输入长度。
         """
         kline_narrative = context.get('kline_narrative', '') or ''
         tech_llm = context.get('technical_analysis_report_llm', '') or ''
 
-        if kline_narrative and tech_llm:
-            return f"{kline_narrative}\n\n【量化指标明细】\n{tech_llm}"
-        elif kline_narrative:
-            return kline_narrative
-        elif tech_llm:
-            return tech_llm
-        else:
-            # 无完整技术报告时退化为关键数字快照
-            price = context.get('price', 0) or 0
-            change_pct = context.get('change_pct', 0) or 0
-            trend = context.get('trend_analysis') or {}
+        # === 周线摘要（从 daily_df 推导，无需额外网络请求）===
+        weekly_summary = self._build_weekly_summary(context)
+
+        # === 盘中分时摘要（仅交易时段可用）===
+        intraday_summary = ''
+        intraday = context.get('intraday_analysis') or {}
+        if intraday.get('available'):
             parts = []
-            if price:
-                parts.append(f"价格:{price:.2f}({change_pct:+.1f}%)")
-            for k, label in [('trend_status','趋势'), ('macd_status','MACD')]:
-                v = trend.get(k, '') or ''
-                if v:
-                    parts.append(f"{label}:{v}")
-            for k, label in [('rsi6','RSI'), ('volume_ratio','量比'), ('signal_score','量化')]:
-                v = trend.get(k)
-                if v is not None:
-                    parts.append(f"{label}:{float(v):.1f}")
-            return " | ".join(parts)
+            if intraday.get('intraday_trend'):
+                parts.append(f"分时趋势:{intraday['intraday_trend']}")
+            if intraday.get('vwap_position'):
+                parts.append(intraday['vwap_position'])
+            if intraday.get('momentum'):
+                parts.append(f"动能:{intraday['momentum']}")
+            if intraday.get('volume_distribution'):
+                parts.append(intraday['volume_distribution'])
+            if parts:
+                intraday_summary = f"【盘中分时({intraday.get('period','5min')})】" + ' | '.join(parts)
+
+        # 组合各部分
+        sections = []
+        if kline_narrative:
+            sections.append(kline_narrative)
+        if tech_llm:
+            sections.append(f"【量化指标明细】\n{tech_llm}")
+        if weekly_summary:
+            sections.append(weekly_summary)
+        if intraday_summary:
+            sections.append(intraday_summary)
+
+        if sections:
+            return "\n\n".join(sections)
+
+        # 无完整技术报告时退化为关键数字快照
+        price = context.get('price', 0) or 0
+        change_pct = context.get('change_pct', 0) or 0
+        trend = context.get('trend_analysis') or {}
+        parts = []
+        if price:
+            parts.append(f"价格:{price:.2f}({change_pct:+.1f}%)")
+        for k, label in [('trend_status','趋势'), ('macd_status','MACD')]:
+            v = trend.get(k, '') or ''
+            if v:
+                parts.append(f"{label}:{v}")
+        for k, label in [('rsi6','RSI'), ('volume_ratio','量比'), ('signal_score','量化')]:
+            v = trend.get(k)
+            if v is not None:
+                parts.append(f"{label}:{float(v):.1f}")
+        return " | ".join(parts)
+
+    @staticmethod
+    def _build_weekly_summary(context: Dict[str, Any]) -> str:
+        """从已有日线 daily_df 推导周线摘要（不做任何网络请求）。
+
+        生成类似：【周线(近12周)】多空比7:5，当前价运行于周均线下方；
+        周线支撑区间74-76，压力区间82-85；近3周连续收阴，周线级别趋势向下。
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+
+            daily_df = context.get('daily_df')
+            if daily_df is None or daily_df.empty or len(daily_df) < 10:
+                return ''
+
+            df = daily_df.copy()
+            # 确保有 date 列并转为 datetime
+            if 'date' not in df.columns:
+                return ''
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date').reset_index(drop=True)
+
+            # 按 ISO 周分组构建周线
+            df['week'] = df['date'].dt.to_period('W')
+            weekly = df.groupby('week').agg(
+                open=('open', 'first'),
+                high=('high', 'max'),
+                low=('low', 'min'),
+                close=('close', 'last'),
+                volume=('volume', 'sum'),
+            ).reset_index()
+            weekly = weekly.tail(14)  # 最近14周
+
+            if len(weekly) < 4:
+                return ''
+
+            # 多空比（收涨周 vs 收跌周）
+            weekly['direction'] = weekly['close'] > weekly['open']
+            recent12 = weekly.tail(12)
+            up_weeks = int(recent12['direction'].sum())
+            down_weeks = len(recent12) - up_weeks
+
+            # 当前价与周线均线位置
+            current_price = float(context.get('price', 0) or df.iloc[-1]['close'])
+            week_closes = weekly['close'].values
+            wma5 = float(np.mean(week_closes[-5:])) if len(week_closes) >= 5 else None
+            wma10 = float(np.mean(week_closes[-10:])) if len(week_closes) >= 10 else None
+
+            ma_pos = ''
+            if wma5 and wma10:
+                if current_price > wma5 > wma10:
+                    ma_pos = '价格在周MA5/MA10上方(周线多头)'
+                elif current_price < wma5 < wma10:
+                    ma_pos = '价格在周MA5/MA10下方(周线空头)'
+                elif current_price < wma5:
+                    ma_pos = f'价格跌破周MA5({wma5:.2f})，周线偏弱'
+                else:
+                    ma_pos = f'价格在周MA5({wma5:.2f})上方，周线偏强'
+
+            # 近期连续方向（最近3周）
+            last3 = list(recent12.tail(3)['direction'])
+            if all(d for d in last3):
+                streak = '近3周连续收涨'
+            elif not any(d for d in last3):
+                streak = '近3周连续收阴'
+            elif not last3[-1] and not last3[-2]:
+                streak = '近2周连阴'
+            elif last3[-1] and last3[-2]:
+                streak = '近2周连涨'
+            else:
+                streak = '周线方向震荡'
+
+            # 周线支撑/压力（用近12周低点区和高点区）
+            w_low = float(recent12['low'].min())
+            w_low2 = float(recent12['low'].nsmallest(3).iloc[-1])
+            w_high = float(recent12['high'].max())
+            w_high2 = float(recent12['high'].nlargest(3).iloc[-1])
+
+            parts = [f"【周线(近{len(recent12)}周)】多空比{up_weeks}:{down_weeks}"]
+            if ma_pos:
+                parts.append(ma_pos)
+            parts.append(streak)
+            parts.append(f"周线支撑{w_low:.2f}-{w_low2:.2f}，压力{w_high2:.2f}-{w_high:.2f}")
+
+            return '，'.join(parts)
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"[Flash] 周线摘要构建失败: {e}")
+            return ''
 
     def _flash_pre_analyze(self, flash_ctx: str, name: str, cfg: Any) -> Optional[str]:
         """调用 Flash 模型对技术面做一段话预判断（≤80字），供 Pro 模型作为输入锚点。
@@ -458,18 +581,21 @@ class GeminiAnalyzer:
             return None
 
         flash_system = (
-            "你是一位专业的A股技术面分析师。"
-            "你的职责是消化原始K线数据和量化指标，"
-            "输出简洁准确的技术面判断结论，供基金经理做最终决策参考。"
+            "你是一位专业的A股技术面分析师，擅长日线、周线及盘中多周期联动分析。"
+            "你的职责是消化原始K线数据（含日线、周线、盘中分时）和量化指标，"
+            "输出简洁准确的多周期技术面判断结论，供基金经理做最终决策参考。"
+            "结论必须可操作：给出具体价格和触发条件，不要模糊表述。"
         )
         flash_prompt = (
-            f"请用≤150字总结{name}的技术面判断，包含四个部分："
-            f"①方向（多/空/中性）及核心依据；"
+            f"请用≤200字总结{name}的技术面判断，包含六个部分："
+            f"①方向（多/空/中性）及核心依据（日线）；"
             f"②关键支撑位/压力位（具体价格）；"
             f"③动能/量能判断；"
-            f"④最主要风险。"
+            f"④最主要风险；"
+            f"⑤时间维度：短线（1-3日）与中线（2-4周，基于周线）方向是否一致，若分歧需说明；"
+            f"⑥反向触发：当前判断失效的具体条件（例：收复XX价+缩量=多头信号恢复）。"
             f"禁止注入基本面/舆情，只分析技术面。"
-            f"\n\n原始技术数据：\n{flash_ctx}"
+            f"\n\n原始技术数据（含日线、周线、盘中）：\n{flash_ctx}"
         )
         api_timeout = getattr(cfg, 'gemini_request_timeout', 120)
 
@@ -485,7 +611,7 @@ class GeminiAnalyzer:
                 if text:
                     if model_name != primary:
                         logger.debug(f"[Flash] {name} 使用备选模型 {model_name}")
-                    return text[:400]
+                    return text[:600]
             except Exception as e:
                 logger.debug(f"[Flash] {name} 模型 {model_name} 失败: {e}")
 
@@ -847,7 +973,17 @@ class GeminiAnalyzer:
             _max_loss_pct_sz = abs(_ideal_buy - _stop_loss) / _ideal_buy * 100
             if _max_loss_pct_sz > 0.1:
                 _suggested_pct = round(min(max(2.0 / _max_loss_pct_sz * 100, 1.0), 30.0), 1)
-                _sz_note = f"2%风险规则:下行{_max_loss_pct_sz:.1f}%→建议仓位{_suggested_pct}%"
+                # 市场环境上限：熊市≤50%正常仓位，震荡市≤80%
+                _regime_for_sz = market_regime or ''
+                _regime_cap_map = {'bear': 0.5, 'sideways': 0.8, 'bull': 1.0, 'recovery': 0.8}
+                _regime_cap = _regime_cap_map.get(_regime_for_sz, 1.0)
+                if _regime_cap < 1.0:
+                    _capped_pct = round(_suggested_pct * _regime_cap, 1)
+                    _regime_label_sz = {'bear': '熊市', 'sideways': '震荡市', 'recovery': '修复期'}.get(_regime_for_sz, '')
+                    _sz_note = f"2%风险规则:下行{_max_loss_pct_sz:.1f}%→原仓位{_suggested_pct}%，{_regime_label_sz}环境上限调减至{_capped_pct}%"
+                    _suggested_pct = _capped_pct
+                else:
+                    _sz_note = f"2%风险规则:下行{_max_loss_pct_sz:.1f}%→建议仓位{_suggested_pct}%"
                 if _pos_total_capital > 0:
                     _sz_note += f"({round(_pos_total_capital * _suggested_pct / 100 / 10000, 1)}万元)"
                 _position_sizing_hint = f"{{method: '2%-risk-rule', suggested_pct: {_suggested_pct}, rationale: '{_sz_note}'}}"
@@ -1022,6 +1158,29 @@ Step 3 - 成长可持续性：增长来源（量/价/新产品/并购）+ 能否
 Step 4（{_has_pos_label}） - 结论：
 {_skill_step4}"""
 
+        # 预计算 Flash 软约束文本（避免 Python 3.10 f-string 内不能含反斜杠的限制）
+        _NL = '\n'
+        if ab_variant == 'llm_only':
+            _json_constraint = '**无量化技术信号，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。'
+        elif flash_summary:
+            _json_constraint = (
+                '**你是最终决策者**，量化技术面仅整理了原始技术信号供你参考（不含评分结论）。'
+                '请基于上述所有信息独立给出评分和操作建议。' + _NL +
+                '⚡ 独立技术分析师对该股的方向判断已在上方"技术面分析师结论"中给出——'
+                '你必须在llm_reasoning中明确表态：'
+                '①是否认同该技术分析师的方向判断；'
+                '②如与该判断方向相反，须给出具体的基本面/舆情/宏观反驳理由（禁止用"综合来看"等模糊语言）。' + _NL +
+                '如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，'
+                '可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'
+            )
+        else:
+            _json_constraint = (
+                '**你是最终决策者**，量化技术面仅整理了原始技术信号供你参考（不含评分结论）。'
+                '请基于上述所有信息独立给出评分和操作建议。'
+                '如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，'
+                '可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'
+            )
+
         # 组装精简 Prompt
         return f"""{header}
 {etf_constraint}
@@ -1034,7 +1193,7 @@ Step 4（{_has_pos_label}） - 结论：
 ## 历史回溯
 {history_str}
 
-## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else ('技术面分析师结论（已由Flash模型消化原始技术数据，以下为其判断结论）' if flash_summary else '量化技术面原始信号（供你参考，你是最终决策者）')}
+## {'K线数据（请自主判断技术面形态）' if ab_variant == 'llm_only' else ('技术面分析师结论（独立技术分析师基于K线与量化指标的综合判断，供你参考）' if flash_summary else '量化技术面原始信号（供你参考，你是最终决策者）')}
 {tech_report}
 
 ## 基本面 (F10)
@@ -1043,7 +1202,7 @@ Step 4（{_has_pos_label}） - 结论：
 {news_section}
 {data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{holding_horizon_section}
 ## JSON 输出协议
-{'**无量化技术信号，你是唯一决策者**，独立判断最终评分/操作建议/止损/仓位。' if ab_variant == 'llm_only' else '**你是最终决策者**，量化技术面仅整理了原始技术信号供你参考（不含评分结论）。请基于上述所有信息独立给出评分和操作建议。如发现Tier-0(监管/立案/退市)/Tier-1(实控人大额减持/业绩确定暴雷)事件，可在override_intel中填写降级建议，并将operation_advice调整为更保守选项。'}
+{_json_constraint}
 只输出 JSON，不要 markdown 代码块包裹。字段：
 
 stock_name, trend_prediction,

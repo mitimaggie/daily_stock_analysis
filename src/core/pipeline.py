@@ -1287,7 +1287,21 @@ class StockAnalysisPipeline:
                                 f"⚠️ 评分从高位回落（{_prev_score_for_check}→{_cur_score}），"
                                 f"但持有浮盈{_pnl_pct:.1f}%——考虑部分止盈，避免浮盈变浮亏"
                             )
-                    # 规则4: 踏空焦虑 - 评分偏低但无持仓
+                    # 规则4: 亏损加仓陷阱 - 持仓浮亏>=8%但仍建议买入/加仓
+                    elif _has_pos and _cost_price > 0 and _cur_price > 0:
+                        _pnl_pct_check = (_cur_price - _cost_price) / _cost_price * 100
+                        _advice_now = result.operation_advice or ''
+                        if _pnl_pct_check <= -8 and _advice_now in ('买入', '加仓'):
+                            _behavioral_warning = (
+                                f"⚠️【亏损加仓陷阱】当前浮亏{abs(_pnl_pct_check):.1f}%，"
+                                f"此时{_advice_now}违反资金管理纪律（越陷越深风险极高）。"
+                                f"建议先确认止损线{_stop_loss:.2f}是否仍有效，再决定是否继续持仓。"
+                                if _stop_loss > 0 else
+                                f"⚠️【亏损加仓陷阱】当前浮亏{abs(_pnl_pct_check):.1f}%，"
+                                f"此时{_advice_now}违反资金管理纪律（越陷越深风险极高）。"
+                                f"建议设定明确止损位，避免无限被套。"
+                            )
+                    # 规则5: 踏空焦虑 - 评分偏低但无持仓
                     elif not _has_pos and _cur_score < 50:
                         _behavioral_warning = (
                             f"💡 当前评分{_cur_score}分，不是好的买入时机，"

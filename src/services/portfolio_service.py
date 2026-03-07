@@ -16,7 +16,7 @@ from typing import Optional, List, Dict, Any
 import pandas as pd
 from sqlalchemy import select, desc
 
-from src.storage import DatabaseManager, Portfolio, Watchlist
+from src.storage import DatabaseManager, Portfolio, PortfolioLog, Watchlist
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,35 @@ logger = logging.getLogger(__name__)
 # 持仓 CRUD
 # ─────────────────────────────────────────────
 
+def get_ai_horizon_suggestion(code: str) -> Optional[str]:
+    """从最近一次分析记录中提取 AI 建议的持仓周期，供前端自动预填。
+
+    从 analysis_history.raw_result 里的 battle_plan.holding_horizon 提取。
+    """
+    try:
+        import json
+        from src.storage import AnalysisHistory
+        from sqlalchemy import desc
+        db = DatabaseManager.get_instance()
+        with db.get_session() as session:
+            rec = session.execute(
+                select(AnalysisHistory)
+                .where(AnalysisHistory.code == code)
+                .order_by(desc(AnalysisHistory.created_at))
+                .limit(1)
+            ).scalar_one_or_none()
+        if not rec or not rec.raw_result:
+            return None
+        raw = json.loads(rec.raw_result)
+        horizon = (
+            raw.get('dashboard', {}).get('battle_plan', {}).get('holding_horizon')
+            or raw.get('battle_plan', {}).get('holding_horizon')
+        )
+        return horizon if horizon else None
+    except Exception:
+        return None
+
+
 def add_portfolio(
     code: str,
     name: str,
@@ -32,8 +61,14 @@ def add_portfolio(
     shares: int = 0,
     entry_date: Optional[date] = None,
     notes: str = '',
+    holding_horizon_label: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """新增持仓（已存在则更新成本价和数量）"""
+    """新增持仓（已存在则更新成本价和数量）。
+    holding_horizon_label 为 None 时尝试从 AI 历史分析记录自动提取。
+    """
+    if holding_horizon_label is None:
+        holding_horizon_label = get_ai_horizon_suggestion(code)
+
     db = DatabaseManager.get_instance()
     with db.get_session() as session:
         existing = session.execute(
@@ -46,6 +81,8 @@ def add_portfolio(
             existing.entry_date = entry_date or existing.entry_date
             existing.notes = notes or existing.notes
             existing.name = name or existing.name
+            if holding_horizon_label:
+                existing.holding_horizon_label = holding_horizon_label
             existing.updated_at = datetime.now()
             session.commit()
             session.refresh(existing)
@@ -58,6 +95,7 @@ def add_portfolio(
                 shares=shares,
                 entry_date=entry_date or date.today(),
                 notes=notes,
+                holding_horizon_label=holding_horizon_label,
             )
             session.add(record)
             session.commit()
@@ -347,6 +385,33 @@ def _get_kline_df(code: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def _push_stop_loss_alert(
+    code: str,
+    name: str,
+    current_price: float,
+    atr_stop: float,
+    pnl_pct: float,
+    reasons: List[str],
+) -> None:
+    """向 PushPlus 和 Web 通知推送止损警报（非阻塞，失败静默忽略）"""
+    try:
+        title = f"🔴 止损警报：{name}({code})"
+        reasons_text = '\n'.join(f'- {r}' for r in reasons)
+        content = (
+            f"## {title}\n\n"
+            f"**当前价格**：{current_price:.2f}\n"
+            f"**ATR止损线**：{atr_stop:.2f}\n"
+            f"**浮盈/亏**：{pnl_pct:+.1f}%\n\n"
+            f"**触发原因**：\n{reasons_text}\n\n"
+            f"⚠️ 建议立即检查是否需要止损出场。"
+        )
+        from src.notification import NotificationManager
+        nm = NotificationManager.get_instance()
+        nm.send_to_pushplus(content=content, title=title)
+    except Exception as e:
+        logger.debug(f"[portfolio] 止损推送失败（非致命）: {e}")
+
+
 def _generate_monitor_signal(
     code: str,
     cost_price: float,
@@ -510,6 +575,29 @@ def monitor_portfolio() -> List[Dict[str, Any]]:
             intraday_info=intraday_info,
         )
 
+        # 止损首次触发：推送通知 + 写日志
+        prev_signal = holding.last_signal or ''
+        new_signal = signal_info['signal']
+        if new_signal == 'stop_loss' and prev_signal != 'stop_loss':
+            _push_stop_loss_alert(
+                code=code,
+                name=holding.name,
+                current_price=current_price,
+                atr_stop=atr_result['atr_stop'],
+                pnl_pct=atr_result['pnl_pct'],
+                reasons=signal_info['reasons'],
+            )
+            try:
+                add_portfolio_log(
+                    code=code,
+                    action='stop_exit',
+                    price=current_price,
+                    reason=f"ATR止损触发 止损线:{atr_result['atr_stop']:.2f}",
+                    triggered_by='stop_loss',
+                )
+            except Exception:
+                pass
+
         # 写回数据库
         with db.get_session() as session:
             record = session.execute(
@@ -543,3 +631,67 @@ def monitor_portfolio() -> List[Dict[str, Any]]:
         })
 
     return results
+
+
+# ─────────────────────────────────────────────
+# 持仓操作日志
+# ─────────────────────────────────────────────
+
+def add_portfolio_log(
+    code: str,
+    action: str,
+    price: Optional[float] = None,
+    shares: Optional[int] = None,
+    reason: str = '',
+    triggered_by: str = 'manual',
+) -> Dict[str, Any]:
+    """记录一条持仓操作日志。
+    action: buy/add/reduce/stop_exit/take_profit/manual
+    triggered_by: manual/monitor_ai/stop_loss
+    """
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        log = PortfolioLog(
+            code=code,
+            action=action,
+            price=price,
+            shares=shares,
+            reason=reason,
+            triggered_by=triggered_by,
+        )
+        session.add(log)
+        session.commit()
+        session.refresh(log)
+        return log.to_dict()
+
+
+def list_portfolio_logs(code: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """查询指定股票的操作日志（最新 limit 条）"""
+    from sqlalchemy import desc
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        logs = session.execute(
+            select(PortfolioLog)
+            .where(PortfolioLog.code == code)
+            .order_by(desc(PortfolioLog.created_at))
+            .limit(limit)
+        ).scalars().all()
+        return [log.to_dict() for log in logs]
+
+
+def update_portfolio_horizon(
+    code: str,
+    holding_horizon_label: str,
+) -> bool:
+    """手动更新持仓周期标签"""
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        record = session.execute(
+            select(Portfolio).where(Portfolio.code == code)
+        ).scalar_one_or_none()
+        if not record:
+            return False
+        record.holding_horizon_label = holding_horizon_label
+        record.updated_at = datetime.now()
+        session.commit()
+        return True

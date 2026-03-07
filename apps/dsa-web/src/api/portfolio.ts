@@ -16,6 +16,18 @@ export interface PortfolioItem {
   lastSignal: string;
   lastSignalReason: string;
   lastMonitoredAt: string | null;
+  holdingHorizonLabel: string | null;
+  createdAt: string | null;
+}
+
+export interface PortfolioLog {
+  id: number;
+  code: string;
+  action: string;
+  price: number | null;
+  shares: number | null;
+  reason: string;
+  triggeredBy: string;
   createdAt: string | null;
 }
 
@@ -72,6 +84,7 @@ export const portfolioApi = {
   add: async (params: {
     code: string; name?: string; costPrice: number;
     shares?: number; entryDate?: string; notes?: string;
+    holdingHorizonLabel?: string;
   }): Promise<PortfolioItem> => {
     const body = {
       code: params.code,
@@ -80,6 +93,7 @@ export const portfolioApi = {
       shares: params.shares || 0,
       entry_date: params.entryDate || null,
       notes: params.notes || '',
+      holding_horizon_label: params.holdingHorizonLabel || null,
     };
     const res = await apiClient.post<{ item: unknown }>('/api/v1/portfolio', body);
     return toCamelCase<PortfolioItem>(res.data.item as Record<string, unknown>);
@@ -132,5 +146,36 @@ export const portfolioApi = {
     await apiClient.post(`/api/v1/watchlist/${code}/sync`, null, {
       params: { score, advice, summary },
     });
+  },
+
+  // 操作日志
+  getLogs: async (code: string, limit = 20): Promise<PortfolioLog[]> => {
+    const res = await apiClient.get<{ logs: unknown[] }>(`/api/v1/portfolio/${code}/logs`, { params: { limit } });
+    return (res.data.logs || []).map(l => toCamelCase<PortfolioLog>(l as Record<string, unknown>));
+  },
+
+  addLog: async (code: string, params: {
+    action: string; price?: number; shares?: number; reason?: string; triggeredBy?: string;
+  }): Promise<PortfolioLog> => {
+    const res = await apiClient.post<{ log: unknown }>(`/api/v1/portfolio/${code}/logs`, {
+      action: params.action,
+      price: params.price ?? null,
+      shares: params.shares ?? null,
+      reason: params.reason || '',
+      triggered_by: params.triggeredBy || 'manual',
+    });
+    return toCamelCase<PortfolioLog>(res.data.log as Record<string, unknown>);
+  },
+
+  // 持仓周期
+  getHorizonSuggestion: async (code: string): Promise<string | null> => {
+    try {
+      const res = await apiClient.get<{ suggestion: string | null }>(`/api/v1/portfolio/${code}/horizon-suggestion`);
+      return res.data.suggestion;
+    } catch { return null; }
+  },
+
+  updateHorizon: async (code: string, label: string): Promise<void> => {
+    await apiClient.put(`/api/v1/portfolio/${code}/horizon`, { holding_horizon_label: label });
   },
 };

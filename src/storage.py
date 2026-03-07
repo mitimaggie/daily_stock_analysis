@@ -279,6 +279,7 @@ class Portfolio(Base):
     last_signal_reason = Column(Text, default='')
     last_monitored_at = Column(DateTime, nullable=True)
     sector_name = Column(String(64), nullable=True)       # 行业/板块（自动从分析中同步）
+    holding_horizon_label = Column(String(32), nullable=True)  # 持仓周期标签（如'短线(3-5日)'/'中线(1-4周)'）
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -297,6 +298,61 @@ class Portfolio(Base):
             'last_signal_reason': self.last_signal_reason,
             'last_monitored_at': self.last_monitored_at.isoformat() if self.last_monitored_at else None,
             'sector_name': self.sector_name,
+            'holding_horizon_label': self.holding_horizon_label,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class PortfolioLog(Base):
+    """持仓操作日志"""
+    __tablename__ = 'portfolio_logs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)
+    action = Column(String(20), nullable=False)  # buy/add/reduce/stop_exit/take_profit/manual
+    price = Column(Float, nullable=True)          # 操作价格
+    shares = Column(Integer, nullable=True)       # 操作股数
+    reason = Column(Text, default='')             # 操作原因
+    triggered_by = Column(String(20), default='manual')  # manual/monitor_ai/stop_loss
+    created_at = Column(DateTime, default=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'code': self.code,
+            'action': self.action,
+            'price': self.price,
+            'shares': self.shares,
+            'reason': self.reason,
+            'triggered_by': self.triggered_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class MonitorDiagnosis(Base):
+    """监控触发的 AI 诊断记录（独立于全量 analysis_history）"""
+    __tablename__ = 'monitor_diagnoses'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)
+    trigger_type = Column(String(30), nullable=False)  # stop_loss/take_profit/add_signal
+    decision = Column(String(5), default='')           # A/B/C
+    action_price = Column(Float, nullable=True)
+    new_stop = Column(Float, nullable=True)
+    next_checkpoint = Column(String(100), default='')
+    reasoning = Column(Text, default='')
+    created_at = Column(DateTime, default=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'code': self.code,
+            'trigger_type': self.trigger_type,
+            'decision': self.decision,
+            'action_price': self.action_price,
+            'new_stop': self.new_stop,
+            'next_checkpoint': self.next_checkpoint,
+            'reasoning': self.reasoning,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -379,6 +435,7 @@ class DatabaseManager:
         migrations = {
             'portfolio': {
                 'sector_name': 'VARCHAR(64)',
+                'holding_horizon_label': 'VARCHAR(32)',
             },
             'analysis_history': {
                 'actual_pct_1d':          'FLOAT',
