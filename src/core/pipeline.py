@@ -219,43 +219,194 @@ class StockAnalysisPipeline:
             return False, str(e), None, None
 
     @staticmethod
-    def _select_skill(context: dict) -> str:
+    def _score_skills(context: dict) -> dict:
         """
-        根据市场环境和个股基本面动态选择 AI 分析 Skill。
-        优先级：宏观转折(druckenmiller) > 极端板块情绪(soros) > 成长股(lynch) > 默认(default)
+        Skills 评分模型：为三个分析框架各打分(0-10)，返回主副框架推荐。
+        取代旧的硬规则 _select_skill()，支持双框架主副机制。
+
+        Returns:
+            {
+              'primary': str,           # 主框架 skill name 或 'default'
+              'secondary': str|None,    # 副框架 skill name 或 None
+              'primary_score': int,     # 主框架得分
+              'secondary_score': int,   # 副框架得分（0=无副框架）
+              'scores': dict,           # {druckenmiller: x, soros: x, lynch: x}
+              'convergent': bool,       # True=双框架同向（增强模式），False=分歧（压力测试模式）
+            }
         """
         try:
             trend = context.get('trend_analysis') or {}
             regime = trend.get('market_regime', 'sideways')
+            score_val = trend.get('signal_score', 50)
 
             sec = context.get('sector_context') or {}
             sector_5d = sec.get('sector_5d_pct')
+            sector_name = sec.get('sector_name', '')
 
             f10 = context.get('fundamental') or {}
             fin = f10.get('financial') or {}
             val = f10.get('valuation') or {}
-            growth = fin.get('net_profit_growth')
+            growth_rev = fin.get('revenue_growth')
+            growth_net = fin.get('net_profit_growth')
             pe = val.get('pe')
             peg = val.get('peg')
+            total_mv = val.get('total_mv')  # 万元
+            industry_pe = val.get('industry_pe_median')
 
-            # 宏观转折：bull/bear/recovery 状态触发 Druckenmiller
-            if regime in ('bull', 'bear', 'recovery'):
-                return 'druckenmiller'
+            north = context.get('northbound_holding') or {}
+            north_pct = north.get('holding_pct_a', 0) or 0
+            north_chg = north.get('shares_change', 0) or 0
 
-            # 极端板块情绪：板块近5日涨跌幅超过±15% 触发索罗斯反身性
+            daily_df = context.get('daily_df')
+
+            # ── Druckenmiller 评分 ──────────────────────────────
+            d_score = 0
+            if regime in ('bull', 'recovery'):
+                d_score += 3
+            elif regime == 'bear':
+                d_score += 2  # 熊市也适合用宏观逆向视角
+            _macro_sectors = {'银行', '证券', '保险', '地产', '房地产', '有色', '基建', '建筑', '煤炭', '钢铁', '消费', '白酒'}
+            if any(s in sector_name for s in _macro_sectors):
+                d_score += 2
+            macro_regime = context.get('macro_regime') or {}
+            if macro_regime.get('regime') in ('BULL', 'BEAR'):
+                d_score += 2  # 有宏观情报且处于极端方向
+            if north_chg > 0 and regime in ('bull', 'recovery'):
+                d_score += 1  # 北向同向加持
+            if isinstance(sector_5d, (int, float)) and abs(sector_5d) >= 5:
+                d_score += 1  # 板块联动明显，宏观驱动特征
+            d_score = min(d_score, 10)
+
+            # ── Soros 评分 ──────────────────────────────────────
+            s_score = 0
+            if daily_df is not None and len(daily_df) >= 7:
+                try:
+                    ret_7d = (daily_df['close'].iloc[-1] / daily_df['close'].iloc[-7] - 1) * 100
+                    if ret_7d > 20:
+                        s_score += 3
+                    elif ret_7d < -15:
+                        s_score += 2  # 急跌后反身性反弹机会
+                except Exception:
+                    pass
+            if isinstance(pe, (int, float)) and isinstance(industry_pe, (int, float)) and industry_pe > 0:
+                deviation = abs(pe - industry_pe) / industry_pe
+                if deviation > 0.5:
+                    s_score += 3
+                elif deviation > 0.3:
+                    s_score += 1
+            if isinstance(score_val, (int, float)) and score_val > 85:
+                s_score += 2
             if isinstance(sector_5d, (int, float)) and abs(sector_5d) >= 15:
-                return 'soros'
+                s_score += 2  # 极端板块情绪
+            s_score = min(s_score, 10)
 
-            # 成长股特征：PEG<1 或（净利增速>20% 且 PE<40）
-            has_peg = isinstance(peg, (int, float)) and 0 < peg < 1
-            has_growth = (isinstance(growth, (int, float)) and growth > 20
-                          and isinstance(pe, (int, float)) and 0 < pe < 40)
-            if has_peg or has_growth:
-                return 'lynch'
+            # ── Lynch 评分 ──────────────────────────────────────
+            l_score = 0
+            rev = growth_rev if isinstance(growth_rev, (int, float)) else growth_net
+            if isinstance(rev, (int, float)) and rev > 25:
+                l_score += 3
+            if isinstance(total_mv, (int, float)) and total_mv > 0:
+                mv_100b = total_mv / 10000  # 转为亿元
+                if mv_100b < 50:
+                    l_score += 3
+                elif mv_100b < 100:
+                    l_score += 2
+            if isinstance(north_pct, (int, float)) and 0 <= north_pct < 1.5:
+                l_score += 2  # 机构持仓低，尚未被充分发现
+            _growth_sectors = {'半导体', '人工智能', 'AI', '机器人', '新能源', '光伏', '储能', '创新药', '医疗器械', '军工'}
+            if any(s in sector_name for s in _growth_sectors):
+                l_score += 1
+            if isinstance(peg, (int, float)) and 0 < peg < 1.5:
+                l_score += 1
+            l_score = min(l_score, 10)
 
+            scores = {'druckenmiller': d_score, 'soros': s_score, 'lynch': l_score}
+
+            # 主框架：最高分且≥5
+            ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            primary, primary_score = ranked[0]
+            if primary_score < 5:
+                return {
+                    'primary': 'default', 'secondary': None,
+                    'primary_score': 0, 'secondary_score': 0,
+                    'scores': scores, 'convergent': False,
+                }
+
+            # 副框架：第二高分且≥5
+            secondary, secondary_score = ranked[1]
+            has_secondary = secondary_score >= 5
+
+            # 收敛性判断（两个框架是否指向同一交易方向）
+            convergent = False
+            if has_secondary:
+                # Druckenmiller(顺势) vs Soros(极端情绪) = 往往分歧
+                # Druckenmiller + Lynch = 成长宏观双确认 = 收敛
+                # Soros + Lynch = 分歧（成长逻辑 vs 泡沫警告）
+                _converge_pairs = {('druckenmiller', 'lynch'), ('lynch', 'druckenmiller')}
+                convergent = (primary, secondary) in _converge_pairs
+
+            return {
+                'primary': primary,
+                'secondary': secondary if has_secondary else None,
+                'primary_score': primary_score,
+                'secondary_score': secondary_score if has_secondary else 0,
+                'scores': scores,
+                'convergent': convergent,
+            }
         except Exception:
             pass
-        return 'default'
+        return {'primary': 'default', 'secondary': None, 'primary_score': 0, 'secondary_score': 0, 'scores': {}, 'convergent': False}
+
+    @staticmethod
+    def _select_skill(context: dict) -> str:
+        """向后兼容包装，调用评分模型返回主框架名称"""
+        return Pipeline._score_skills(context)['primary']
+
+    @staticmethod
+    def _detect_scene(context: dict, position_info: Optional[Dict[str, Any]] = None) -> str:
+        """
+        检测当前分析场景，决定 Flash/Pro 使用哪套角色和问题框架。
+
+        场景优先级（从高到低）：
+          crisis > profit_take > post_mortem > entry > holding
+        """
+        try:
+            has_position = bool(position_info and any(
+                position_info.get(k) for k in ('cost_price', 'position_amount', 'total_capital')
+            ))
+            if not has_position:
+                return 'entry'
+
+            cost_price = float(position_info.get('cost_price') or 0)
+            current_price = float(context.get('price') or 0)
+
+            pnl_pct = 0.0
+            if cost_price > 0 and current_price > 0:
+                pnl_pct = (current_price - cost_price) / cost_price * 100
+
+            # post_mortem：有止损退出日志（通过 context 标记）
+            if context.get('_scene_override') == 'post_mortem':
+                return 'post_mortem'
+
+            # crisis：止损触发 or 当日大幅下跌（需要盘中数据支持）
+            intraday = context.get('intraday_analysis') or {}
+            intraday_chg = intraday.get('price_change_pct', 0) or 0
+            atr_stop = position_info.get('atr_stop') or 0
+            if (
+                (isinstance(intraday_chg, (int, float)) and intraday_chg < -5)
+                or (atr_stop > 0 and current_price > 0 and current_price < atr_stop)
+            ):
+                return 'crisis'
+
+            # profit_take：浮盈 > 15% 或超过目标价
+            target_price = float(position_info.get('target_price') or 0)
+            if pnl_pct >= 15 or (target_price > 0 and current_price >= target_price * 0.9):
+                return 'profit_take'
+
+            return 'holding'
+        except Exception:
+            pass
+        return 'holding'
 
     def _get_macro_intel(self, save_to_db: bool = False, portfolio_sectors: list = None) -> Optional[str]:
         """
@@ -1125,9 +1276,16 @@ class StockAnalysisPipeline:
                 use_light = False
                 logger.info(f"🔬 [{stock_name}] 量价异常，使用重量级模型深度分析")
             # === 3. 执行分析（带超时，默认 180 秒）===
-            # 选择 Skill（根据市场环境 + 个股基本面）
-            _selected_skill = self._select_skill(context)
-            logger.info(f"[С {stock_name}] Skill选择: {_selected_skill}")
+            # Skills 评分模型 + 场景检测
+            _skill_meta = self._score_skills(context)
+            _selected_skill = _skill_meta['primary']
+            _scene = self._detect_scene(context, position_info)
+            logger.info(f"[{stock_name}] Skill评分: {_skill_meta['scores']} | 主框架={_selected_skill}({_skill_meta['primary_score']}) | 场景={_scene}")
+            if _skill_meta.get('secondary'):
+                logger.info(f"[{stock_name}] 副框架={_skill_meta['secondary']}({_skill_meta['secondary_score']}) | 收敛={_skill_meta['convergent']}")
+            # 将 skill_meta 和 scene 注入 context 供 analyzer 使用
+            context['_skill_meta'] = _skill_meta
+            context['_scene'] = _scene
             analysis_timeout = getattr(self.config, 'analysis_timeout_seconds', 180) or 180
             def _run_analyze():
                 return self.analyzer.analyze(
@@ -1253,6 +1411,12 @@ class StockAnalysisPipeline:
 
                 # === P3: Skill 信息记录 ===
                 dashboard['skill_used'] = getattr(result, 'skill_used', _selected_skill)
+                dashboard['skill_scores'] = _skill_meta.get('scores', {})
+                dashboard['skill_secondary'] = _skill_meta.get('secondary')
+                dashboard['skill_convergent'] = _skill_meta.get('convergent', False)
+                dashboard['analysis_scene'] = _scene
+                if getattr(result, 'skill_analysis', None):
+                    dashboard['skill_analysis'] = result.skill_analysis
 
                 # === P3 增强3: 心理陷阱预警（纯规则，不调用 AI）===
                 _behavioral_warning = ""

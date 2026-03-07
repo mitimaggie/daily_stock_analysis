@@ -49,6 +49,7 @@ class AnalysisResult:
 
     flash_used: bool = False  # Flash+Pro 双阶段标记（True=Flash预判成功，供A/B对比胜率用）
     flash_summary: Optional[str] = None  # Flash技术分析师的预判结论文本
+    skill_analysis: Optional[Dict[str, Any]] = None  # Skills 3次调用输出（primary/secondary/integrated）
 
     # 扩展字段（决策仪表盘 v2，兼容上游）
     trend_analysis: str = ""
@@ -138,6 +139,7 @@ class AnalysisResult:
             'skill_used': self.skill_used,
             'flash_used': self.flash_used,
             'flash_summary': self.flash_summary,
+            'skill_analysis': self.skill_analysis,
         }
 
     def get_core_conclusion(self) -> str:
@@ -352,11 +354,13 @@ class GeminiAnalyzer:
             # Flash 失败时静默降级为单阶段（Pro 接收完整技术报告）
             cfg = get_config()
             flash_summary = None
+            _scene = context.get('_scene', 'holding')
+            _skill_meta = context.get('_skill_meta', {})
             if role == "trader" and ab_variant != "llm_only":
                 flash_ctx = self._build_flash_context(context, name)
-                flash_summary = self._flash_pre_analyze(flash_ctx, name, cfg)
+                flash_summary = self._flash_pre_analyze(flash_ctx, name, cfg, scene=_scene)
                 if flash_summary:
-                    logger.info(f"[Flash] {name} 技术预判完成: {flash_summary[:60]}…")
+                    logger.info(f"[Flash:{_scene}] {name} 技术预判完成: {flash_summary[:60]}…")
                 else:
                     logger.debug(f"[Flash] {name} 预判跳过，使用单阶段模式")
 
@@ -404,11 +408,195 @@ class GeminiAnalyzer:
             result.skill_used = skill
             result.flash_used = _flash_was_used
             result.flash_summary = _flash_summary_text
+
+            # 5. 三次调用 Skills 架构（仅 trader 角色 + 非 llm_only 且有触发框架时）
+            if role == "trader" and ab_variant != "llm_only" and _skill_meta.get('primary', 'default') != 'default':
+                try:
+                    skill_output = self._run_skill_calls(
+                        result=result,
+                        context=context,
+                        name=name,
+                        skill_meta=_skill_meta,
+                        position_info=position_info,
+                        has_position=has_position,
+                        cfg=cfg,
+                    )
+                    if skill_output:
+                        result.skill_analysis = skill_output
+                        logger.info(f"[Skills] {name} 框架分析完成: primary={_skill_meta['primary']} secondary={_skill_meta.get('secondary')}")
+                except Exception as _se:
+                    logger.debug(f"[Skills] {name} 框架调用失败(降级): {_se}")
+
             return result
             
         except Exception as e:
             logger.error(f"AI分析失败: {e}")
             return AnalysisResult(code, name, 50, "分析异常", "观望", success=False, error_message=str(e))
+
+    def _run_skill_calls(
+        self,
+        result: 'AnalysisResult',
+        context: Dict[str, Any],
+        name: str,
+        skill_meta: dict,
+        position_info: Optional[Dict[str, Any]],
+        has_position: bool,
+        cfg: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        三次调用 Skills 架构：
+          Call 2 - Primary Skill：基于 Pro 结论 + 股票摘要，从主框架角度深化分析
+          Call 3 - Secondary Skill：仅基于主框架结论做压力测试（收敛=增强，分歧=魔鬼代言人）
+
+        每次调用 prompt 控制在 2500-4000 tokens 以确保注意力集中。
+        失败时静默降级，不影响主流程。
+
+        Returns:
+            {
+              'primary_skill': str,
+              'primary_analysis': str,
+              'secondary_skill': str | None,
+              'secondary_analysis': str | None,
+              'convergent': bool,
+              'integrated_note': str,
+              'scores': dict,
+            }
+        """
+        primary = skill_meta.get('primary', 'default')
+        secondary = skill_meta.get('secondary')
+        convergent = skill_meta.get('convergent', False)
+        p_score = skill_meta.get('primary_score', 0)
+        s_score = skill_meta.get('secondary_score', 0)
+        scores = skill_meta.get('scores', {})
+
+        if primary == 'default':
+            return None
+
+        _has_pos_label = "持仓者" if has_position else "空仓者"
+
+        # ── 主框架 Prompt 构建（Call 2）────────────────────────────────────
+        # 股票核心摘要（压缩版，避免 Pro 的完整数据再次充斥注意力）
+        code = context.get('code', '')
+        price = context.get('price', 0)
+        sector = (context.get('sector_context') or {}).get('sector_name', '')
+        score_val = result.sentiment_score
+        main_advice = result.operation_advice or ''
+        main_conclusion = (
+            f"股票：{name}({code}) | 板块：{sector} | 现价：{price}\n"
+            f"Pro主分析结论：评分{score_val}/100 | 建议：{main_advice}\n"
+            f"核心推理：{(result.llm_reasoning or '')[:200]}"
+        )
+
+        _skill_primary_prompts = {
+            'druckenmiller': (
+                f"## 分析框架：Druckenmiller 宏观流动性框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
+                f"基于以下 Pro 主分析结论，从宏观流动性角度深化分析：\n{main_conclusion}\n\n"
+                f"请完成以下4步（每步必须有具体数据依据，禁止模糊表述）：\n"
+                f"Step 1 - 流动性环境：当前大盘成交量趋势 + 政策方向是「资金进场」还是「撤退」？\n"
+                f"Step 2 - 行业主线对齐：该股板块是否顺应当前市场资金主线？\n"
+                f"Step 3 - 催化剂检验：是否存在改变趋势的具体催化剂？「估值低」不算催化剂。\n"
+                f"Step 4（{_has_pos_label}）- 操作结论：{'宏观顺风→加仓触发价？宏观逆风但个股强→止损移至成本价附近' if has_position else '宏观+行业+个股三对齐→入场价区间？部分对齐→前置条件？'}\n\n"
+                f"输出≤300字，结论优先。"
+            ),
+            'soros': (
+                f"## 分析框架：索罗斯反身性框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
+                f"基于以下 Pro 主分析结论，从反身性角度深化分析：\n{main_conclusion}\n\n"
+                f"Step 1 - 主流偏见识别：市场对该股/行业的「共识叙事」是什么？是否还成立？\n"
+                f"Step 2 - 反身性阶段：A初始/B自我强化/C临界/D崩溃，明确选一个并说明依据。\n"
+                f"Step 3 - 反向论据：2-3条「市场集体忽视的风险或机会」。\n"
+                f"Step 4（{_has_pos_label}）- 结论：{'阶段C临界→减仓触发价？阶段D崩溃→逆势机会条件？' if has_position else '阶段A/B早期→可参与但仓位上限？阶段C→等待修正？'}\n\n"
+                f"输出≤300字，结论优先。"
+            ),
+            'lynch': (
+                f"## 分析框架：彼得·林奇成长股侦察框架（{_has_pos_label}视角，{p_score}/10触发）\n\n"
+                f"基于以下 Pro 主分析结论，从成长股视角深化分析：\n{main_conclusion}\n\n"
+                f"Step 1 - 股票分类：快速增长/稳定增长/困境反转/隐蔽资产/周期股（必须选一个）。\n"
+                f"Step 2 - PEG检验：PEG<1通常低估/1-2合理/>2需有故事支撑；无数据则说明。\n"
+                f"Step 3 - 成长可持续性：增长来源 + 能否持续3-5年 + 天花板风险。\n"
+                f"Step 4（{_has_pos_label}）- 结论：{'成长逻辑完整→加仓条件？逻辑出现裂缝→减仓信号？' if has_position else '林奇最优建仓条件满足→建仓仓位%？部分满足→缺少什么条件？'}\n\n"
+                f"输出≤300字，结论优先。"
+            ),
+        }
+
+        primary_prompt = _skill_primary_prompts.get(primary)
+        if not primary_prompt:
+            return None
+
+        _skill_name_cn = {'druckenmiller': 'Druckenmiller宏观流动性', 'soros': '索罗斯反身性', 'lynch': '彼得·林奇成长股'}
+
+        # Call 2 - Primary Skill
+        primary_analysis = ''
+        try:
+            primary_analysis = self._call_api_with_fallback(
+                f"你是一位专业的A股基金经理，正在用{_skill_name_cn.get(primary, primary)}框架做投资决策。"
+                f"你已经看过了助理分析师的主分析结论，现在用你的专业框架深化分析。"
+                f"输出简洁准确，每一步必须有具体数据支撑，不允许写空话。",
+                primary_prompt,
+                False,  # 主框架用重量级模型
+                cfg,
+            )
+            primary_analysis = primary_analysis.strip()[:800] if primary_analysis else ''
+        except Exception as _e:
+            logger.debug(f"[Skills/Primary] {name} 主框架调用失败: {_e}")
+
+        if not primary_analysis:
+            return None
+
+        # ── 副框架 Prompt 构建（Call 3）────────────────────────────────────
+        secondary_analysis = ''
+        integrated_note = ''
+
+        if secondary and s_score >= 5:
+            if convergent:
+                # 收敛模式：副框架从不同维度增强主框架论点
+                secondary_prompt = (
+                    f"主框架分析结论（{_skill_name_cn.get(primary, primary)}）：\n{primary_analysis[:400]}\n\n"
+                    f"你现在用{_skill_name_cn.get(secondary, secondary)}框架提供补充证据（收敛增强模式）：\n"
+                    f"- 从你的框架角度，列出2-3条额外支持主框架结论的证据\n"
+                    f"- 双框架收敛时，位置管理建议：仓位是否可以比单框架时适当增加？给出具体建议\n"
+                    f"- 两个框架对齐的最关键信号是什么（一句话）？\n\n"
+                    f"输出≤200字，补充视角而非重复主框架。"
+                )
+                integrated_note = f"🟢 双框架收敛确认 [{_skill_name_cn.get(primary)}+{_skill_name_cn.get(secondary)}]：结论互相强化，置信度提升，可适当上调仓位建议。"
+            else:
+                # 分歧模式：副框架专职压力测试
+                secondary_prompt = (
+                    f"主框架分析结论（{_skill_name_cn.get(primary, primary)}）：\n{primary_analysis[:400]}\n\n"
+                    f"你现在是{_skill_name_cn.get(secondary, secondary)}框架的魔鬼代言人。\n"
+                    f"任务：专门挑战主框架的弱点，不输出你自己的独立建议。\n"
+                    f"请回答：\n"
+                    f"1. 主框架最大的逻辑漏洞（最多2个）\n"
+                    f"2. 证明主框架错误的最低门槛条件（具体价格或事件）\n"
+                    f"3. 如果主框架错误，最合理的替代叙事是什么？\n\n"
+                    f"输出≤200字，不要写综合建议，只做压力测试。"
+                )
+                integrated_note = f"⚠️ 双框架分歧 [{_skill_name_cn.get(primary)}主框架 vs {_skill_name_cn.get(secondary)}压力测试]：执行主框架建议，但须预设副框架给出的条件止损。"
+
+            try:
+                secondary_sys = (
+                    f"你是专业A股分析师，{'正在提供补充佐证' if convergent else '正在做魔鬼代言人压力测试'}。"
+                    f"{'补充视角简洁有力，不重复主框架。' if convergent else '只找主框架的弱点，不给综合操作建议。'}"
+                )
+                secondary_analysis = self._call_api_with_fallback(
+                    secondary_sys, secondary_prompt, True, cfg  # 副框架用轻量模型
+                )
+                secondary_analysis = secondary_analysis.strip()[:500] if secondary_analysis else ''
+            except Exception as _e:
+                logger.debug(f"[Skills/Secondary] {name} 副框架调用失败: {_e}")
+
+        return {
+            'primary_skill': primary,
+            'primary_skill_cn': _skill_name_cn.get(primary, primary),
+            'primary_score': p_score,
+            'primary_analysis': primary_analysis,
+            'secondary_skill': secondary if secondary_analysis else None,
+            'secondary_skill_cn': _skill_name_cn.get(secondary, secondary) if secondary else None,
+            'secondary_score': s_score,
+            'secondary_analysis': secondary_analysis or None,
+            'convergent': convergent,
+            'integrated_note': integrated_note,
+            'scores': scores,
+        }
 
     def _build_flash_context(self, context: Dict[str, Any], name: str) -> str:
         """构建 Flash 预判所需的完整技术数据（kline叙事 + 量化指标明细 + 周线摘要 + 盘中分时）。
@@ -561,11 +749,14 @@ class GeminiAnalyzer:
             logging.getLogger(__name__).debug(f"[Flash] 周线摘要构建失败: {e}")
             return ''
 
-    def _flash_pre_analyze(self, flash_ctx: str, name: str, cfg: Any) -> Optional[str]:
-        """调用 Flash 模型对技术面做一段话预判断（≤80字），供 Pro 模型作为输入锚点。
+    def _flash_pre_analyze(self, flash_ctx: str, name: str, cfg: Any, scene: str = 'holding') -> Optional[str]:
+        """调用 Flash 模型对技术面做场景化预判断，供 Pro 模型作为输入锚点。
 
         优先使用 gemini_model_when_cached（Flash主模型），失败后尝试 gemini_model_flash_fallback。
         两者均失败时静默返回 None，analyze() 降级为单阶段模式。
+
+        Args:
+            scene: 当前分析场景 (entry/holding/crisis/profit_take/post_mortem)
         """
         primary = getattr(cfg, 'gemini_model_when_cached', None)
         fallback = getattr(cfg, 'gemini_model_flash_fallback', None)
@@ -580,23 +771,80 @@ class GeminiAnalyzer:
         if not models_to_try or not self._genai_module:
             return None
 
-        flash_system = (
-            "你是一位专业的A股技术面分析师，擅长日线、周线及盘中多周期联动分析。"
-            "你的职责是消化原始K线数据（含日线、周线、盘中分时）和量化指标，"
-            "输出简洁准确的多周期技术面判断结论，供基金经理做最终决策参考。"
-            "结论必须可操作：给出具体价格和触发条件，不要模糊表述。"
-        )
-        flash_prompt = (
-            f"请用≤200字总结{name}的技术面判断，包含六个部分："
-            f"①方向（多/空/中性）及核心依据（日线）；"
-            f"②关键支撑位/压力位（具体价格）；"
-            f"③动能/量能判断；"
-            f"④最主要风险；"
-            f"⑤时间维度：短线（1-3日）与中线（2-4周，基于周线）方向是否一致，若分歧需说明；"
-            f"⑥反向触发：当前判断失效的具体条件（例：收复XX价+缩量=多头信号恢复）。"
-            f"禁止注入基本面/舆情，只分析技术面。"
-            f"\n\n原始技术数据（含日线、周线、盘中）：\n{flash_ctx}"
-        )
+        # ── 场景化 Flash 角色 & Prompt ─────────────────────────
+        _scene_system = {
+            'entry': (
+                "你是A股入场验证官，专注于技术面入场时机判断。"
+                "你的唯一任务是验证当前价格结构是否允许新建仓位，输出可操作的入场条件。"
+                "禁止给出持有/减仓建议，只回答「现在入场是否合适」。"
+            ),
+            'holding': (
+                "你是A股持仓论文卫士，专注于验证已持仓标的的原始做多逻辑是否仍成立。"
+                "聚焦「技术面发生了什么变化」，而非重新分析整个标的。"
+                "输出必须明确：INTACT（逻辑完整）/ WEAKENING（开始松动）/ BROKEN（逻辑已破坏）。"
+            ),
+            'crisis': (
+                "你是A股破位有效性评估员，专注于快速判断当前破位是洗盘噪音还是有效下跌。"
+                "输出必须包含：①是否有效破位（量能支撑？大盘拖累？）②关键守住价格 ③5分钟决策：忽略/警惕/止损。"
+                "总字数≤150字，结论优先，不要废话。"
+            ),
+            'profit_take': (
+                "你是A股动量衰减检测员，专注于判断上涨动能是否耗散、是否接近重要压力位。"
+                "输出：STRONG（动能健康）/ FADING（开始衰减）/ DISTRIBUTION（出货迹象）"
+                "+ 关键压力价 + 大约还有几个交易日动量。"
+            ),
+            'post_mortem': (
+                "你是A股交易复盘技术归因师，专注于分析历史持仓的技术层面成败原因。"
+                "从技术面角度回答：当时的止损位设置是否合理？退出时的技术信号是否明确？"
+            ),
+        }
+        _scene_prompt_suffix = {
+            'entry': (
+                f"请用≤200字验证{name}的入场时机，包含：\n"
+                f"①入场时机判断（VALID/INVALID/BORDERLINE）及核心依据；\n"
+                f"②最优入场区间（具体价格）；\n"
+                f"③入场窗口有效期（X个交易日内）；\n"
+                f"④失效触发价（跌破X价格=入场逻辑失效）；\n"
+                f"⑤量能条件（需要什么量能确认）。\n"
+                f"禁止基本面评价，只分析技术入场时机。"
+            ),
+            'holding': (
+                f"请用≤200字评估{name}的持仓技术逻辑健康度，包含：\n"
+                f"①持仓论文状态（INTACT/WEAKENING/BROKEN）；\n"
+                f"②关键变化（vs入场时技术面有何变化）；\n"
+                f"③当前关键支撑位（持守则论文继续）；\n"
+                f"④剩余上行空间（近期压力位）；\n"
+                f"⑤持仓时间窗口评估（基于周线，预计还有多少天动量）。\n"
+                f"时间维度：短线（1-3日）与中线（2-4周）方向是否一致，若分歧需说明。"
+            ),
+            'crisis': (
+                f"请用≤150字快速判断{name}的破位有效性：\n"
+                f"①破位性质（VALID_BREAKDOWN/FALSE_ALARM/UNCLEAR）+ 置信度%；\n"
+                f"②量能支撑判断（放量=有效，缩量=可能假摔）；\n"
+                f"③关键守住价格（守住=可继续持有）；\n"
+                f"④5分钟决策建议（忽略/减仓观察/立即止损）。\n"
+                f"结论放最前，不要废话。"
+            ),
+            'profit_take': (
+                f"请用≤200字检测{name}的动量衰减状态，包含：\n"
+                f"①动量状态（STRONG/FADING/DISTRIBUTION）；\n"
+                f"②关键压力位（具体价格，前期高点/整数关口）；\n"
+                f"③顶背离信号（RSI/MACD是否背离，如无数据则说明）；\n"
+                f"④预计动量剩余时间（X个交易日内有效）；\n"
+                f"⑤分批止盈触发条件（跌破X价=减仓信号）。"
+            ),
+            'post_mortem': (
+                f"请用≤200字对{name}的技术面做复盘归因：\n"
+                f"①技术止损位设置是否合理（基于ATR/关键支撑位）；\n"
+                f"②退出时是否有明确的技术破位信号；\n"
+                f"③如果再来一次，技术上应在何处止损；\n"
+                f"④可提炼的技术交易规则（一句话）。"
+            ),
+        }
+
+        flash_system = _scene_system.get(scene, _scene_system['holding'])
+        prompt_suffix = _scene_prompt_suffix.get(scene, _scene_prompt_suffix['holding'])
+        flash_prompt = f"{prompt_suffix}\n\n原始技术数据（含日线、周线、盘中）：\n{flash_ctx}"
         api_timeout = getattr(cfg, 'gemini_request_timeout', 120)
 
         for model_name in models_to_try:
@@ -774,12 +1022,36 @@ class GeminiAnalyzer:
         market_phase = context.get('market_phase', '')
         analysis_time = context.get('analysis_time', '')
 
+        _scene = context.get('_scene', 'holding')
+        _scene_label_map = {
+            'entry': '📋 入场评估',
+            'holding': '📊 持仓复盘',
+            'crisis': '🚨 危机处置',
+            'profit_take': '💰 止盈评估',
+            'post_mortem': '🔍 复盘归因',
+        }
+        _scene_label = _scene_label_map.get(_scene, '')
+        _scene_focus_map = {
+            'entry': '聚焦：「值不值得下注？建仓区间是什么？」',
+            'holding': '聚焦：「持仓论文还成立吗？当前应持有/加仓/减仓？」',
+            'crisis': '⚡聚焦：「立即行动——留/减/止损，给出一个字母级别的决策。」',
+            'profit_take': '聚焦：「如何分阶段兑现利润？剩余仓位怎么管？」',
+            'post_mortem': '聚焦：「这笔交易的决策质量如何？提炼可复用规则。」',
+        }
+        _scene_focus = _scene_focus_map.get(_scene, '')
+
         if is_intraday:
             phase_label = {"morning": "上午盘中", "lunch_break": "午休", "afternoon": "下午盘中"}.get(market_phase, "盘中")
             time_label = f" ({analysis_time})" if analysis_time else ""
-            header = f"# 盘中研判：{name} ({code}){time_label}\n⚠️ 以下为{phase_label}即时数据，非收盘数据。侧重短线操作建议。"
+            _scene_tag = f" [{_scene_label}]" if _scene_label else ""
+            header = f"# 盘中研判{_scene_tag}：{name} ({code}){time_label}\n⚠️ 以下为{phase_label}即时数据，非收盘数据。侧重短线操作建议。"
+            if _scene_focus:
+                header += f"\n> {_scene_focus}"
         else:
-            header = f"# 分析：{name} ({code})"
+            _scene_tag = f"[{_scene_label}] " if _scene_label else ""
+            header = f"# {_scene_tag}分析：{name} ({code})"
+            if _scene_focus:
+                header += f"\n> {_scene_focus}"
 
         # 舆情预分类标注 (P2)
         news_section = "暂无重大新闻"

@@ -401,3 +401,55 @@
 - `src/storage.py`: 新增 `PortfolioLog` 表、`MonitorDiagnosis` 表
 - `src/services/portfolio_service.py`: log CRUD + horizon 双轨制 + AI自动提取
 - 前端: 操作日志面板（📋 按钮展开）、持仓周期标签、AI建议自动预填、再分析日期 badge
+
+---
+
+## Prompt 体系第7轮升级（场景化 + Skills 3次调用架构）
+
+### 场景化 Flash+Pro 角色拆分（5场景）
+
+| 场景 | 触发条件 | Flash 角色 | Pro 焦点问题 |
+|------|---------|-----------|------------|
+| **entry** | 不在持仓 | 入场验证官 | 值不值得下注？建仓区间？ |
+| **holding** | 持仓正常（-8%~+15%） | 持仓论文卫士 | 原始做多逻辑还成立吗？ |
+| **crisis** | 单日跌>5% 或 ATR止损触发 | 破位有效性评估员 | 留/减/止损，5分钟决策版 |
+| **profit_take** | 浮盈>15% 或 接近目标价 | 动量衰减检测员 | 如何分阶段兑现利润？ |
+| **post_mortem** | `_scene_override=post_mortem` | — | 决策质量评分+偏差标签+规则提炼 |
+
+场景优先级：`crisis > profit_take > post_mortem > entry > holding`
+
+**实现文件**：
+- `src/core/pipeline.py`: `_detect_scene()` — 场景检测
+- `src/analyzer.py`: `_flash_pre_analyze(scene=)` — 场景化 Flash 系统指令+Prompt
+- `src/analyzer.py`: `_format_prompt()` — Pro prompt header 注入场景标签+聚焦问题
+
+### Skills 评分模型（取代旧硬规则 _select_skill）
+
+**旧逻辑**：`if regime == 'bull' → druckenmiller`（硬规则，单一返回，无置信度）
+
+**新逻辑**：三框架各打分 0-10，主框架≥5触发，副框架≥5时触发双框架模式
+
+| 框架 | 触发阈值 | 核心加分规则 |
+|------|---------|------------|
+| Druckenmiller | ≥5/10 | bull/recovery regime(+3)、宏观敏感板块(+2)、macro_regime极端(+2)、北向同向(+1) |
+| Soros | ≥5/10 | 7日涨幅>20%(+3)、PE偏离行业>50%(+3)、score>85(+2)、板块极端情绪(+2) |
+| Lynch | ≥5/10 | 营收增速>25%(+3)、市值<50亿(+3)、北向持仓<1.5%(+2)、成长赛道(+1) |
+
+**实现文件**：`src/core/pipeline.py`: `_score_skills()` 返回完整评分dict
+
+### 三次调用 Skills 架构
+
+```
+Call 1: Flash (场景化) → 技术预判摘要
+Call 2 (Pro): 主分析 → main_conclusion (评分/建议/推理)
+Call 3 (Primary Skill): main_conclusion(200字) + 股票摘要(300字) → 框架深化分析(≤800字)
+Call 4 (Secondary Skill, 可选): primary_analysis(400字) → 压力测试/收敛增强(≤500字)
+```
+
+**主副框架模式**：
+- **收敛模式** (Druckenmiller+Lynch)：副框架提供增强证据 → 自动上调仓位建议一档
+- **分歧模式** (其他组合)：副框架专职魔鬼代言人 → 输出失效触发条件而非操作建议
+
+**输出位置**：`result.skill_analysis` dict + `dashboard['skill_analysis']` + 日志记录
+
+**实现文件**：`src/analyzer.py`: `_run_skill_calls()` 方法
