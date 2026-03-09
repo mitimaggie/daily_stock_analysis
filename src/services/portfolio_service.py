@@ -64,8 +64,17 @@ def add_portfolio(
     holding_horizon_label: Optional[str] = None,
 ) -> Dict[str, Any]:
     """新增持仓（已存在则更新成本价和数量）。
+    name 为空时自动通过 baostock 查询股票名称。
     holding_horizon_label 为 None 时尝试从 AI 历史分析记录自动提取。
     """
+    if not name or not name.strip():
+        try:
+            from data_provider.baostock_fetcher import BaostockFetcher
+            fetcher = BaostockFetcher()
+            name = fetcher.get_stock_name(code) or code
+        except Exception:
+            name = code
+
     if holding_horizon_label is None:
         holding_horizon_label = get_ai_horizon_suggestion(code)
 
