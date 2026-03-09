@@ -53,10 +53,27 @@ python main.py --stocks 600519 --no-notify --debug --fast
 - **ST 股票**：是否有标记或过滤？
 - **集合竞价时段**：9:15-9:25 的数据是否被正确处理？
 
-### 第五层：散户可用性验证
+### 第五层：前端验证（仅当本次改动涉及前端时）
+如果本次改动涉及前端代码（`apps/dsa-web/`），执行以下检查：
+
+1. **构建检查**：
+```bash
+cd apps/dsa-web && npm run build
+```
+
+2. **浏览器验证**：通过 browser MCP 打开 `http://127.0.0.1:8000/`（需后端已启动）：
+   - 页面是否正常渲染，无白屏
+   - 浏览器 console 是否有 JS 报错
+   - 改动涉及的交互是否正常工作
+   - 数据是否正确展示（API 返回 -> 页面渲染）
+
+3. **如果前端验证失败**：打回给 @Frontend，附上截图或 console 报错信息
+
+### 第六层：散户可用性验证
 - 输出的建议是否是散户可执行的（没有推荐做空、融券、超大仓位等）？
 - 分析报告是否用散户能理解的语言？
 - 风险提示是否充分？
+- 前端界面是否对散户友好（信息层级清晰、关键信息醒目）？
 
 ## 输出格式：《测试报告》
 
@@ -67,6 +84,7 @@ python main.py --stocks 600519 --no-notify --debug --fast
 | 单元测试 | PASS/FAIL (N/M) | Xs |
 | 单股回测 | PASS/FAIL | Xs |
 | A 股边界场景 | PASS/FAIL/SKIP | - |
+| 前端验证 | PASS/FAIL/SKIP | - |
 | 散户可用性 | PASS/FAIL/SKIP | - |
 
 ### 如果有错误
@@ -74,7 +92,7 @@ python main.py --stocks 600519 --no-notify --debug --fast
 - **错误类型**：SyntaxError / ImportError / RuntimeError / LogicError
 - **核心报错信息**：提取关键的 traceback（不超过 10 行）
 - **定位**：出错的文件和行号
-- **打回建议**：应该打回给 Coder 还是 Quant，以及修复方向
+- **打回建议**：应该打回给 Coder、Frontend 还是 Quant，以及修复方向
 
 ### 如果全部通过
 简要确认通过，并标注是否有 Warning 需要关注。

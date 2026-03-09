@@ -1,0 +1,46 @@
+---
+alwaysApply: true
+---
+
+本项目的编码规范。所有代码修改必须遵守以下约定。
+
+## 文件头
+每个 Python 文件以 `# -*- coding: utf-8 -*-` 开头，紧跟模块级 docstring 说明职责。
+
+## 导入顺序
+1. 标准库
+2. 第三方库（pandas, numpy, sqlalchemy, tenacity 等）
+3. 项目内部模块（data_provider, src 等）
+
+每组之间空一行。
+
+## 日志
+- 使用 `logging.getLogger(__name__)` 获取 logger，变量名统一用 `logger`
+- 日志格式由 `src/logging_config.py` 统一管理，不要在模块中自定义格式
+- 关键业务节点用 `logger.info`，调试信息用 `logger.debug`，异常用 `logger.error` 或 `logger.exception`
+
+## 类型注解
+- 所有公开函数/方法必须有参数和返回值的类型注解
+- 使用 `typing` 模块（`Optional`, `List`, `Dict`, `Any`, `Tuple` 等）
+- 复杂数据结构优先使用 `dataclass` 或项目已有的 types 模块（如 `src/stock_analyzer/types.py`）
+
+## 异常处理
+- 捕获具体异常类型，禁止裸 `except:`
+- 异常日志必须包含上下文信息（股票代码、函数名等）
+- 网络请求和外部 API 调用必须有超时设置和重试机制（项目使用 `tenacity`）
+
+## A 股数据约定
+- 股票代码统一使用 6 位纯数字格式（如 `600519`），转换使用 `data_provider.base.normalize_stock_code()`
+- K 线 DataFrame 列名遵循 `STANDARD_COLUMNS`：`date, open, high, low, close, volume, amount, pct_chg`
+- 涨跌幅字段使用百分比值（如 +10.0 表示涨停），不是小数
+- 日期字段统一用 `YYYY-MM-DD` 字符串格式或 `datetime.date` 对象
+
+## 数据库
+- 项目使用 SQLAlchemy + SQLite（`data/stock_analysis.db`）
+- 数据库操作统一通过 `src/storage.py` 的接口，不要直接拼 SQL
+- 写入操作注意处理唯一约束冲突（upsert 模式）
+
+## 配置
+- 敏感信息（API Key 等）放 `.env`，通过 `src/config.py` 的 `Config` 单例读取
+- 禁止在代码中硬编码 API Key 或密码
+- 业务参数使用 `Config` 类的字段，支持环境变量覆盖
