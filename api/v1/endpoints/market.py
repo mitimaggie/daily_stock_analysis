@@ -48,7 +48,16 @@ async def get_market_overview() -> Dict[str, Any]:
     try:
         sentiment = get_market_sentiment_cached(db)
         if sentiment:
-            result["sentiment"] = asdict(sentiment)
+            raw = asdict(sentiment)
+            raw["limit_up"] = raw.get("limit_up_count", 0)
+            raw["limit_down"] = raw.get("limit_down_count", 0)
+            raw["broken"] = raw.get("broken_limit_count", 0)
+            raw["broken_rate"] = raw.get("broken_limit_rate", 0.0)
+            raw["emotion_temp"] = raw.get("temperature", 50)
+            raw["emotion_label"] = raw.get("temperature_label", "中性")
+            raw["advance_count"] = raw.get("up_count", 0)
+            raw["decline_count"] = raw.get("down_count", 0)
+            result["sentiment"] = raw
             deviation = calc_temperature_deviation(sentiment.temperature, db)
             result["temperature_deviation"] = deviation
     except Exception as e:
@@ -88,8 +97,9 @@ async def get_todo_list() -> Dict[str, Any]:
 
             for h in holdings:
                 _check_stop_loss(h, session, todos)
+                _check_score_change(h, session, todos)
     except Exception as e:
-        logger.warning(f"获取持仓止损预警失败: {e}")
+        logger.warning(f"获取持仓预警失败: {e}")
 
     return {
         "timestamp": datetime.now().isoformat(),
@@ -155,3 +165,42 @@ def _check_stop_loss(holding: Any, session: Any,
                 })
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
+
+
+def _check_score_change(holding: Any, session: Any,
+                        todos: List[Dict[str, Any]]) -> None:
+    """检查评分大幅变化（最近两次评分差 >= 10 分）"""
+    from sqlalchemy import select, desc
+    from src.storage import AnalysisHistory
+
+    code = holding.code
+    name = holding.name or code
+
+    try:
+        rows = session.execute(
+            select(AnalysisHistory.sentiment_score, AnalysisHistory.created_at)
+            .where(AnalysisHistory.code == code)
+            .order_by(desc(AnalysisHistory.created_at))
+            .limit(2)
+        ).all()
+    except Exception:
+        return
+
+    if len(rows) < 2 or rows[0][0] is None or rows[1][0] is None:
+        return
+
+    latest_score, prev_score = rows[0][0], rows[1][0]
+    diff = latest_score - prev_score
+    if abs(diff) < 10:
+        return
+
+    direction = "上升" if diff > 0 else "下降"
+    priority = "medium" if abs(diff) < 15 else "high"
+    todos.append({
+        "type": "score_change",
+        "priority": priority,
+        "code": code,
+        "name": name,
+        "message": f"{name} 评分大幅{direction}",
+        "detail": f"评分从 {prev_score} → {latest_score}（{'+' if diff > 0 else ''}{diff}分）",
+    })

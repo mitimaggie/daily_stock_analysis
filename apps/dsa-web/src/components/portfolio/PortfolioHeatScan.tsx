@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { marketApi } from '../../api/market';
 import type { ConceptItem } from '../../types/market';
+import { safeFixed } from '../../utils/format';
 
 interface PortfolioHeatScanProps {
   portfolioItems: { code: string; name: string }[];
@@ -76,7 +77,7 @@ const PortfolioHeatScan: React.FC<PortfolioHeatScanProps> = ({ portfolioItems })
               <span className="text-[12px] flex-shrink-0">{icon}</span>
               <span className="text-[12px] text-white/70 font-medium truncate flex-1">{c.name}</span>
               <span className={`text-[12px] font-mono font-medium ${pctColor}`}>
-                {c.pctChg >= 0 ? '+' : ''}{c.pctChg.toFixed(1)}%
+                {c.pctChg >= 0 ? '+' : ''}{safeFixed(c.pctChg, 1, '0.0')}%
               </span>
               <span className="text-[10px] text-white/25 flex-shrink-0">Top {c.rank}</span>
               {c.leadingStock && (
@@ -99,7 +100,7 @@ const PortfolioHeatScan: React.FC<PortfolioHeatScanProps> = ({ portfolioItems })
                 <div key={c.code} className="flex items-center gap-2 px-3 py-1 text-[11px]">
                   <span className="text-white/40 truncate flex-1">{c.name}</span>
                   <span className={`font-mono ${pctColor}`}>
-                    {c.pctChg >= 0 ? '+' : ''}{c.pctChg.toFixed(1)}%
+                    {c.pctChg >= 0 ? '+' : ''}{safeFixed(c.pctChg, 1, '0.0')}%
                   </span>
                   <span className="text-white/20">Top {c.rank}</span>
                 </div>

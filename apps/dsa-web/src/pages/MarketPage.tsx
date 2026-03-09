@@ -58,7 +58,7 @@ const MarketPage: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-20">
-      <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
+      <div className="max-w-lg lg:max-w-5xl mx-auto px-4 py-4 space-y-4">
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <h1 className="text-[18px] font-bold text-white">市场概览</h1>
@@ -67,41 +67,50 @@ const MarketPage: React.FC = () => {
           </span>
         </div>
 
-        {/* 红绿灯 */}
-        {loadingOverview ? (
-          <SkeletonCard height="h-56" />
-        ) : overviewError ? (
-          <div className="terminal-card p-4">
-            <p className="text-[13px] text-danger text-center">{overviewError}</p>
+        {/* 双栏布局：lg 以上左右分栏 */}
+        <div className="lg:grid lg:grid-cols-2 lg:gap-6 space-y-4 lg:space-y-0">
+          {/* 左栏 */}
+          <div className="space-y-4">
+            {/* 红绿灯 */}
+            {loadingOverview ? (
+              <SkeletonCard height="h-56" />
+            ) : overviewError ? (
+              <div className="terminal-card p-4">
+                <p className="text-[13px] text-danger text-center">{overviewError}</p>
+              </div>
+            ) : overview?.trafficLight ? (
+              <TrafficLight data={overview.trafficLight} sentiment={overview.sentiment} />
+            ) : null}
+
+            {/* 今日操作清单 */}
+            {loadingTodo ? (
+              <SkeletonCard height="h-32" />
+            ) : todoError ? (
+              <div className="terminal-card p-4">
+                <p className="text-[13px] text-danger text-center">{todoError}</p>
+              </div>
+            ) : (
+              <TodoListCard todos={todoList?.todos ?? []} />
+            )}
           </div>
-        ) : overview?.trafficLight ? (
-          <TrafficLight data={overview.trafficLight} sentiment={overview.sentiment} />
-        ) : null}
 
-        {/* 今日操作清单 */}
-        {loadingTodo ? (
-          <SkeletonCard height="h-32" />
-        ) : todoError ? (
-          <div className="terminal-card p-4">
-            <p className="text-[13px] text-danger text-center">{todoError}</p>
+          {/* 右栏 */}
+          <div className="space-y-4">
+            {/* 概念热度 */}
+            {loadingOverview ? (
+              <SkeletonCard height="h-64" />
+            ) : (
+              <ConceptHeatMap concepts={overview?.concepts ?? null} />
+            )}
+
+            {/* 涨跌停统计 */}
+            {loadingOverview ? (
+              <SkeletonCard height="h-48" />
+            ) : overview?.sentiment ? (
+              <LimitPoolStats data={overview.sentiment} />
+            ) : null}
           </div>
-        ) : (
-          <TodoListCard todos={todoList?.todos ?? []} />
-        )}
-
-        {/* 概念热度 */}
-        {loadingOverview ? (
-          <SkeletonCard height="h-64" />
-        ) : (
-          <ConceptHeatMap concepts={overview?.concepts ?? null} />
-        )}
-
-        {/* 涨跌停统计 */}
-        {loadingOverview ? (
-          <SkeletonCard height="h-48" />
-        ) : overview?.sentiment ? (
-          <LimitPoolStats data={overview.sentiment} />
-        ) : null}
+        </div>
       </div>
     </div>
   );

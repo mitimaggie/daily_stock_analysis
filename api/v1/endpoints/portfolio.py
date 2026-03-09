@@ -173,10 +173,10 @@ def api_simple_view(code: str):
             'signal_color': color_map.get(signal, 'gray'),
             'signal_emoji': emoji_map.get(signal, '⚫'),
             'signal_text': signal_data.get('signal_text', ''),
-            'current_price': signal_data.get('current_price'),
-            'pnl_pct': signal_data.get('pnl_pct'),
-            'atr_stop': signal_data.get('atr_stop'),
-            'cost_price': holding.get('cost_price') if holding else None,
+            'current_price': signal_data.get('current_price') or 0,
+            'pnl_pct': signal_data.get('pnl_pct') or 0,
+            'atr_stop': signal_data.get('atr_stop') or 0,
+            'cost_price': (holding.get('cost_price') if holding else None) or 0,
             'holding_horizon_label': holding.get('holding_horizon_label') if holding else None,
             'next_review_at': holding.get('next_review_at') if holding else None,
             'advice_short': advice_short,
@@ -199,9 +199,16 @@ def api_monitor_portfolio():
     try:
         from src.services.portfolio_risk_service import calculate_sector_exposure
         signals = monitor_portfolio()
-        # P3: 生成组合集中度预警
+        _NUMERIC_DEFAULTS = {
+            'currentPrice': 0, 'pnlPct': 0, 'atrStop': 0,
+            'highestPrice': 0, 'stopPnlPct': 0, 'shares': 0,
+            'costPrice': 0,
+        }
+        for sig in signals:
+            for key, default in _NUMERIC_DEFAULTS.items():
+                if sig.get(key) is None:
+                    sig[key] = default
         concentration_warnings = _calc_concentration_warnings(signals)
-        # 行业敞口分析
         portfolio_items = list_portfolio()
         sector_exposure = None
         try:

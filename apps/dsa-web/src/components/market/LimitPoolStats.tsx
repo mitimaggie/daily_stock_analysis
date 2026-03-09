@@ -1,5 +1,6 @@
 import type React from 'react';
 import type { SentimentData } from '../../types/market';
+import { safeFixed } from '../../utils/format';
 
 interface LimitPoolStatsProps {
   data: SentimentData;
@@ -35,7 +36,7 @@ const LimitPoolStats: React.FC<LimitPoolStatsProps> = ({ data }) => {
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 px-1">
         <div className="flex justify-between items-center">
           <span className="text-[12px] text-muted">炸板率</span>
-          <span className="text-[12px] font-mono text-warning">{data.brokenRate.toFixed(1)}%</span>
+          <span className="text-[12px] font-mono text-warning">{safeFixed(data.brokenRate, 1, '0.0')}%</span>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-[12px] text-muted">情绪温度</span>

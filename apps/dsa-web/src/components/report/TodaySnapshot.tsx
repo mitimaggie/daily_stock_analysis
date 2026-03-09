@@ -76,8 +76,8 @@ export const TodaySnapshot: React.FC<TodaySnapshotProps> = ({ data }) => {
 
   // 异常标记
   const anomalies: string[] = [];
-  if (vrHigh) anomalies.push(`量比${volumeRatio!.toFixed(1)}×，成交异常放大`);
-  if (trHigh) anomalies.push(`换手率${turnoverRate!.toFixed(1)}%，市场活跃`);
+  if (vrHigh) anomalies.push(`量比${(volumeRatio ?? 0).toFixed(1)}×，成交异常放大`);
+  if (trHigh) anomalies.push(`换手率${(turnoverRate ?? 0).toFixed(1)}%，市场活跃`);
 
   return (
     <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">

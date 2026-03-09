@@ -1,7 +1,10 @@
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { portfolioApi, type MonitorSignal, type WatchlistItem, type PortfolioLog } from '../api/portfolio';
+import { scoreTrendApi } from '../api/scoreTrend';
 import PortfolioHeatScan from '../components/portfolio/PortfolioHeatScan';
+import { safeFixed, isMarketOpen } from '../utils/format';
 
 const HORIZON_OPTIONS = ['短线(1-3日)', '短线(3-5日)', '中线(1-4周)', '中线(1-3月)', '长线(3月以上)'];
 
@@ -166,11 +169,24 @@ const LogPanel: React.FC<{ code: string }> = ({ code }) => {
 
 // ─── 持仓监控卡片 ─────────────────────────────
 const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) => void }> = ({ signal, onRemove }) => {
+  const navigate = useNavigate();
   const cfg = signalConfig[signal.signal] || signalConfig.unknown;
   const pnl = signal.pnlPct;
   const pnlColor = pnl == null ? 'text-white/40' : pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
   const pnlStr = pnl == null ? '--' : `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
   const [showLogs, setShowLogs] = useState(false);
+
+  const [scoreTrend, setScoreTrend] = useState<{ score: number; change: number; direction: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    scoreTrendApi.getTrend(signal.code, 5).then(resp => {
+      if (cancelled || !resp?.trend) return;
+      const t = resp.trend;
+      const latest = t.scores?.[t.scores.length - 1];
+      if (latest) setScoreTrend({ score: latest.score, change: t.score_change, direction: t.trend_direction });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [signal.code]);
 
   return (
     <div className={`rounded-lg border p-3 space-y-2 ${cfg.bg}`}>
@@ -192,23 +208,27 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
           </span>
           <button onClick={() => setShowLogs(v => !v)} className="text-[11px] text-white/20 hover:text-white/50 transition" title="操作日志">📋</button>
           <button onClick={() => window.open(`/portfolio/${signal.code}/simple`, '_blank')} className="text-[11px] text-white/20 hover:text-sky-400 transition" title="简化视图">📊</button>
+          <button onClick={() => navigate(`/analysis?stock=${signal.code}`)} className="text-[11px] text-white/20 hover:text-cyan transition" title="AI分析">🔍</button>
           <button onClick={() => onRemove(signal.code)} className="text-[11px] text-white/20 hover:text-red-400 transition">×</button>
         </div>
       </div>
 
       {/* 价格行 */}
       <div className="flex items-center gap-4 text-[12px]">
-        <span className="text-white/40">成本 <span className="text-white/70 font-mono">{signal.costPrice.toFixed(2)}</span></span>
+        <span className="text-white/40">成本 <span className="text-white/70 font-mono">{safeFixed(signal.costPrice, 2)}</span></span>
         <span className="text-white/40">现价 <span className={`font-mono ${signal.currentPrice ? 'text-white/80' : 'text-white/30'}`}>{signal.currentPrice?.toFixed(2) ?? '--'}</span></span>
         <span className="text-white/40">浮盈 <span className={`font-mono font-medium ${pnlColor}`}>{pnlStr}</span></span>
+        {scoreTrend && (
+          <span className="text-white/40">评分 <span className={`font-mono font-medium ${scoreTrend.change > 0 ? 'text-emerald-400' : scoreTrend.change < 0 ? 'text-red-400' : 'text-white/60'}`}>{scoreTrend.score}{scoreTrend.change !== 0 && <span className="text-[10px] ml-0.5">({scoreTrend.change > 0 ? '+' : ''}{scoreTrend.change})</span>}</span></span>
+        )}
       </div>
 
       {/* ATR 止损线 */}
       {signal.atrStop > 0 && (
         <div className="flex items-center gap-4 text-[11px] text-white/40">
-          <span>ATR止损 <span className="font-mono text-amber-400/80">{signal.atrStop.toFixed(2)}</span></span>
-          <span>锁住浮盈 <span className={`font-mono ${signal.stopPnlPct >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>{signal.stopPnlPct >= 0 ? '+' : ''}{signal.stopPnlPct.toFixed(1)}%</span></span>
-          {signal.highestPrice > 0 && <span>持仓高点 <span className="font-mono text-white/50">{signal.highestPrice.toFixed(2)}</span></span>}
+          <span>ATR止损 <span className="font-mono text-amber-400/80">{safeFixed(signal.atrStop, 2)}</span></span>
+          <span>锁住浮盈 <span className={`font-mono ${(signal.stopPnlPct ?? 0) >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>{(signal.stopPnlPct ?? 0) >= 0 ? '+' : ''}{safeFixed(signal.stopPnlPct, 1)}%</span></span>
+          {signal.highestPrice > 0 && <span>持仓高点 <span className="font-mono text-white/50">{safeFixed(signal.highestPrice, 2)}</span></span>}
         </div>
       )}
 
@@ -355,8 +375,9 @@ const PortfolioPage: React.FC = () => {
   useEffect(() => {
     fetchSignals();
     fetchWatchlist();
-    // 每2分钟自动刷新持仓信号
-    timerRef.current = setInterval(fetchSignals, 2 * 60 * 1000);
+    if (isMarketOpen()) {
+      timerRef.current = setInterval(fetchSignals, 2 * 60 * 1000);
+    }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [fetchSignals, fetchWatchlist]);
 

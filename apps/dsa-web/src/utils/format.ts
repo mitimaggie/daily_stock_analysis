@@ -43,3 +43,18 @@ export const formatReportType = (value?: string): string => {
   if (value === 'detailed') return '标准';
   return value;
 };
+
+/** 安全的 toFixed，防止 null/undefined 崩溃 */
+export const safeFixed = (value: number | null | undefined, digits: number, fallback = '--'): string => {
+  if (value == null || Number.isNaN(value)) return fallback;
+  return value.toFixed(digits);
+};
+
+/** 判断当前是否为 A 股交易时段（9:15-15:05，周一至周五） */
+export const isMarketOpen = (): boolean => {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 5;
+};
