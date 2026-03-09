@@ -14,7 +14,7 @@ import logging
 import time
 import random
 import threading
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 from data_provider.fundamental_types import FundamentalData, FinancialSummary, ForecastData, _parse_pct
 
@@ -58,9 +58,9 @@ _industry_pe_cache: Dict[str, float] = {}       # code → pe
 _industry_pe_by_name: Dict[str, float] = {}     # 行业名称 → pe（同行业共享）
 _industry_name_of_code: Dict[str, str] = {}     # code → industry_name
 
-# L2: SQLite 缓存 TTL
-_F10_CACHE_TTL_HOURS = 168.0     # 7天
-_INDUSTRY_PE_TTL_HOURS = 24.0    # 24小时
+# L2: SQLite 缓存 TTL（运行时从 config 读取，这里仅作模块级兜底默认值）
+_F10_CACHE_TTL_HOURS = 168.0     # 7天（由 config.cache_ttl_f10_hours 覆盖）
+_INDUSTRY_PE_TTL_HOURS = 24.0    # 24小时（由 config.cache_ttl_industry_pe_hours 覆盖）
 
 def _get_db():
     """延迟获取 DatabaseManager，避免循环导入"""
@@ -84,7 +84,12 @@ class FundamentalFetcher:
         # L2: SQLite 持久化缓存
         db = _get_db()
         if db:
-            cached = db.get_cache('f10', code, ttl_hours=_F10_CACHE_TTL_HOURS)
+            try:
+                from src.config import get_config
+                _ttl = get_config().cache_ttl_f10_hours
+            except Exception:
+                _ttl = _F10_CACHE_TTL_HOURS
+            cached = db.get_cache('f10', code, ttl_hours=_ttl)
             if cached:
                 fd = FundamentalData.from_dict(cached)  # 旧格式 dict → 结构化对象
                 _fundamental_cache[code] = fd  # 回填 L1
@@ -239,14 +244,14 @@ def get_pe_history(code: str, period: str = '近一年') -> Optional[list]:
         return pe_values
     
     except Exception as e:
-        logger.debug(f"[{code}] PE历史获取失败: {e}")
+        logger.warning(f"[{code}] PE历史获取失败: {e}")
         return None
 
 
 # ============ P3: 融资余额历史（情绪极端检测）============
 
 _margin_history_cache: Dict[str, list] = {}
-_MARGIN_HISTORY_TTL_HOURS = 12.0
+_MARGIN_HISTORY_TTL_HOURS = 12.0  # 由 config.cache_ttl_margin_hours 覆盖
 
 # 批量融资余额缓存：{date_str: DataFrame}，TTL=12小时
 # 同一批次的所有股票共享同一次全市场请求结果，避免逐股重复拉取
@@ -271,7 +276,7 @@ def _get_margin_batch(date_str: str, is_sh: bool) -> Optional[pd.DataFrame]:
             _margin_batch_cache[key] = (time.time(), df)
             return df
     except Exception as e:
-        logger.debug(f"[{key}] 批量融资余额获取失败: {e}")
+        logger.warning(f"[{key}] 批量融资余额获取失败: {e}")
     return None
 
 
@@ -293,7 +298,12 @@ def get_margin_history(code: str, days: int = 7) -> Optional[list]:
     # L2: SQLite 缓存
     db = _get_db()
     if db:
-        cached = db.get_cache('margin_history', code, ttl_hours=_MARGIN_HISTORY_TTL_HOURS)
+        try:
+            from src.config import get_config
+            _margin_ttl = get_config().cache_ttl_margin_hours
+        except Exception:
+            _margin_ttl = _MARGIN_HISTORY_TTL_HOURS
+        cached = db.get_cache('margin_history', code, ttl_hours=_margin_ttl)
         if cached and 'values' in cached:
             _margin_history_cache[code] = cached['values']
             return cached['values']
@@ -350,8 +360,60 @@ def get_margin_history(code: str, days: int = 7) -> Optional[list]:
         return margin_values
     
     except Exception as e:
-        logger.debug(f"[{code}] 融资余额历史获取失败: {e}")
+        logger.warning(f"[{code}] 融资余额历史获取失败: {e}")
         return None
+
+
+def get_margin_history_with_dates(code: str, days: int = 7) -> Tuple[Optional[List[float]], Optional[List[str]]]:
+    """获取个股近N日融资余额历史及对应日期，用于跨长假连续性检测。
+
+    返回：(values, dates) 元组，dates 为 YYYYMMDD 格式字符串列表，与 values 一一对应。
+    """
+    from datetime import datetime, timedelta
+
+    is_sh = code.startswith(('6', '5', '9'))
+    margin_values: List[float] = []
+    margin_dates: List[str] = []
+    MAX_FETCH_DAYS = days + 5
+
+    code_col = '标的证券代码' if is_sh else None
+    balance_col = '融资余额'
+
+    try:
+        for offset in range(MAX_FETCH_DAYS, 0, -1):
+            date_str = (datetime.now() - timedelta(days=offset)).strftime('%Y%m%d')
+            df = _get_margin_batch(date_str, is_sh)
+            if df is None or df.empty:
+                continue
+            if not is_sh and code_col is None:
+                code_col = '证券代码' if '证券代码' in df.columns else (df.columns[1] if len(df.columns) > 1 else None)
+                balance_col = '融资余额' if '融资余额' in df.columns else (df.columns[3] if len(df.columns) > 3 else '融资余额')
+            if code_col is None:
+                continue
+            try:
+                row = df[df[code_col].astype(str) == code]
+                if not row.empty:
+                    balance = float(row.iloc[0][balance_col])
+                    if balance > 0:
+                        margin_values.append(balance)
+                        margin_dates.append(date_str)
+            except Exception:
+                continue
+            if len(margin_values) >= days:
+                break
+
+        if len(margin_values) < 3:
+            return None, None
+
+        _margin_history_cache[code] = margin_values
+        db = _get_db()
+        if db:
+            db.set_cache('margin_history', code, {'values': margin_values})
+
+        return margin_values, margin_dates
+    except Exception as e:
+        logger.warning(f"[{code}] 融资余额历史(含日期)获取失败: {e}")
+        return None, None
 
 
 def get_industry_pe_median(code: str) -> Optional[float]:
@@ -371,7 +433,12 @@ def get_industry_pe_median(code: str) -> Optional[float]:
     # L2: SQLite 缓存
     db = _get_db()
     if db:
-        cached = db.get_cache('industry_pe', code, ttl_hours=_INDUSTRY_PE_TTL_HOURS)
+        try:
+            from src.config import get_config
+            _pe_ttl = get_config().cache_ttl_industry_pe_hours
+        except Exception:
+            _pe_ttl = _INDUSTRY_PE_TTL_HOURS
+        cached = db.get_cache('industry_pe', code, ttl_hours=_pe_ttl)
         if cached and 'median_pe' in cached:
             val = cached['median_pe']
             industry = cached.get('industry', '')
@@ -454,5 +521,5 @@ def get_industry_pe_median(code: str) -> Optional[float]:
         return median_pe
 
     except Exception as e:
-        logger.debug(f"[{code}] 行业PE中位数获取失败: {e}")
+        logger.warning(f"[{code}] 行业PE中位数获取失败: {e}")
         return None

@@ -218,6 +218,7 @@ class ChipCache(Base):
     fetched_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
+        UniqueConstraint('code', 'chip_date', name='uix_chip_code_date'),
         Index('ix_chip_code_fetched', 'code', 'fetched_at'),
     )
 
@@ -393,6 +394,22 @@ class Watchlist(Base):
         }
 
 
+class StockConceptMapping(Base):
+    """个股-概念映射"""
+    __tablename__ = 'stock_concept_mapping'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)
+    concept_name = Column(String(100), nullable=False, index=True)
+    concept_code = Column(String(20), nullable=True)
+    source = Column(String(32), default='em')
+    updated_at = Column(DateTime, default=datetime.now, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('code', 'concept_name', name='uix_code_concept'),
+    )
+
+
 class DatabaseManager:
     """
     数据库管理器 - 单例模式
@@ -428,6 +445,7 @@ class DatabaseManager:
         
         Base.metadata.create_all(self._engine)
         self._migrate_schema()
+        self._ensure_chip_cache_unique_index()
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
         atexit.register(DatabaseManager._cleanup_engine, self._engine)
@@ -480,6 +498,21 @@ class DatabaseManager:
                         except Exception as e:
                             logger.warning(f"数据库迁移跳过 {table_name}.{col_name}: {e}")
     
+    def _ensure_chip_cache_unique_index(self) -> None:
+        """确保 chip_cache 表有 (code, chip_date) 唯一索引（旧表可能缺失）"""
+        with self._engine.connect() as conn:
+            try:
+                rows = conn.execute(text("PRAGMA index_list(chip_cache)")).fetchall()
+                has_unique = any('uix_chip_code_date' in str(r) for r in rows)
+                if not has_unique:
+                    conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uix_chip_code_date ON chip_cache(code, chip_date)"
+                    ))
+                    conn.commit()
+                    logger.info("数据库迁移: chip_cache 新增唯一索引 uix_chip_code_date")
+            except Exception as e:
+                logger.warning(f"chip_cache 唯一索引创建跳过: {e}")
+
     @classmethod
     def get_instance(cls) -> 'DatabaseManager':
         if cls._instance is None:
@@ -799,7 +832,10 @@ class DatabaseManager:
                 .limit(1)
             ).scalars().first()
             if not row:
+                logger.debug(f"[Cache:MISS] chip/{code}, TTL={max_age_hours}h")
                 return None
+            age_min = (datetime.now() - row.fetched_at).total_seconds() / 60
+            logger.debug(f"[Cache:HIT] chip/{code}, age={age_min:.0f}min")
             r = row
             return {
                 'code': r.code,
@@ -1159,6 +1195,84 @@ class DatabaseManager:
             'sorted_scores': peer_scores_sorted,
         }
 
+    def save_data_cache_batch(self, items: List[Tuple[str, str, str]]) -> int:
+        """批量写入 data_cache（UPSERT，每 500 条 commit 一次）。
+
+        Args:
+            items: list of (cache_type, cache_key, data_json)
+        Returns:
+            成功写入的条数
+        """
+        BATCH_SIZE = 500
+        total_saved = 0
+        upsert_sql = text(
+            "INSERT INTO data_cache (cache_type, cache_key, data_json, fetched_at) "
+            "VALUES (:ct, :ck, :dj, datetime('now')) "
+            "ON CONFLICT(cache_type, cache_key) DO UPDATE SET "
+            "data_json=excluded.data_json, fetched_at=excluded.fetched_at"
+        )
+        try:
+            with self._engine.connect() as conn:
+                for i in range(0, len(items), BATCH_SIZE):
+                    batch = items[i:i + BATCH_SIZE]
+                    params = [{'ct': ct, 'ck': ck, 'dj': dj} for ct, ck, dj in batch]
+                    conn.execute(upsert_sql, params)
+                    conn.commit()
+                    total_saved += len(batch)
+        except Exception as e:
+            logger.error(f"save_data_cache_batch 失败: {e}")
+        return total_saved
+
+    def save_chip_distribution_batch(self, chips: List[dict]) -> int:
+        """批量写入 chip_cache（UPSERT，每 500 条 commit 一次）。
+
+        Args:
+            chips: list of dict with keys: code, chip_date, source, profit_ratio, avg_cost,
+                   concentration_90, concentration_70, cost_90_low, cost_90_high,
+                   cost_70_low, cost_70_high
+        Returns:
+            成功写入的条数
+        """
+        BATCH_SIZE = 500
+        total_saved = 0
+        upsert_sql = text(
+            "INSERT INTO chip_cache (code, chip_date, source, profit_ratio, avg_cost, "
+            "concentration_90, concentration_70, cost_90_low, cost_90_high, "
+            "cost_70_low, cost_70_high, fetched_at) "
+            "VALUES (:code, :chip_date, :source, :profit_ratio, :avg_cost, "
+            ":concentration_90, :concentration_70, :cost_90_low, :cost_90_high, "
+            ":cost_70_low, :cost_70_high, datetime('now')) "
+            "ON CONFLICT(code, chip_date) DO UPDATE SET "
+            "source=excluded.source, profit_ratio=excluded.profit_ratio, "
+            "avg_cost=excluded.avg_cost, concentration_90=excluded.concentration_90, "
+            "concentration_70=excluded.concentration_70, cost_90_low=excluded.cost_90_low, "
+            "cost_90_high=excluded.cost_90_high, cost_70_low=excluded.cost_70_low, "
+            "cost_70_high=excluded.cost_70_high, fetched_at=excluded.fetched_at"
+        )
+        try:
+            with self._engine.connect() as conn:
+                for i in range(0, len(chips), BATCH_SIZE):
+                    batch = chips[i:i + BATCH_SIZE]
+                    params = [{
+                        'code': c.get('code', ''),
+                        'chip_date': c.get('chip_date', ''),
+                        'source': c.get('source', 'akshare'),
+                        'profit_ratio': c.get('profit_ratio', 0.0),
+                        'avg_cost': c.get('avg_cost', 0.0),
+                        'concentration_90': c.get('concentration_90', 0.0),
+                        'concentration_70': c.get('concentration_70', 0.0),
+                        'cost_90_low': c.get('cost_90_low', 0.0),
+                        'cost_90_high': c.get('cost_90_high', 0.0),
+                        'cost_70_low': c.get('cost_70_low', 0.0),
+                        'cost_70_high': c.get('cost_70_high', 0.0),
+                    } for c in batch]
+                    conn.execute(upsert_sql, params)
+                    conn.commit()
+                    total_saved += len(batch)
+        except Exception as e:
+            logger.error(f"save_chip_distribution_batch 失败: {e}")
+        return total_saved
+
     def save_data_cache(self, cache_type: str, cache_key: str, data_json: str) -> None:
         """更新或插入 data_cache 通用缓存记录（UPSERT）"""
         with self.get_session() as session:
@@ -1193,7 +1307,51 @@ class DatabaseManager:
                     DataCache.fetched_at >= cutoff,
                 )
             ).scalar_one_or_none()
-            return row.data_json if row else None
+            if row:
+                age_min = (datetime.now() - row.fetched_at).total_seconds() / 60
+                logger.debug(f"[Cache:HIT] {cache_type}/{cache_key}, age={age_min:.0f}min")
+                return row.data_json
+            logger.debug(f"[Cache:MISS] {cache_type}/{cache_key}, 触发网络请求")
+            return None
+
+    def get_stock_concepts(self, code: str) -> List[StockConceptMapping]:
+        """查询个股所属概念列表"""
+        with self.get_session() as session:
+            results = session.execute(
+                select(StockConceptMapping)
+                .where(StockConceptMapping.code == code)
+                .order_by(desc(StockConceptMapping.updated_at))
+            ).scalars().all()
+            return list(results)
+
+    def save_concept_mappings_batch(self, mappings: List[Dict[str, Any]]) -> int:
+        """批量 upsert 个股-概念映射"""
+        if not mappings:
+            return 0
+        upsert_sql = text(
+            "INSERT INTO stock_concept_mapping (code, concept_name, concept_code, source, updated_at) "
+            "VALUES (:code, :concept_name, :concept_code, :source, datetime('now')) "
+            "ON CONFLICT(code, concept_name) DO UPDATE SET "
+            "concept_code=excluded.concept_code, source=excluded.source, updated_at=excluded.updated_at"
+        )
+        total_saved = 0
+        BATCH_SIZE = 500
+        try:
+            with self._engine.connect() as conn:
+                for i in range(0, len(mappings), BATCH_SIZE):
+                    batch = mappings[i:i + BATCH_SIZE]
+                    params = [{
+                        'code': m.get('code', ''),
+                        'concept_name': m.get('concept_name', ''),
+                        'concept_code': m.get('concept_code', ''),
+                        'source': m.get('source', 'em'),
+                    } for m in batch]
+                    conn.execute(upsert_sql, params)
+                    conn.commit()
+                    total_saved += len(batch)
+        except Exception as e:
+            logger.error(f"save_concept_mappings_batch 失败: {e}")
+        return total_saved
 
     def get_score_trend(self, code: str, days: int = 10) -> Dict[str, Any]:
         """

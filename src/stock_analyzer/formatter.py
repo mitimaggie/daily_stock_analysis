@@ -146,7 +146,20 @@ class AnalysisFormatter:
         if result.valuation_zone:
             lines.append(f"估值区间: {result.valuation_zone}" + (f" PE历史{result.pe_percentile:.0f}%分位" if result.pe_percentile >= 0 else ""))
         if result.margin_trend:
-            lines.append(f"融资趋势: {result.margin_trend}({result.margin_trend_days}日)")
+            margin_parts = [f"趋势:{result.margin_trend}({result.margin_trend_days}日)"]
+            if result.margin_balance_latest and result.margin_balance_latest > 0:
+                bal = result.margin_balance_latest
+                if bal >= 1e8:
+                    bal_str = f"约{bal / 1e8:.1f}亿"
+                else:
+                    bal_str = f"约{bal / 1e4:.0f}万"
+                margin_parts.insert(0, bal_str)
+            if result.margin_change_pct is not None:
+                margin_parts.insert(
+                    -1 if len(margin_parts) > 1 else 1,
+                    f"{result.margin_trend_days}日变化{result.margin_change_pct:+.1f}%",
+                )
+            lines.append(f"融资余额: {' | '.join(margin_parts)}")
         return "\n".join(lines)
     
     @staticmethod

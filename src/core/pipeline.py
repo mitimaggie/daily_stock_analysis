@@ -1057,10 +1057,15 @@ class StockAnalysisPipeline:
                     # 已优化为批量缓存，同日期全市场数据只拉取一次，开销可接受
                     if _capital_flow and not fast_mode and getattr(self.config, 'enable_margin_history', True):
                         try:
-                            from data_provider.fundamental_fetcher import get_margin_history
-                            margin_hist = get_margin_history(code)
+                            from data_provider.fundamental_fetcher import get_margin_history_with_dates
+                            margin_hist, margin_dates = get_margin_history_with_dates(code)
                             if margin_hist:
                                 _capital_flow.margin_history = margin_hist
+                                _capital_flow.margin_history_dates = margin_dates
+                                if len(margin_hist) >= 2 and margin_hist[0] > 0:
+                                    _capital_flow.margin_balance_change = (
+                                        (margin_hist[-1] - margin_hist[0]) / margin_hist[0] * 100
+                                    )
                         except Exception:
                             pass
                     # 注入日均成交额（万元），供资金面阈值相对化使用
@@ -1212,6 +1217,7 @@ class StockAnalysisPipeline:
             'fundamental': fundamental_data.to_dict(),
             'history_summary': history_summary,
             'sector_context': sector_context.to_dict() if isinstance(sector_context, SectorContext) else sector_context,
+            'concept_context': self._get_concept_context(code),
             'is_intraday': is_market_intraday(),
             'market_phase': get_market_phase(),
             'analysis_time': datetime.now().strftime('%H:%M'),
@@ -1231,6 +1237,15 @@ class StockAnalysisPipeline:
             context['fundamental']['valuation']['industry_pe_median'] = _ind_pe_for_context
         context = self._enhance_context(context)
         return context
+
+    def _get_concept_context(self, code: str) -> str:
+        """获取个股概念上下文（防御性调用，失败返回空字符串）"""
+        try:
+            from data_provider.concept_fetcher import get_stock_concept_context
+            return get_stock_concept_context(code, self.storage, self.config)
+        except Exception as e:
+            logger.debug(f"[{code}] 概念上下文获取失败: {e}")
+            return ""
 
     def _enhance_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """增强 context：注入评分趋势+拐点检测 + 分时数据"""
@@ -2383,6 +2398,24 @@ class StockAnalysisPipeline:
                     logger.info(f"📊 [阶段二] 大盘快照已获取（全局复用）: 成交额{vol}亿 | {idx_str}")
             except Exception as e:
                 logger.warning(f"📊 [阶段二] 获取大盘快照失败(降级为逐股/不注入): {e}")
+
+        # B-3: 概念热度 Top 5 注入 market_overview（全批次一次）
+        try:
+            from data_provider.concept_fetcher import fetch_concept_daily
+            _concepts_top = fetch_concept_daily(self.storage, self.config)
+            if _concepts_top:
+                _circle_nums = '①②③④⑤'
+                _top5_parts = []
+                for _ci, _c in enumerate(_concepts_top[:5]):
+                    _heat = f"[{_c.get('heat_type', '')}]" if _c.get('heat_type') else ""
+                    _top5_parts.append(f"{_circle_nums[_ci]}{_c['name']}{_c['pct_chg']:+.1f}%{_heat}")
+                _top5_str = " ".join(_top5_parts)
+                if market_overview_once is None:
+                    market_overview_once = ""
+                market_overview_once += f"\n今日概念热度Top5: {_top5_str}"
+                logger.info(f"📊 [阶段二] 概念热度Top5已注入: {_top5_str}")
+        except Exception as _ce:
+            logger.debug(f"[阶段二] 概念热度获取跳过: {_ce}")
 
         # ╔══════════════════════════════════════════════════════════════════════╗
         # ║  ⚠️  反封禁警告：严禁随意增大 max_workers 或在此处新增外部 API 调用  ║

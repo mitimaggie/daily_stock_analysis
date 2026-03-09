@@ -328,8 +328,10 @@ class TrendAnalysisResult:
     trapped_ratio: float = -1.0             # 套牢盘比例(0-100%)，-1=无数据
     sentiment_extreme: str = ""             # "极度贪婪"/"极度恐慌"/""
     sentiment_extreme_detail: str = ""      # 详细描述
-    margin_trend: str = ""                  # "融资连续流入"/"融资连续流出"/""
+    margin_trend: str = ""                  # "融资连续流入(轻度/中度/强烈)"/"融资连续流出(...)"/""
     margin_trend_days: int = 0              # 连续天数
+    margin_balance_latest: float = 0.0     # 最新一日融资余额（元）
+    margin_change_pct: Optional[float] = None  # N日融资余额变化百分比
     
     # === 信号详情 ===
     signal_reasons: List[str] = field(default_factory=list)

@@ -5,10 +5,12 @@
 """
 
 import logging
+from datetime import datetime
+from typing import Dict, List, Union, Optional
+
 import numpy as np
 import pandas as pd
 from collections import defaultdict
-from typing import Dict, Union, Optional
 from .types import TrendAnalysisResult, BuySignal, MarketRegime, TrendStatus
 from .types import VolumeStatus, MACDStatus, RSIStatus, KDJStatus
 from data_provider.fundamental_types import FundamentalData, ValuationSnapshot, FinancialSummary, ForecastData
@@ -558,15 +560,15 @@ class ScoringSystem:
                 cf_score -= 1
                 cf_signals.append(f"⚠️主力净占比{main_pct:.1f}%（资金集中流出）")
         
-        # === 融资余额趋势 ===
-        margin_change = capital_flow.margin_balance_change
-        if isinstance(margin_change, (int, float)):
-            if margin_change > 0:
+        # === 融资余额趋势（百分比阈值 ±3.5%）===
+        margin_pct = capital_flow.margin_balance_change
+        if isinstance(margin_pct, (int, float)):
+            if margin_pct > 3.5:
                 cf_score += 1
-                cf_signals.append("融资余额增加")
-            elif margin_change < -1e8:
+                cf_signals.append(f"融资余额增加{margin_pct:.1f}%")
+            elif margin_pct < -3.5:
                 cf_score -= 1
-                cf_signals.append("融资余额减少")
+                cf_signals.append(f"融资余额减少{abs(margin_pct):.1f}%")
         
         result.capital_flow_score = max(0, min(10, cf_score))
         result.capital_flow_signal = "；".join(cf_signals) if cf_signals else "资金面数据正常"
@@ -1265,10 +1267,11 @@ class ScoringSystem:
                                   capital_flow: Union[CapitalFlowData, dict, None] = None, df: pd.DataFrame = None):
         """
         P3 情绪极端检测：综合获利盘/套牢盘比例 + 融资余额趋势
-        
+
         - 获利盘>90% → 极度贪婪（短期回调概率高）
         - 套牢盘>80% → 极度恐慌（上方压力巨大）
-        - 融资余额连续5日增加/减少 → 杠杆情绪趋势
+        - 融资余额三档：轻度(3日±0.3)、中度(5日±0.6)、强烈(7日±1.0) + 幅度修正
+        - 跨长假(日历间隔>5天)连续天数归零
         """
         details = []
         adj = 0
@@ -1300,40 +1303,80 @@ class ScoringSystem:
                     details.append(f"🟡 获利盘{pr:.0f}%（偏低），套牢盘{100-pr:.0f}%，上方有较大压力")
                     adj += 1
         
-        # --- 2. 融资余额趋势（杠杆情绪指标）---
+        # --- 2. 融资余额趋势（杠杆情绪指标，三档 + 幅度修正）---
+        MARGIN_TREND_TIERS = [
+            (7, 1.0, "强烈"),
+            (5, 0.6, "中度"),
+            (3, 0.3, "轻度"),
+        ]
         if capital_flow is not None:
             if isinstance(capital_flow, dict):
                 capital_flow = CapitalFlowData.from_dict(capital_flow)
-            margin_history = capital_flow.margin_history  # list of recent margin balances
-            
-            if margin_history and isinstance(margin_history, (list, tuple)) and len(margin_history) >= 5:
-                # 分别检测连续增加和连续减少
+            margin_history = capital_flow.margin_history
+            margin_dates = getattr(capital_flow, 'margin_history_dates', None)
+
+            if margin_history and isinstance(margin_history, (list, tuple)) and len(margin_history) >= 3:
+                # 记录最新余额和变化百分比供 LLM 使用
+                if isinstance(margin_history[-1], (int, float)) and margin_history[-1] > 0:
+                    result.margin_balance_latest = margin_history[-1]
+                margin_balance_change = capital_flow.margin_balance_change if capital_flow else None
+                result.margin_change_pct = margin_balance_change
+
+                def _date_gap_days(d1: str, d2: str) -> int:
+                    """计算两个 YYYYMMDD 日期之间的自然日间隔"""
+                    from datetime import datetime
+                    try:
+                        return abs((datetime.strptime(d2, '%Y%m%d') - datetime.strptime(d1, '%Y%m%d')).days)
+                    except (ValueError, TypeError):
+                        return 1
+
                 consecutive_up = 0
                 for i in range(len(margin_history) - 1, 0, -1):
+                    if margin_dates and len(margin_dates) == len(margin_history):
+                        if _date_gap_days(margin_dates[i - 1], margin_dates[i]) > 5:
+                            break
                     curr, prev_val = margin_history[i], margin_history[i - 1]
                     if isinstance(curr, (int, float)) and isinstance(prev_val, (int, float)) and curr > prev_val:
                         consecutive_up += 1
                     else:
                         break
-                
+
                 consecutive_down = 0
                 for i in range(len(margin_history) - 1, 0, -1):
+                    if margin_dates and len(margin_dates) == len(margin_history):
+                        if _date_gap_days(margin_dates[i - 1], margin_dates[i]) > 5:
+                            break
                     curr, prev_val = margin_history[i], margin_history[i - 1]
                     if isinstance(curr, (int, float)) and isinstance(prev_val, (int, float)) and curr < prev_val:
                         consecutive_down += 1
                     else:
                         break
-                
-                if consecutive_up >= 5:
-                    result.margin_trend = "融资连续流入"
-                    result.margin_trend_days = consecutive_up
-                    details.append(f"📈 融资余额连续{consecutive_up}日增加，杠杆资金看多")
-                    adj += 1
-                elif consecutive_down >= 5:
-                    result.margin_trend = "融资连续流出"
-                    result.margin_trend_days = consecutive_down
-                    details.append(f"📉 融资余额连续{consecutive_down}日减少，杠杆资金撤退")
-                    adj -= 1
+
+                # 三档判定：连续流入
+                for threshold, score_adj, label in MARGIN_TREND_TIERS:
+                    if consecutive_up >= threshold:
+                        result.margin_trend = f"融资连续流入({label})"
+                        result.margin_trend_days = consecutive_up
+                        details.append(f"📈 融资余额连续{consecutive_up}日增加({label})，杠杆资金看多迹象")
+                        adj += score_adj
+                        break
+
+                # 三档判定：连续流出
+                for threshold, score_adj, label in MARGIN_TREND_TIERS:
+                    if consecutive_down >= threshold:
+                        result.margin_trend = f"融资连续流出({label})"
+                        result.margin_trend_days = consecutive_down
+                        details.append(f"📉 融资余额连续{consecutive_down}日减少({label})，杠杆资金撤退迹象")
+                        adj -= score_adj
+                        break
+
+                # 幅度修正
+                abs_chg = abs(margin_balance_change) if isinstance(margin_balance_change, (int, float)) else 0
+                sign = 1 if consecutive_up > consecutive_down else -1
+                if abs_chg > 5.0:
+                    adj += 0.5 * sign
+                elif abs_chg <= 2.0 and max(consecutive_up, consecutive_down) >= 3:
+                    adj -= 0.3 * sign
         
         # --- 3. 价格位置 + 量能综合判断情绪 ---
         if df is not None and len(df) >= 60:
@@ -1357,7 +1400,7 @@ class ScoringSystem:
             result.sentiment_extreme_detail = "；".join(details)
         
         if adj != 0:
-            result.score_breakdown['sentiment_extreme'] = adj
+            result.score_breakdown['sentiment_extreme'] = round(adj)
 
     @staticmethod
     def score_quote_extra(result: TrendAnalysisResult, quote_extra: Union[QuoteExtra, dict, None] = None):
@@ -3129,7 +3172,7 @@ class ScoringSystem:
                    'fib_adj', 'vol_price_structure', 'vol_anomaly',
                    'p3_resonance', 'p4_capital_flow', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder',
                    'market_sentiment_adj', 'volume_spike_trap', 'divergence_adj',
-                   'support_strength', 'kdj_weekly_bonus']
+                   'support_strength', 'kdj_weekly_bonus', 'concept_decay']
 
         # === Beta 系数调整 ===
         beta = getattr(result, 'beta_vs_index', 1.0) or 1.0
@@ -3230,76 +3273,139 @@ class ScoringSystem:
             result._conflict_warnings = []
         result._conflict_warnings = conflicts
     
-    # ---- 市场情绪温度缓存（TTL=5分钟，避免每次分析都拉取全市场数据）----
+    # ---- 市场情绪温度（已迁移至 market_sentiment.get_market_sentiment_cached）----
     _sentiment_cache: dict = {'data': None, 'ts': 0.0}
-    _SENTIMENT_TTL = 1800  # 30分钟
 
     @staticmethod
     def score_market_sentiment_adj(result: TrendAnalysisResult):
-        """P0: 市场情绪温度修正（带TTL缓存，避免频繁akshare请求）
+        """P0: 市场情绪温度修正（三级 fallback + DB 持久化 + 结构化评分）
 
         逻辑（逆向情绪投资）：
-        - 极度恐惧（temperature<25）：全市场亏钱效应强，但往往是底部区域 → +3~+5
-        - 恐惧（25~40）：情绪偏冷 → +1~+2
-        - 中性（40~65）：不修正
-        - 贪婪（65~80）：情绪偏热，追涨风险加大 → -2~-3
-        - 极度贪婪（>80）：市场过热，高位追涨风险极高 → -4~-6
+        - 极度恐惧（temperature<25）→ +5
+        - 恐惧（25~40）→ +2
+        - 中性（40~65）→ 不修正
+        - 贪婪（65~80）→ -3
+        - 极度贪婪（>80）→ -6
+
+        结构化维度（B-2 新增）：
+        - 涨跌停比修正：涨停占比>70% → +1，跌停占比>35% → -1
+        - 炸板率修正：>50% → -1，>30% → -0.5，<10% → +0.5
+        - 偏离度标注：偏离 ±1.5σ 时标注信息（不加减分）
 
         注意：该修正仅调整 score_breakdown，不直接修改 signal_score，
         由 cap_adjustments 统一应用。
         """
-        import time as _t
-        cache = ScoringSystem._sentiment_cache
-        now = _t.time()
+        try:
+            from src.market_sentiment import get_market_sentiment_cached
+            sentiment = get_market_sentiment_cached()
+        except Exception:
+            sentiment = None
 
-        # 缓存未命中或已过期，重新获取
-        if cache['data'] is None or (now - cache['ts']) > ScoringSystem._SENTIMENT_TTL:
-            try:
-                from src.market_sentiment import fetch_market_sentiment
-                sentiment = fetch_market_sentiment()
-                cache['data'] = sentiment
-                cache['ts'] = now
-            except Exception:
-                cache['data'] = None
-                cache['ts'] = now
-
-        sentiment = cache['data']
-        if sentiment is None:
-            try:
-                from src.market_sentiment import parse_sentiment_from_briefing
-                sentiment = parse_sentiment_from_briefing()
-                if sentiment is not None:
-                    logger.debug("[市场情绪] akshare不可用，改用Perplexity简报fallback")
-            except Exception:
-                pass
         if sentiment is None:
             return
 
         temp = sentiment.temperature
         adj = 0
 
+        # ---- 温度区间修正（逆向情绪投资）----
         if temp < 25:
-            adj = 5   # 极度恐惧：逆向买入机会
+            adj = 5
             result.signal_reasons.append(
                 f"🌡️ 市场极度恐惧(温度{temp})，历史上往往是底部区域，逆向机会"
             )
         elif temp < 40:
-            adj = 2   # 恐惧：情绪偏冷，估值相对合理
+            adj = 2
             result.signal_reasons.append(f"🌡️ 市场偏冷(温度{temp})，情绪修复行情可期")
         elif temp > 80:
-            adj = -6  # 极度贪婪：高位风险，快速降分
+            adj = -6
             result.risk_factors.append(
                 f"🌡️ 市场极度贪婪(温度{temp}，涨停{sentiment.limit_up_count}家)，"
                 f"过热行情追涨风险极高，建议减仓"
             )
         elif temp > 65:
-            adj = -3  # 贪婪：情绪偏热，追高需谨慎
+            adj = -3
             result.risk_factors.append(
                 f"🌡️ 市场偏热(温度{temp})，情绪高涨时需警惕回调"
             )
 
+        # ---- 涨跌停比修正 ----
+        total_limits = sentiment.limit_up_count + sentiment.limit_down_count
+        if total_limits > 0:
+            up_ratio = sentiment.limit_up_count / total_limits
+            down_ratio = sentiment.limit_down_count / total_limits
+            if up_ratio > 0.70:
+                adj += 1
+            elif down_ratio > 0.35:
+                adj -= 1
+
+        # ---- 炸板率修正（两档）----
+        if sentiment.broken_limit_rate > 50:
+            adj -= 1.0
+        elif sentiment.broken_limit_rate > 30:
+            adj -= 0.5
+        elif sentiment.broken_limit_rate < 10:
+            adj += 0.5
+
+        # ---- 偏离度标注（仅信息展示，不额外加减分）----
+        try:
+            from src.market_sentiment import calc_temperature_deviation
+            deviation = calc_temperature_deviation(temp)
+            if deviation is not None:
+                if deviation > 1.5:
+                    result.signal_reasons.append(
+                        f"🌡️ 情绪显著升温(偏离+{deviation}σ)，注意过热风险"
+                    )
+                elif deviation < -1.5:
+                    result.risk_factors.append(
+                        f"🌡️ 情绪骤冷(偏离{deviation}σ)，市场恐慌情绪蔓延"
+                    )
+        except Exception:
+            pass
+
         if adj != 0:
             result.score_breakdown['market_sentiment_adj'] = adj
+
+    @staticmethod
+    def score_concept_decay(result: TrendAnalysisResult, stock_code: str):
+        """B-3: 概念退潮风险评分。个股所有概念今日跌幅均>2%时扣0.3分（映射到-3 breakdown）"""
+        try:
+            from src.storage import DatabaseManager
+            from src.config import get_config
+            import json as _json
+
+            db = DatabaseManager.get_instance()
+            config = get_config()
+
+            my_concepts = db.get_stock_concepts(stock_code)
+            if not my_concepts:
+                return
+
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            cached = db.get_data_cache('concept_daily', today_str,
+                                        ttl_hours=config.cache_ttl_concept_hours)
+            if not cached:
+                return
+
+            data = _json.loads(cached)
+            concept_pcts: Dict[str, float] = {}
+            for c in data.get('concepts', []):
+                concept_pcts[c['name']] = c.get('pct_chg', 0)
+
+            matched_pcts: List[float] = []
+            for mc in my_concepts:
+                if mc.concept_name in concept_pcts:
+                    matched_pcts.append(concept_pcts[mc.concept_name])
+
+            if not matched_pcts:
+                return
+
+            if all(p < -2.0 for p in matched_pcts):
+                result.score_breakdown['concept_decay'] = -3
+                result.risk_factors.append(
+                    f"概念题材全面退潮(所属{len(matched_pcts)}个概念今日均跌超2%)"
+                )
+        except Exception:
+            pass
 
     @staticmethod
     def update_buy_signal(result: TrendAnalysisResult):

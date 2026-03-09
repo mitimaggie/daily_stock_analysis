@@ -23,7 +23,7 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 from src.logging_config import setup_logging
 from src.feishu_doc import FeishuDocManager
 
@@ -108,12 +108,11 @@ def run_chip_only(config: Config) -> None:
 
 
 def run_gdhs_update() -> None:
-    """拉取全市场股东户数并按股票代码落 data_cache 表（每周执行一次即可）。"""
+    """拉取全市场股东户数并按股票代码批量落 data_cache 表（每周执行一次即可）。"""
     try:
         import akshare as ak
         import json as _json
         from src.storage import DatabaseManager
-        from sqlalchemy import text as _text
 
         logger.info("📊 开始拉取股东户数数据（全市场）...")
         df_all = ak.stock_zh_a_gdhs(symbol='最新')
@@ -127,8 +126,7 @@ def run_gdhs_update() -> None:
             logger.warning(f"股东户数列名未识别，列: {list(df_all.columns)}")
             return
 
-        db = DatabaseManager()
-        saved = 0
+        items = []
         for code, grp in df_all.groupby(code_col):
             if len(grp) < 2:
                 continue
@@ -139,17 +137,13 @@ def run_gdhs_update() -> None:
                     continue
                 change_pct = round((latest - prev) / prev * 100, 2)
                 payload = _json.dumps({'change_pct': change_pct, 'latest': latest, 'prev': prev})
-                with db.get_session() as s:
-                    s.execute(_text(
-                        "INSERT INTO data_cache (cache_type, cache_key, data_json, fetched_at) "
-                        "VALUES ('gdhs', :k, :v, datetime('now')) "
-                        "ON CONFLICT(cache_type, cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at"
-                    ), {'k': str(code), 'v': payload})
-                    s.commit()
-                saved += 1
-            except Exception:
+                items.append(('gdhs', str(code), payload))
+            except (ValueError, TypeError, KeyError):
                 continue
-        logger.info(f"📊 股东户数落库完成: {saved} 只股票")
+
+        db = DatabaseManager()
+        saved = db.save_data_cache_batch(items)
+        logger.info(f"📊 股东户数落库完成: {saved} 只股票（批量模式）")
     except Exception as e:
         logger.warning(f"股东户数拉取失败: {e}")
 
@@ -282,6 +276,25 @@ def start_bot_stream_clients(config: Config):
             start_feishu_stream_background()
         except Exception: pass
 
+def _should_update_concept_mappings(concepts: list, db: Any) -> bool:
+    """判断是否需要更新概念映射：周一 或 有新概念进入 Top20"""
+    if datetime.now().weekday() == 0:
+        return True
+    try:
+        from sqlalchemy import text as _text
+        with db.get_session() as session:
+            rows = session.execute(
+                _text("SELECT DISTINCT concept_name FROM stock_concept_mapping")
+            ).fetchall()
+            existing_names = {r[0] for r in rows}
+        new_names = {c['name'] for c in concepts}
+        if new_names - existing_names:
+            return True
+    except Exception:
+        return True
+    return False
+
+
 def main() -> int:
     args = parse_arguments()
     config = get_config()
@@ -388,6 +401,24 @@ def main() -> int:
                 except Exception as e:
                     logger.warning(f"[定时] 高管增减持数据更新失败: {e}")
             scheduler.add_daily_job("18:30", run_insider_refresh)
+            # B-3: 概念热度 + 映射更新（收盘后 16:15 执行，供次日分析使用）
+            def run_concept_update():
+                try:
+                    from data_provider.concept_fetcher import fetch_concept_daily, update_concept_mappings
+                    from src.storage import DatabaseManager
+                    db = DatabaseManager.get_instance()
+                    concepts = fetch_concept_daily(db, config)
+                    if not concepts:
+                        logger.info("[定时] 概念热度获取为空，跳过映射更新")
+                        return
+                    if _should_update_concept_mappings(concepts, db):
+                        update_concept_mappings(db, concepts, config)
+                    logger.info(f"[定时] 概念热度更新成功: Top {len(concepts)}")
+                except Exception as e:
+                    logger.warning(f"[定时] 概念热度更新失败: {e}")
+            scheduler.add_daily_job("16:15", run_concept_update)
+            logger.info("已注册概念热度每日更新任务，执行时间: 16:15")
+
             # 市场情绪简报：午间+收盘后各抓取一次（Perplexity），供当日分析注入上下文
             def run_sentiment_briefing():
                 try:

@@ -447,6 +447,15 @@ class DataFetcherManager:
                 return fetcher.get_realtime_quote(stock_code)
         return None
 
+    @staticmethod
+    def _is_intraday() -> bool:
+        """判断当前是否在 A 股交易时段（9:30-15:00 工作日）"""
+        now = datetime.now()
+        if now.weekday() >= 5:
+            return False
+        t = now.hour * 60 + now.minute
+        return 570 <= t <= 900  # 9:30=570, 15:00=900
+
     def get_chip_distribution(self, stock_code: str, force_fetch: bool = False):
         from .realtime_types import get_chip_circuit_breaker, ChipDistribution
         from src.config import get_config
@@ -456,10 +465,15 @@ class DataFetcherManager:
         if stock_code in self._chip_cache:
             return self._chip_cache[stock_code]
 
-        # 1) 先查 DB 缓存（在 chip_cache_hours 内直接复用，不请求不稳定接口）
+        intraday = self._is_intraday()
+
+        # 1) DB 缓存：盘中放宽到 36h（尽量用缓存），盘后正常 24h
         try:
             db = DatabaseManager()
-            cache_hours = getattr(config, 'chip_cache_hours', 24.0)
+            if intraday:
+                cache_hours = config.cache_ttl_chip_intraday_hours
+            else:
+                cache_hours = config.cache_ttl_chip_hours
             cached = db.get_chip_cached(stock_code, max_age_hours=cache_hours)
             if cached:
                 chip = ChipDistribution(
@@ -480,13 +494,28 @@ class DataFetcherManager:
         except Exception:
             pass
 
-        # 2) 仅用缓存模式（定时 --chip-only 已写入缓存，分析时不再实时拉取）
+        # 2) 盘中缓存未命中 → 用 K 线估算（不发网络请求，标记 source='estimated'）
+        if intraday and not force_fetch:
+            try:
+                akshare_fetcher = next((f for f in self._fetchers if f.name == 'AkshareFetcher'), None)
+                if akshare_fetcher and hasattr(akshare_fetcher, '_estimate_chip_from_daily'):
+                    estimated = akshare_fetcher._estimate_chip_from_daily(stock_code)
+                    if estimated:
+                        estimated.source = 'estimated'
+                        self._chip_cache[stock_code] = estimated
+                        logger.debug(f"[{stock_code}] 盘中筹码使用K线估算(source=estimated)")
+                        return estimated
+            except Exception:
+                pass
+            return None
+
+        # 3) 仅用缓存模式（定时 --chip-only 已写入缓存，分析时不再实时拉取）
         if getattr(config, 'chip_fetch_only_from_cache', False) and not force_fetch:
             return None
         if not config.enable_chip_distribution and not force_fetch:
             return None
 
-        # 3) 实时拉取并落库
+        # 4) 盘后：实时拉取并落库
         circuit_breaker = get_chip_circuit_breaker()
         for fetcher in self._fetchers:
             source_key = f"{fetcher.name}_chip"

@@ -141,6 +141,22 @@ class Config:
     alert_interval_seconds: int = 300  # 预警轮询间隔（秒），默认5分钟
     signal_confirm_days: int = 0  # 信号确认期（天），>0时首次出现买入信号不立即建议买入
 
+    # === 缓存 TTL 统一配置（内部使用，不暴露给用户）===
+    cache_ttl_realtime_quote: int = 600           # 实时行情（秒）
+    cache_ttl_capital_flow: int = 600             # 资金流向盘后（秒）
+    cache_ttl_capital_flow_intraday: int = 180    # 资金流向盘中（秒）
+    cache_ttl_chip_hours: float = 24.0            # 筹码分布（小时）
+    cache_ttl_chip_intraday_hours: float = 36.0   # 筹码分布盘中（小时）
+    cache_ttl_margin_hours: float = 12.0          # 融资余额历史（小时）
+    cache_ttl_sentiment: int = 1800               # 市场情绪内存层（秒）
+    cache_ttl_sentiment_db_hours: float = 18.0    # 市场情绪DB层（小时）
+    cache_ttl_f10_hours: float = 168.0            # F10 财务（小时，7天）
+    cache_ttl_industry_pe_hours: float = 24.0     # 行业PE（小时）
+    cache_ttl_concept_hours: float = 18.0         # 概念热度（小时）
+    cache_ttl_concept_mapping_hours: float = 168.0  # 概念映射（小时，7天）
+    cache_ttl_gdhs_hours: float = 168.0           # 股东户数（小时，7天）
+    cache_ttl_briefing_hours: float = 6.0         # 市场简报（小时）
+
     # === 系统配置 ===
     max_workers: int = 1  # 默认顺序执行，日志一条一条输出
     fast_mode: bool = False  # 盘中快速模式：跳过搜索、强制轻量模型、跳过F10

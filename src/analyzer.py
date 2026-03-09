@@ -1019,6 +1019,12 @@ class GeminiAnalyzer:
             s_5d = sec.get('sector_5d_pct')
             s5d_str = f" 近5日{s_5d:+.1f}%" if isinstance(s_5d, (int, float)) else ""
             sector_line = f"\n板块: {sec.get('sector_name')} 今日{sp_str} | 相对板块{rel_str}{rank_str}{s5d_str}"
+
+        concept_line = ""
+        _concept_ctx = context.get('concept_context')
+        if _concept_ctx and isinstance(_concept_ctx, str) and _concept_ctx.strip():
+            concept_line = f"\n{_concept_ctx}"
+
         # 大盘趋势标注（market_regime）
         market_regime = trend_analysis.get('market_regime') or context.get('market_regime') or ''
         regime_label_map = {'bull': '牛市/强势', 'bear': '熊市/弱势', 'sideways': '震荡市', 'recovery': '修复中'}
@@ -1089,6 +1095,24 @@ class GeminiAnalyzer:
             data_availability_section = f"\n## ⚠️ 数据缺失提示（请降低以下维度的置信度）\n{_items}\n"
         else:
             data_availability_section = ""
+
+        # B-3: 概念题材解读规则（仅当有概念数据时条件注入）
+        concept_rules_section = ""
+        if concept_line.strip():
+            _has_hot = '热门概念命中' in concept_line
+            concept_rules_section = "\n## 概念题材解读规则\n"
+            if _has_hot:
+                concept_rules_section += (
+                    "- 「热门概念命中」= 该股属于今日资金追逐的风口，短线有情绪溢价\n"
+                    "- 「持续热点」= 连续2日以上在Top20，概念持续性较强\n"
+                    "- 「短线脉冲」= 首次进入Top20，可能为一日游题材，追高需谨慎\n"
+                    "- 概念排名Top5 + 个股涨幅落后板块 → 需确认是否为板块内弱势股而非补涨机会\n"
+                )
+            else:
+                concept_rules_section += (
+                    "- 若个股所属概念全部不在Top20 → 当日缺乏题材催化，侧重技术面和基本面判断\n"
+                )
+            concept_rules_section += "- 概念热度是日内数据，隔日可能切换，不可作为中线逻辑\n"
 
         # I5: 历史预测准确率段落——让 LLM 知道该股历史建议得失
         _acc = context.get('prediction_accuracy')
@@ -1189,6 +1213,18 @@ class GeminiAnalyzer:
                     + "\n".join(_rg_parts)
                     + '\n⚡ 上述任一项触发时，操作建议不得为"买入"或"加仓"。\n'
                 )
+
+        # B-1: 融资余额解读规则（条件注入：仅当有融资趋势数据时）
+        _margin_interpret_section = ""
+        if _tr and getattr(_tr, 'margin_trend', ''):
+            _margin_interpret_section = (
+                "\n## 融资余额解读规则\n"
+                "- 融资余额连续变化代表杠杆资金的偏好迹象，不是确定性信号\n"
+                "- 连续流入≥5日且幅度>5% → 杠杆资金持续流入迹象，可结合其他信号综合判断\n"
+                "- 连续流出≥5日且幅度>5% → 杠杆资金撤退迹象，需警惕下行风险\n"
+                "- 绝对金额<1亿的小盘股融资数据波动大，降低此信号权重\n"
+                "- 融资数据滞后1个交易日，不代表当日实时资金方向\n"
+            )
 
         # P2a-2: 组合 Beta section
         _pb = context.get('portfolio_beta')
@@ -1536,10 +1572,10 @@ Step 4（{_has_pos_label}） - 结论：
 {tech_report}
 
 ## 基本面 (F10)
-{f10_str}{sector_line}{chip_line}{regime_str}{position_section}{shareholder_section}
+{f10_str}{sector_line}{concept_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{constraints_section}{_risk_guard_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}{profit_take_plan_section}
+{data_availability_section}{concept_rules_section}{prediction_accuracy_section}{constraints_section}{_risk_guard_section}{_margin_interpret_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}{profit_take_plan_section}
 ## JSON 输出协议
 {_json_constraint}
 只输出 JSON，不要 markdown 代码块包裹。字段：

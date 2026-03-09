@@ -295,7 +295,6 @@ class AkshareFetcher(BaseFetcher):
 
     # 资金流向缓存（个股级别，TTL 10分钟，避免批量分析时重复请求东财被封）
     _capital_flow_cache: Dict[str, Any] = {}  # {code: {'data': ..., 'ts': ...}}
-    _CAPITAL_FLOW_TTL = 600  # 10分钟
 
     def get_capital_flow(self, stock_code: str) -> Optional[CapitalFlowData]:
         """获取个股资金流向
@@ -317,10 +316,12 @@ class AkshareFetcher(BaseFetcher):
 
         _intraday = self._is_market_open()
 
-        # 1. 内存缓存（盘中 TTL=3min，盘后 TTL=10min）
+        config = get_config()
+
+        # 1. 内存缓存（盘中 TTL=3min，盘后 TTL=config.cache_ttl_capital_flow）
         cached = self._capital_flow_cache.get(stock_code)
         if cached:
-            _ttl = cached.get('ttl', self._CAPITAL_FLOW_TTL)
+            _ttl = cached.get('ttl', config.cache_ttl_capital_flow)
             if time.time() - cached['ts'] < _ttl:
                 return cached['data']
 
@@ -328,7 +329,7 @@ class AkshareFetcher(BaseFetcher):
 
         def _save_cache(result: CapitalFlowData, is_today: bool, source: str):
             """落内存缓存 + DB 缓存"""
-            ttl = 180 if _intraday else self._CAPITAL_FLOW_TTL
+            ttl = config.cache_ttl_capital_flow_intraday if _intraday else config.cache_ttl_capital_flow
             self._capital_flow_cache[stock_code] = {'data': result, 'ts': time.time(), 'ttl': ttl}
             logger.info(f"💰 [{stock_code}] 资金流向({source}): 主力净流入={result.main_net_flow:.0f}万 ({result.main_net_flow_pct:.1f}%)")
             try:
@@ -386,7 +387,7 @@ class AkshareFetcher(BaseFetcher):
                     _save_cache(result, is_today=True, source="efinance实时")
                     return result
             except Exception as _ef_e:
-                logger.debug(f"[{stock_code}] efinance 资金流获取失败: {_ef_e}")
+                logger.warning(f"[{stock_code}] efinance 资金流获取失败: {_ef_e}")
             # efinance 失败 → 继续尝试 akshare/DB
 
         # ── 盘后或 efinance 失败：读 DB 缓存（今日数据，盘中不读跨日旧缓存）──
@@ -461,7 +462,7 @@ class AkshareFetcher(BaseFetcher):
             return result
 
         except Exception as e:
-            logger.debug(f"[{stock_code}] 资金流向获取失败(akshare): {e}")
+            logger.warning(f"[{stock_code}] 资金流向获取失败(akshare): {e}")
             return None
 
     @staticmethod
@@ -505,7 +506,7 @@ class AkshareFetcher(BaseFetcher):
                 concentration_70=safe_float(latest.get('70集中度'))
             )
         except Exception as e:
-            logger.debug(f"筹码分布外部接口失败 {stock_code}: {e}，尝试本地K线估算")
+            logger.warning(f"筹码分布外部接口失败 {stock_code}: {e}，尝试本地K线估算")
             return self._estimate_chip_from_daily(stock_code)
 
     def _estimate_chip_from_daily(self, stock_code: str) -> Optional[ChipDistribution]:
@@ -669,7 +670,7 @@ def get_northbound_holding(stock_code: str) -> dict | None:
             pass
         return result
     except Exception as e:
-        logger.debug(f"[{stock_code}] 北向资金持股获取失败: {e}")
+        logger.warning(f"[{stock_code}] 北向资金持股获取失败: {e}")
         _nb_fail_cache[stock_code] = _time.time()
         get_northbound_holding._fail_cache = _nb_fail_cache
         return None

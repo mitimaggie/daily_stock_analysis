@@ -10,11 +10,18 @@
 - 情绪温度 (0-100)
 """
 
+import json
 import logging
-from dataclasses import dataclass
-from typing import Optional
+import re
+import time
+from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# 内存缓存（L1 层）
+_sentiment_cache: Dict[str, object] = {'data': None, 'ts': 0.0}
 
 
 @dataclass
@@ -119,6 +126,93 @@ _SENTIMENT_FAIL_TS: float = 0.0
 _SENTIMENT_FAIL_BACKOFF: float = 600.0  # 10分钟内失败不重试
 
 
+def _is_market_open() -> bool:
+    """判断当前是否在A股交易时段（9:30-15:00 工作日）"""
+    try:
+        now = datetime.now()
+        if now.weekday() >= 5:
+            return False
+        t = now.hour * 60 + now.minute
+        return 570 <= t <= 900  # 9:30=570, 15:00=900
+    except Exception:
+        return False
+
+
+def _get_limit_threshold(code: str, name: str) -> Tuple[float, float]:
+    """返回 (涨停阈值%, 跌停阈值%)，按板块和 ST 状态区分"""
+    is_st = 'ST' in name.upper()
+    if code.startswith(('30', '68')):       # 创业板/科创板（ST也是±20%）
+        return (19.8, -19.8)
+    elif code.startswith(('8', '4')):       # 北交所
+        return (29.5, -29.5)
+    else:                                    # 主板
+        if is_st:
+            return (4.9, -4.9)              # 主板ST ±5%
+        return (9.9, -9.9)
+
+
+def _derive_limit_from_spot() -> Optional[MarketSentiment]:
+    """Level 2: 从全市场行情数据推算涨跌停家数"""
+    import akshare as ak
+
+    df = ak.stock_zh_a_spot_em()
+    if df is None or df.empty:
+        return None
+
+    limit_up = 0
+    limit_down = 0
+    up_count = 0
+    down_count = 0
+    flat_count = 0
+
+    for _, row in df.iterrows():
+        code = str(row.get('代码', ''))
+        name = str(row.get('名称', ''))
+        try:
+            pct = float(row.get('涨跌幅', 0))
+        except (ValueError, TypeError):
+            continue
+
+        up_thresh, down_thresh = _get_limit_threshold(code, name)
+
+        if pct >= up_thresh:
+            limit_up += 1
+        elif pct <= down_thresh:
+            limit_down += 1
+
+        if pct > 0:
+            up_count += 1
+        elif pct < 0:
+            down_count += 1
+        else:
+            flat_count += 1
+
+    total = up_count + down_count + flat_count
+    up_gt5_pct = 0.0
+    down_gt5_pct = 0.0
+    if total > 0 and '涨跌幅' in df.columns:
+        pct_col = df['涨跌幅'].apply(lambda x: float(x) if x is not None else 0.0)
+        up_gt5_pct = (pct_col > 5).sum() / total * 100
+        down_gt5_pct = (pct_col < -5).sum() / total * 100
+
+    sentiment = MarketSentiment(
+        limit_up_count=limit_up,
+        limit_down_count=limit_down,
+        up_count=up_count,
+        down_count=down_count,
+        flat_count=flat_count,
+        up_gt5_pct=round(up_gt5_pct, 2),
+        down_gt5_pct=round(down_gt5_pct, 2),
+    )
+    sentiment.temperature = calc_sentiment_temperature(
+        limit_up=limit_up, limit_down=limit_down,
+        up_count=up_count, down_count=down_count,
+        up_gt5_pct=up_gt5_pct, broken_rate=0,
+    )
+    sentiment.temperature_label = get_temperature_label(sentiment.temperature)
+    return sentiment
+
+
 def fetch_market_sentiment() -> Optional[MarketSentiment]:
     """
     获取市场情绪数据（从akshare获取涨跌停统计）
@@ -136,7 +230,7 @@ def fetch_market_sentiment() -> Optional[MarketSentiment]:
         try:
             result = _ex.submit(_fetch_market_sentiment_inner).result(timeout=12)
         except _FuturesTimeout:
-            logger.debug("市场情绪获取超时(12s)，10分钟内不再重试")
+            logger.warning("市场情绪获取超时(12s)，10分钟内不再重试")
             _SENTIMENT_FAIL_TS = _time.time()
             return None
         finally:
@@ -170,10 +264,10 @@ def _fetch_market_sentiment_inner() -> Optional[MarketSentiment]:
                     err_str = str(e).lower()
                     is_transient = any(k in err_str for k in ('ssl', 'connection', 'remote end', 'eof', 'timeout', 'tls'))
                     if is_transient and attempt < max_retries - 1:
-                        logger.debug(f"获取{name}失败(attempt {attempt+1})，{delay}s后重试: {e}")
+                        logger.warning(f"获取{name}失败(attempt {attempt+1})，{delay}s后重试: {e}")
                         _time.sleep(delay)
                     else:
-                        logger.debug(f"获取{name}失败: {e}")
+                        logger.warning(f"获取{name}失败: {e}")
                         return None
             return None
 
@@ -245,39 +339,185 @@ def _fetch_market_sentiment_inner() -> Optional[MarketSentiment]:
         logger.debug("akshare未安装，跳过市场情绪获取")
         return None
     except Exception as e:
-        logger.debug(f"_fetch_market_sentiment_inner失败: {e}")
+        logger.warning(f"_fetch_market_sentiment_inner失败: {e}")
         return None
+
+
+def fetch_market_sentiment_with_fallback() -> Optional[MarketSentiment]:
+    """三级 fallback 获取市场情绪
+
+    Level 1: akshare 涨停池（已有逻辑，数据最全）
+    Level 2: 全市场行情推算（无连板/炸板数据）
+    Level 3: Perplexity 简报解析
+    """
+    # Level 1: akshare 涨停池
+    sentiment = fetch_market_sentiment()
+    if sentiment:
+        sentiment._source = 'akshare_zt_pool'  # type: ignore[attr-defined]
+        return sentiment
+
+    # Level 2: 全市场行情推算
+    try:
+        sentiment = _derive_limit_from_spot()
+        if sentiment:
+            sentiment._source = 'spot_derived'  # type: ignore[attr-defined]
+            logger.info("市场情绪: Level 2 全市场行情推算成功")
+            return sentiment
+    except Exception as e:
+        logger.warning(f"市场情绪 Level 2 推算失败: {e}")
+
+    # Level 3: Perplexity 简报解析
+    sentiment = parse_sentiment_from_briefing()
+    if sentiment:
+        sentiment._source = 'perplexity_briefing'  # type: ignore[attr-defined]
+    return sentiment
+
+
+def get_market_sentiment_cached(db: Optional[object] = None) -> Optional[MarketSentiment]:
+    """带三级缓存的市场情绪获取（L1 内存 → L2 DB → L3 网络 fallback）
+
+    Args:
+        db: DatabaseManager 实例，传 None 时自动获取
+    """
+    now = time.time()
+
+    # L1 内存缓存
+    l1_ttl = 300 if _is_market_open() else 1800  # 盘中5min，盘后30min
+    if _sentiment_cache.get('data') and (now - _sentiment_cache.get('ts', 0)) < l1_ttl:
+        return _sentiment_cache['data']  # type: ignore[return-value]
+
+    # 确保 db 实例
+    if db is None:
+        try:
+            from src.storage import DatabaseManager
+            db = DatabaseManager.get_instance()
+        except Exception:
+            db = None
+
+    # L2 DB 缓存
+    if db is not None:
+        try:
+            from src.config import get_config
+            config = get_config()
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            cached_json = db.get_data_cache('limit_pool', today_str,
+                                            ttl_hours=config.cache_ttl_sentiment_db_hours)
+            if cached_json:
+                data = json.loads(cached_json)
+                fields = {k: v for k, v in data.items()
+                          if k in MarketSentiment.__dataclass_fields__}
+                sentiment = MarketSentiment(**fields)
+                _sentiment_cache.update({'data': sentiment, 'ts': now})
+                logger.debug("[市场情绪] L2 DB缓存命中")
+                return sentiment
+        except Exception as e:
+            logger.debug(f"[市场情绪] L2 DB缓存读取失败: {e}")
+
+    # L3 网络（三级 fallback）
+    sentiment = fetch_market_sentiment_with_fallback()
+    if sentiment:
+        # 写入 DB
+        if db is not None:
+            try:
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                save_data = asdict(sentiment)
+                save_data['source'] = getattr(sentiment, '_source', 'unknown')
+                save_data['fetched_at'] = datetime.now().isoformat()
+                db.save_data_cache('limit_pool', today_str,
+                                   json.dumps(save_data, ensure_ascii=False))
+            except Exception as e:
+                logger.debug(f"[市场情绪] DB写入失败: {e}")
+        # 写入内存缓存
+        _sentiment_cache.update({'data': sentiment, 'ts': now})
+
+    return sentiment
+
+
+def calc_temperature_deviation(today_temp: int, db: Optional[object] = None,
+                               n: int = 10) -> Optional[float]:
+    """计算今日温度相对近N日的偏离度（标准差倍数）
+
+    Args:
+        today_temp: 今日情绪温度 (0-100)
+        db: DatabaseManager 实例
+        n: 需要的历史样本数
+    Returns:
+        偏离度（正数=偏热，负数=偏冷），样本不足返回 None
+    """
+    if db is None:
+        try:
+            from src.storage import DatabaseManager
+            db = DatabaseManager.get_instance()
+        except Exception:
+            return None
+
+    recent: list = []
+    for offset in range(1, n + 5):
+        d = (datetime.now() - timedelta(days=offset)).strftime('%Y-%m-%d')
+        try:
+            cached = db.get_data_cache('limit_pool', d, ttl_hours=9999)  # type: ignore[union-attr]
+        except Exception:
+            continue
+        if cached:
+            try:
+                recent.append(json.loads(cached).get('temperature', 50))
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if len(recent) >= n:
+            break
+
+    if len(recent) < 5:
+        return None
+
+    mean_t = sum(recent) / len(recent)
+    std_t = (sum((x - mean_t) ** 2 for x in recent) / len(recent)) ** 0.5
+    if std_t < 1:
+        return None
+    return round((today_temp - mean_t) / std_t, 2)
+
+
+def _extract_limit_count(text: str, keyword: str) -> Optional[int]:
+    """多模式正则提取数字（涨停/跌停/炸板家数）"""
+    patterns = [
+        rf'{keyword}[：:]\s*(\d+)\s*家',
+        rf'{keyword}[：:]?\s*(\d+)\s*家',
+        rf'{keyword}[约达共]?\s*(\d+)\s*[家只]',
+        rf'{keyword}\D{{0,5}}(\d+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            val = int(m.group(1))
+            if 0 <= val <= 5300:
+                return val
+    return None
 
 
 def parse_sentiment_from_briefing() -> Optional['MarketSentiment']:
     """从已缓存的 Perplexity 简报中解析涨停/跌停数量，构造 MarketSentiment 对象。
     当 akshare 接口被封/超时时作为 score_market_sentiment_adj 的 fallback。
-    
+
     解析目标：涨停XX家、跌停XX家、炸板XX家（可选）
     Returns: MarketSentiment（温度已计算），或 None（解析失败）
     """
-    import re
-    from datetime import datetime
     try:
         from src.storage import DatabaseManager
+        from src.config import get_config
+        config = get_config()
         today = datetime.now().strftime('%Y-%m-%d')
         text = DatabaseManager.get_instance().get_data_cache(
-            'market_sentiment_briefing', today, ttl_hours=10.0
+            'market_sentiment_briefing', today,
+            ttl_hours=config.cache_ttl_briefing_hours,
         )
         if not text:
             return None
 
-        # 解析涨停家数：匹配 "涨停47家" / "涨停：47家" / "涨停 47 家"
-        m_up = re.search(r'涨停[：:]?\s*(\d+)\s*家', text)
-        m_down = re.search(r'跌停[：:]?\s*(\d+)\s*家', text)
-        m_broken = re.search(r'炸板[：:]?\s*(\d+)\s*家', text)
-
-        limit_up = int(m_up.group(1)) if m_up else 0
-        limit_down = int(m_down.group(1)) if m_down else 0
-        broken = int(m_broken.group(1)) if m_broken else 0
+        limit_up = _extract_limit_count(text, '涨停') or 0
+        limit_down = _extract_limit_count(text, '跌停') or 0
+        broken = _extract_limit_count(text, '炸板') or 0
 
         if limit_up == 0 and limit_down == 0:
-            return None  # 简报没有足够数字数据
+            return None
 
         s = MarketSentiment()
         s.limit_up_count = limit_up
@@ -300,14 +540,15 @@ def parse_sentiment_from_briefing() -> Optional['MarketSentiment']:
 
 
 _BRIEFING_SYSTEM_PROMPT = (
-    "你是一位A股量化交易员助手，每日收盘后出具简洁的市场情绪日报。\n"
-    "【严格输出格式，每行必须使用以下固定格式，不得更改措辞】\n"
-    "- 成交额：XX亿（放量/缩量）\n"
-    "- 涨跌家数：涨XX家跌XX家平XX家，涨停XX家，跌停XX家，炸板XX家\n"
-    "- 市场情绪：一句话定性\n"
-    "- 主力资金：北向净流入/净流出XX亿（如有数据）\n"
-    "【关键要求】涨停、跌停、炸板必须用\"XX家\"格式填入具体数字，无数据时填0家。"
-    "不要分析原因，不要超过120字。非交易日说\"今日非交易日\"。"
+    "你是一位A股量化交易员助手。请用【严格固定格式】输出今日A股收盘情绪快照。\n\n"
+    "格式（逐行填数字，无数据填0）：\n"
+    "成交额:XX亿\n"
+    "涨停:XX家 跌停:XX家 炸板:XX家\n"
+    "涨跌:涨XX家 跌XX家 平XX家\n"
+    "情绪:一句话\n"
+    "北向:净流入XX亿或净流出XX亿\n\n"
+    "【硬规则】每行开头关键词和冒号不可修改，数字处填具体数字。"
+    "不要分析原因，不要超过100字。非交易日只输出\"今日非交易日\"。"
 )
 
 
@@ -329,7 +570,12 @@ def fetch_market_sentiment_briefing(force_refresh: bool = False) -> Optional[str
         db = DatabaseManager.get_instance()
 
         if not force_refresh:
-            cached = db.get_data_cache(_DB_TYPE, _DB_KEY, ttl_hours=4.0)
+            try:
+                from src.config import get_config
+                _briefing_ttl = get_config().cache_ttl_briefing_hours
+            except Exception:
+                _briefing_ttl = 6.0
+            cached = db.get_data_cache(_DB_TYPE, _DB_KEY, ttl_hours=_briefing_ttl)
             if cached:
                 logger.debug(f"[市场情绪简报] 命中缓存: {cached[:60]}...")
                 return cached

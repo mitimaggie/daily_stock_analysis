@@ -32,7 +32,8 @@ class CapitalFlowData:
     # pipeline 注入的扩展字段
     daily_avg_amount: Optional[float] = None   # 日均成交额（万元），供阈值相对化
     margin_history: Optional[List[float]] = None  # 融资余额历史（P3情绪极端检测）
-    margin_balance_change: Optional[float] = None  # 融资余额变化
+    margin_history_dates: Optional[List[str]] = None  # 融资余额对应日期（YYYYMMDD，跨长假检测用）
+    margin_balance_change: Optional[float] = None  # 融资余额变化（百分比，如 +5.2 = 增长5.2%）
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为旧格式 dict"""
@@ -46,6 +47,8 @@ class CapitalFlowData:
             d['daily_avg_amount'] = self.daily_avg_amount
         if self.margin_history is not None:
             d['margin_history'] = self.margin_history
+        if self.margin_history_dates is not None:
+            d['margin_history_dates'] = self.margin_history_dates
         if self.margin_balance_change is not None:
             d['margin_balance_change'] = self.margin_balance_change
         return d
@@ -61,6 +64,7 @@ class CapitalFlowData:
             large_net=float(d.get('large_net', 0) or 0),
             daily_avg_amount=d.get('daily_avg_amount'),
             margin_history=d.get('margin_history'),
+            margin_history_dates=d.get('margin_history_dates'),
             margin_balance_change=d.get('margin_balance_change'),
         )
 
