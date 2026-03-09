@@ -1,0 +1,50 @@
+/** 市场概览相关类型定义 */
+
+export interface TrafficLightData {
+  signal: 'active' | 'cautious' | 'wait' | 'cash';
+  signalLabel: string;
+  signalColor: string;
+  reason: string;
+  score: number;
+}
+
+export interface SentimentData {
+  limitUp: number;
+  limitDown: number;
+  broken: number;
+  brokenRate: number;
+  emotionTemp: number;
+  advanceCount: number;
+  declineCount: number;
+  flatCount: number;
+  emotionLabel?: string;
+}
+
+export interface ConceptItem {
+  name: string;
+  code: string;
+  pctChg: number;
+  amount: number;
+  leadingStock: string;
+  rank: number;
+  heatType: string;
+}
+
+export interface MarketOverview {
+  trafficLight: TrafficLightData;
+  sentiment: SentimentData;
+  concepts: ConceptItem[] | null;
+}
+
+export interface TodoItem {
+  type: 'stop_loss' | 'concept_decay' | 'entry_ready';
+  priority: 'high' | 'medium' | 'low';
+  code: string;
+  name: string;
+  message: string;
+  detail?: string;
+}
+
+export interface MarketTodoList {
+  todos: TodoItem[];
+}

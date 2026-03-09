@@ -189,6 +189,23 @@ class HoldingStrategy(BaseModel):
     entry_advice: Optional[str] = Field(None, description="空仓建议")
 
 
+class EntryConditionItem(BaseModel):
+    """建仓条件项"""
+    label: str = Field(..., description="条件描述")
+    met: bool = Field(False, description="是否已满足")
+
+
+class EntryConditions(BaseModel):
+    """建仓条件（未持仓时展示）"""
+    price_range_low: Optional[float] = Field(None, description="理想入场区间下限")
+    price_range_high: Optional[float] = Field(None, description="理想入场区间上限")
+    price_range_desc: Optional[str] = Field(None, description="价格区间描述（如'19元附近'）")
+    current_vs_entry: Optional[str] = Field(None, description="当前价相对入场区间位置描述")
+    conditions: List[EntryConditionItem] = Field(default_factory=list, description="触发条件列表")
+    suggested_position_pct: Optional[int] = Field(None, description="建议首次仓位(%)")
+    summary: Optional[str] = Field(None, description="一句话建仓建议")
+
+
 class ReportStrategy(BaseModel):
     """策略点位区"""
     
@@ -221,6 +238,7 @@ class AnalysisReport(BaseModel):
     strategy: Optional[ReportStrategy] = Field(None, description="策略点位区")
     today_snapshot: Optional[TodaySnapshot] = Field(None, description="当日行情快照")
     details: Optional[ReportDetails] = Field(None, description="详情区")
+    entry_conditions: Optional[EntryConditions] = Field(None, description="建仓条件（未持仓时）")
     
     class Config:
         json_schema_extra = {

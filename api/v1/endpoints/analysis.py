@@ -46,6 +46,7 @@ from api.v1.schemas.history import (
     QuantVsAi,
     KeyPriceLevel,
     TodaySnapshot,
+    EntryConditions,
 )
 from src.config import Config
 from src.services.task_queue import (
@@ -496,6 +497,93 @@ def get_analysis_status(task_id: str) -> TaskStatus:
 # 辅助函数
 # ============================================================
 
+def _build_entry_conditions(
+    strategy_data: Dict[str, Any],
+    quant_extras: Dict[str, Any],
+    current_price: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """从现有分析数据组装建仓条件
+
+    Args:
+        strategy_data: 策略数据（含 ideal_buy / secondary_buy / holding_strategy）
+        quant_extras: 量化附加指标（volume_trend_3d 等）
+        current_price: 当前股价
+
+    Returns:
+        建仓条件字典，或 None（数据不足时）
+    """
+    hs = strategy_data.get("holding_strategy") or {}
+
+    ideal_buy_str = strategy_data.get("ideal_buy")
+    secondary_buy_str = strategy_data.get("secondary_buy")
+
+    price_low: Optional[float] = None
+    price_high: Optional[float] = None
+
+    for price_str in [secondary_buy_str, ideal_buy_str]:
+        if price_str:
+            try:
+                val = float(''.join(c for c in str(price_str) if c.isdigit() or c == '.'))
+                if price_low is None:
+                    price_low = val
+                else:
+                    price_high = val
+            except (ValueError, TypeError):
+                pass
+
+    if price_low and price_high and price_low > price_high:
+        price_low, price_high = price_high, price_low
+
+    current_vs: Optional[str] = None
+    if price_high and current_price:
+        if current_price > price_high:
+            pct_above = (current_price - price_high) / price_high * 100
+            current_vs = f"当前价高于入场区间{pct_above:.1f}%，耐心等回调"
+        elif price_low and current_price < price_low:
+            pct_below = (price_low - current_price) / price_low * 100
+            current_vs = f"当前价低于入场区间{pct_below:.1f}%，关注是否企稳"
+        else:
+            current_vs = "当前价在入场区间内，可关注入场时机"
+
+    conditions = []
+
+    if price_low and current_price:
+        threshold = price_high if price_high else price_low
+        conditions.append({
+            "label": "价格回调至支撑区间",
+            "met": current_price <= threshold,
+        })
+
+    vol_trend = quant_extras.get("volume_trend_3d", "")
+    conditions.append({
+        "label": "缩量企稳确认",
+        "met": "缩" in str(vol_trend),
+    })
+
+    conditions.append({
+        "label": "所属概念热度上升",
+        "met": False,
+    })
+
+    pos_pct = hs.get("entry_position_pct") or 20
+
+    price_desc: Optional[str] = None
+    if price_low and price_high:
+        price_desc = f"{price_low:.2f} - {price_high:.2f} 元"
+    elif price_low:
+        price_desc = f"{price_low:.2f} 元附近"
+
+    return {
+        "price_range_low": price_low,
+        "price_range_high": price_high,
+        "price_range_desc": price_desc,
+        "current_vs_entry": current_vs,
+        "conditions": conditions,
+        "suggested_position_pct": pos_pct,
+        "summary": hs.get("entry_advice") or "等待价格回调至理想区间后择机入场",
+    }
+
+
 def _build_analysis_report(
         report_data: Dict[str, Any],
         query_id: str,
@@ -579,12 +667,30 @@ def _build_analysis_report(
     ts_data = report_data.get("today_snapshot")
     today_snapshot = TodaySnapshot(**ts_data) if ts_data and isinstance(ts_data, dict) else None
 
+    # 建仓条件
+    entry_conditions = None
+    if strategy_data:
+        try:
+            raw_result = details_data.get("raw_result") if isinstance(details_data, dict) else details_data
+            if isinstance(raw_result, dict):
+                dashboard = raw_result.get("dashboard", {})
+            else:
+                dashboard = {}
+            quant_extras = dashboard.get("quant_extras", {}) if isinstance(dashboard, dict) else {}
+            cur_price = meta_data.get("current_price")
+            ec_data = _build_entry_conditions(strategy_data, quant_extras, cur_price)
+            if ec_data:
+                entry_conditions = EntryConditions(**ec_data)
+        except Exception as e:
+            logger.debug(f"构建建仓条件失败: {e}")
+
     return AnalysisReport(
         meta=meta,
         summary=summary,
         strategy=strategy,
         today_snapshot=today_snapshot,
-        details=details
+        details=details,
+        entry_conditions=entry_conditions,
     )
 
 

@@ -352,24 +352,14 @@ class TechnicalIndicators:
 
     @staticmethod
     def calc_vwap(df: pd.DataFrame) -> pd.DataFrame:
+        """[Deprecated] 请使用 calculate_all() 中自动调用的 _calc_vwap()。
+
+        保留此方法仅为兼容性，内部委托到 _calc_vwap()。
         """
-        计算 VWAP（成交量加权平均价）
-        
-        VWAP = Σ(典型价格 × 成交量) / Σ(成交量)
-        典型价格 = (High + Low + Close) / 3
-        
-        新增列:
-        - VWAP: 当日 VWAP（使用滚动20日窗口近似）
-        - VWAP_bias: 现价相对 VWAP 的偏离率(%)
-        """
-        typical_price = (df['high'] + df['low'] + df['close']) / 3
-        tp_vol = typical_price * df['volume']
-        # 使用20日滚动窗口
-        df['VWAP'] = tp_vol.rolling(20).sum() / df['volume'].rolling(20).sum()
-        df['VWAP'] = df['VWAP'].fillna(df['close'])
-        vwap = df['VWAP']
-        df['VWAP_bias'] = ((df['close'] - vwap) / vwap * 100).fillna(0).round(2)
-        return df
+        import warnings
+        warnings.warn("calc_vwap() 已废弃，VWAP/VWAP_bias 由 _calc_vwap() 在 calculate_all() 中统一计算",
+                       DeprecationWarning, stacklevel=2)
+        return TechnicalIndicators._calc_vwap(df)
 
     @staticmethod
     def detect_volume_price_divergence(df: pd.DataFrame, lookback: int = 20) -> str:
@@ -637,21 +627,25 @@ class TechnicalIndicators:
     
     @staticmethod
     def _calc_vwap(df: pd.DataFrame) -> pd.DataFrame:
-        """计算多日累积VWAP（10日/20日）及斜率
+        """计算多日累积VWAP（10日/20日）及斜率、偏离率
 
-        VWAP_N = sum(typical_price * volume, N) / sum(volume, N)
-        VWAP_slope = (VWAP_today - VWAP_N_days_ago) / N，正=机构成本上移，负=成本下移
+        输出列：
+        - VWAP10, VWAP20: 10/20日成交量加权均价
+        - VWAP10_SLOPE, VWAP20_SLOPE: VWAP斜率（正=机构成本上移）
+        - VWAP: VWAP20的别名，兼容旧接口
+        - VWAP_bias: 现价相对VWAP20的偏离率(%)
         """
         try:
-            tp = (df['high'] + df['low'] + df['close']) / 3  # typical price
+            tp = (df['high'] + df['low'] + df['close']) / 3
             tp_vol = tp * df['volume']
             for window in [10, 20]:
                 vol_sum = df['volume'].rolling(window=window, min_periods=window).sum()
                 tp_vol_sum = tp_vol.rolling(window=window, min_periods=window).sum()
                 vwap = tp_vol_sum / vol_sum.replace(0, np.nan)
                 df[f'VWAP{window}'] = vwap
-                # 斜率：与 window 天前的 VWAP 之差，除以 window 归一化
                 df[f'VWAP{window}_SLOPE'] = (vwap - vwap.shift(window)) / window
+            df['VWAP'] = df['VWAP20'].fillna(df['close'])
+            df['VWAP_bias'] = ((df['close'] - df['VWAP']) / df['VWAP'] * 100).fillna(0).round(2)
         except Exception as e:
             logger.debug(f"VWAP计算失败: {e}")
         return df

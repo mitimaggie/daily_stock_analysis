@@ -622,6 +622,11 @@ body {
   box-shadow: 0 0 20px var(--color-purple-glow);
 }
 
+/* ============ 底部安全区域 ============ */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* ============ 响应式 ============ */
 @media (max-width: 640px) {
   .input-terminal {

@@ -8,6 +8,6 @@ API v1 Endpoints 模块初始化
 1. 导出所有 endpoint 路由模块
 """
 
-from api.v1.endpoints import health, analysis, history, stocks, backtest, system_config, trade_log, chat, portfolio, disclosures
+from api.v1.endpoints import health, analysis, history, stocks, backtest, system_config, trade_log, chat, portfolio, disclosures, market
 
-__all__ = ["health", "analysis", "history", "stocks", "backtest", "system_config", "trade_log", "chat", "portfolio", "disclosures"]
+__all__ = ["health", "analysis", "history", "stocks", "backtest", "system_config", "trade_log", "chat", "portfolio", "disclosures", "market"]

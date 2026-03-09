@@ -263,7 +263,8 @@ class ResonanceDetector:
         result.market_behavior = "\n".join(behavior_signals) if behavior_signals else ""
     
     @staticmethod
-    def check_multi_timeframe_resonance(result: TrendAnalysisResult, df: pd.DataFrame):
+    def check_multi_timeframe_resonance(result: TrendAnalysisResult, df: pd.DataFrame,
+                                        weekly_df: 'Optional[pd.DataFrame]' = None):
         """
         多时间周期共振验证：日线 + 周线共振
         
@@ -283,8 +284,9 @@ class ResonanceDetector:
             return
         
         try:
-            from .indicators import TechnicalIndicators
-            weekly_df = TechnicalIndicators.resample_to_weekly(df)
+            if weekly_df is None or len(weekly_df) < 5:
+                from .indicators import TechnicalIndicators
+                weekly_df = TechnicalIndicators.resample_to_weekly(df)
             if weekly_df is None or len(weekly_df) < 5:
                 result.timeframe_resonance = ""
                 return

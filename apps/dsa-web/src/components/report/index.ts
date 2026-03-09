@@ -9,7 +9,7 @@ export * from './AIAnalysis';
 export * from './PositionDiagnosis';
 export * from './KLineChart';
 export * from './KeyPriceLevels';
-export * from './QuantVsAi';
+export * from './QuantVsAi'; // NOTE: 当前无组件引用，待后续清理
 export * from './TodaySnapshot';
 export * from './KeyInsights';
 export * from './ShareholderCard';

@@ -30,6 +30,7 @@ from api.v1.schemas.history import (
     QuantVsAi,
     KeyPriceLevel,
     TodaySnapshot,
+    EntryConditions,
 )
 from api.v1.schemas.common import ErrorResponse
 from src.storage import DatabaseManager
@@ -247,12 +248,31 @@ def get_history_detail(
         ts_data = result.get("today_snapshot")
         today_snapshot = TodaySnapshot(**ts_data) if ts_data and isinstance(ts_data, dict) else None
         
+        # 建仓条件
+        entry_conditions = None
+        try:
+            from api.v1.endpoints.analysis import _build_entry_conditions
+            strategy_dict = {
+                "ideal_buy": result.get("ideal_buy"),
+                "secondary_buy": result.get("secondary_buy"),
+                "holding_strategy": result.get("holding_strategy"),
+            }
+            raw_result = result.get("raw_result") or {}
+            dashboard = raw_result.get("dashboard", {}) if isinstance(raw_result, dict) else {}
+            quant_extras = dashboard.get("quant_extras", {}) if isinstance(dashboard, dict) else {}
+            ec_data = _build_entry_conditions(strategy_dict, quant_extras, current_price)
+            if ec_data:
+                entry_conditions = EntryConditions(**ec_data)
+        except Exception as e:
+            logger.debug(f"构建建仓条件失败: {e}")
+        
         return AnalysisReport(
             meta=meta,
             summary=summary,
             strategy=strategy,
             today_snapshot=today_snapshot,
-            details=details
+            details=details,
+            entry_conditions=entry_conditions,
         )
         
     except HTTPException:

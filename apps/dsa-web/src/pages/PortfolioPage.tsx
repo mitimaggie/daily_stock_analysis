@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { portfolioApi, type MonitorSignal, type WatchlistItem, type PortfolioLog } from '../api/portfolio';
+import PortfolioHeatScan from '../components/portfolio/PortfolioHeatScan';
 
 const HORIZON_OPTIONS = ['短线(1-3日)', '短线(3-5日)', '中线(1-4周)', '中线(1-3月)', '长线(3月以上)'];
 
@@ -289,10 +290,10 @@ const WatchlistCard: React.FC<{
           <button onClick={() => onRemove(item.code)} className="text-[11px] text-white/20 hover:text-red-400 transition">×</button>
         </div>
       </div>
-      {item.lastAdvice && (
-        <div className="text-[11px]">
-          <span className="text-white/30">建议: </span>
-          <span className="text-white/60">{item.lastAdvice}</span>
+      {item.lastScore != null && (
+        <div className="text-xs text-white/40 mt-1">
+          评分 <span className={`font-mono font-bold ${scoreColor}`}>{item.lastScore}</span>
+          {item.lastAdvice ? ` · ${item.lastAdvice}` : ' · 待分析'}
         </div>
       )}
       {item.lastSummary && (
@@ -326,7 +327,15 @@ const PortfolioPage: React.FC = () => {
     setLoadingSignals(true);
     try {
       const data = await portfolioApi.monitor();
-      setSignals(data.signals);
+      const signalPriority: Record<string, number> = {
+        stop_loss: 1, reduce: 2, add_watch: 3, hold: 4,
+      };
+      const sorted = [...data.signals].sort((a, b) => {
+        const pa = signalPriority[a.signal] || 99;
+        const pb = signalPriority[b.signal] || 99;
+        return pa - pb;
+      });
+      setSignals(sorted);
       setConcentrationWarnings(data.concentrationWarnings);
       setLastUpdated(new Date());
     } catch (e) {
@@ -380,11 +389,11 @@ const PortfolioPage: React.FC = () => {
   const reduceCount = signals.filter(s => s.signal === 'reduce').length;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
+    <div className="min-h-screen bg-[#0a0a0f] text-white pb-20">
       {/* 顶部导航 */}
       <div className="border-b border-white/5 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <a href="/" className="text-[12px] text-white/30 hover:text-white/60 transition">← 返回分析</a>
+          <a href="/analysis" className="text-[12px] text-white/30 hover:text-white/60 transition">← 返回分析</a>
           <h1 className="text-[14px] font-semibold text-white/80">持仓管理</h1>
           {stopLossCount > 0 && (
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 animate-pulse">
@@ -527,6 +536,13 @@ const PortfolioPage: React.FC = () => {
               );
             })()}
 
+            {/* 持仓概念热度扫描 */}
+            {signals.length > 0 && (
+              <PortfolioHeatScan
+                portfolioItems={signals.map(s => ({ code: s.code, name: s.name }))}
+              />
+            )}
+
             {/* 组合集中度预警横幅 */}
             {concentrationWarnings.length > 0 && (
               <div className="space-y-2">
@@ -546,16 +562,7 @@ const PortfolioPage: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {/* 止损警告置顶 */}
-                {signals.filter(s => s.signal === 'stop_loss').map(s => (
-                  <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} />
-                ))}
-                {/* 减仓提示 */}
-                {signals.filter(s => s.signal === 'reduce').map(s => (
-                  <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} />
-                ))}
-                {/* 持有 */}
-                {signals.filter(s => !['stop_loss', 'reduce'].includes(s.signal)).map(s => (
+                {signals.map(s => (
                   <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} />
                 ))}
               </div>

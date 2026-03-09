@@ -175,6 +175,23 @@ export interface ReportDetails {
   contextSnapshot?: Record<string, unknown>;
 }
 
+/** 建仓条件单项 */
+export interface EntryConditionItem {
+  label: string;
+  met: boolean;
+}
+
+/** 建仓条件集合（未持仓模式核心卡片） */
+export interface EntryConditions {
+  priceRangeLow?: number;
+  priceRangeHigh?: number;
+  priceRangeDesc?: string;
+  currentVsEntry?: string;
+  conditions: EntryConditionItem[];
+  suggestedPositionPct?: number;
+  summary?: string;
+}
+
 /** 完整分析报告 */
 export interface AnalysisReport {
   meta: ReportMeta;
@@ -182,6 +199,7 @@ export interface AnalysisReport {
   strategy?: ReportStrategy;
   todaySnapshot?: TodaySnapshot;
   details?: ReportDetails;
+  entryConditions?: EntryConditions;
 }
 
 // ============ 分析结果类型 ============

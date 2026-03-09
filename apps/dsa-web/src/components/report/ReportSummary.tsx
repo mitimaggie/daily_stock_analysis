@@ -5,15 +5,15 @@ import { TradeLog } from '../trade/TradeLog';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
 import { QuantAnalysis } from './QuantAnalysis';
-import { QuantVsAi } from './QuantVsAi';
-import { KeyPriceLevels } from './KeyPriceLevels';
 import { AiDiagnosis } from './AiDiagnosis';
-import { ShareholderCard } from './ShareholderCard';
-import { PriceRangeBar } from './PriceRangeBar';
-import { TodaySnapshot } from './TodaySnapshot';
-import { KeyInsights } from './KeyInsights';
-import { DecisionCard } from './DecisionCard';
 import { SignalLights } from './SignalLights';
+import { ConceptBadge } from './ConceptBadge';
+import { EntryConditionCard } from './EntryConditionCard';
+import { AiDigestCard } from './AiDigestCard';
+import { ValuationBar } from './ValuationBar';
+import { PnLHeader } from './PnLHeader';
+import { HoldDecisionCard } from './HoldDecisionCard';
+import { RiskAlertCard } from './RiskAlertCard';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -25,46 +25,13 @@ interface ReportSummaryProps {
   onPositionChange?: (shares: number, costPrice: number) => void;
 }
 
-/** 持仓快照条：紧凑展示成本/浮盈/持仓天数 */
-const PositionSnapshotBar: React.FC<{
-  positionInfo: Record<string, any>;
-  currentPrice?: number;
-}> = ({ positionInfo, currentPrice }) => {
-  const costPrice = positionInfo.cost_price ?? positionInfo.costPrice ?? 0;
-  const holdingDays = positionInfo.holding_days ?? null;
-
-  if (!costPrice) return null;
-
-  const pnlPct = currentPrice && costPrice > 0
-    ? ((currentPrice - costPrice) / costPrice * 100)
-    : null;
-  const pnlColor = pnlPct == null ? 'text-white/40' : pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
-  const pnlSign = pnlPct != null && pnlPct >= 0 ? '+' : '';
-
-  return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] px-4 py-2.5 flex items-center gap-4 flex-wrap">
-      <span className="text-[11px] text-white/30 font-medium tracking-wide uppercase">持仓</span>
-      <span className="text-[13px] text-white/70">成本 <span className="text-white/90 font-medium">{costPrice.toFixed(2)}</span></span>
-      {pnlPct != null && (
-        <span className={`text-[13px] font-medium ${pnlColor}`}>
-          {pnlSign}{pnlPct.toFixed(2)}%
-        </span>
-      )}
-      {holdingDays != null && (
-        <span className="text-[13px] text-white/50">持有 <span className="text-white/70">{holdingDays}</span> 天</span>
-      )}
-    </div>
-  );
-};
-
 /** 可折叠的量化数据面板 */
 const QuantPanel: React.FC<{
   quantExtras: Record<string, any> | null;
-  quantVsAi: any;
   skillUsed?: string;
-}> = ({ quantExtras, quantVsAi, skillUsed }) => {
+}> = ({ quantExtras, skillUsed: _skillUsed }) => {
   const [open, setOpen] = useState(false);
-  if (!quantExtras && !quantVsAi) return null;
+  if (!quantExtras) return null;
 
   const qe = quantExtras as Record<string, any> | null;
   const maAlignment = qe?.ma_alignment ?? qe?.maAlignment;
@@ -81,9 +48,8 @@ const QuantPanel: React.FC<{
         onClick={() => setOpen(v => !v)}
       >
         <span className="text-sm font-semibold text-white/60 flex items-center gap-1.5">
-          <span>�</span> 技术指标
+          <span>📉</span> 技术指标
         </span>
-        {/* 收起时显示一行摘要 */}
         {!open && (
           <div className="flex items-center gap-2 text-[11px] font-mono">
             {maAlignment && (
@@ -105,66 +71,14 @@ const QuantPanel: React.FC<{
       {open && (
         <div className="border-t border-white/[0.04] space-y-3 p-3">
           {quantExtras && <QuantAnalysis data={quantExtras} />}
-          {quantVsAi && <QuantVsAi data={quantVsAi} skillUsed={skillUsed} />}
         </div>
       )}
     </div>
   );
 };
 
-/** 雷区警告横幅 —— 解禁/减持 强制首屏显示 */
-const DangerBanners: React.FC<{
-  upcomingUnlock: any;
-  insiderChanges: any;
-}> = ({ upcomingUnlock, insiderChanges }) => {
-  const banners: Array<{ key: string; level: 'red' | 'orange'; icon: string; text: string }> = [];
-
-  if (upcomingUnlock) {
-    const u = typeof upcomingUnlock === 'string' ? upcomingUnlock : JSON.stringify(upcomingUnlock);
-    const dateMatch = u.match(/\d{4}-\d{2}-\d{2}/);
-    if (dateMatch) {
-      const days = Math.round((new Date(dateMatch[0]).getTime() - Date.now()) / 86400000);
-      if (days >= 0 && days <= 30) {
-        banners.push({ key: 'unlock', level: 'red', icon: '⚠️', text: `解禁压力：${days}天后解禁（${dateMatch[0]}）` });
-      } else if (days > 30 && days <= 90) {
-        const sizeMatch = u.match(/(\d+\.?\d*)产南/) || u.match(/\d+\.?\d*亿/);
-        banners.push({ key: 'unlock', level: 'orange', icon: '📅', text: `近31日解禁: ${dateMatch[0]}${sizeMatch ? '，规模' + sizeMatch[0] : ''}` });
-      }
-    }
-  }
-
-  if (insiderChanges) {
-    const ic = typeof insiderChanges === 'string' ? insiderChanges : JSON.stringify(insiderChanges);
-    if (/净减持|大幅减持|大量减持/.test(ic)) {
-      const amtMatch = ic.match(/(\d+\.?\d*)万股/);
-      banners.push({ key: 'insider', level: 'orange', icon: '📉', text: `高管在减持${amtMatch ? '（挪售' + amtMatch[0] + '）' : '，请注意内幕交易风险'}` });
-    }
-  }
-
-  if (!banners.length) return null;
-
-  return (
-    <div className="space-y-1.5">
-      {banners.map(b => (
-        <div
-          key={b.key}
-          className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[12px] font-medium ${
-            b.level === 'red'
-              ? 'bg-red-500/10 border border-red-500/25 text-red-300'
-              : 'bg-orange-500/10 border border-orange-500/25 text-orange-300'
-          }`}
-        >
-          <span>{b.icon}</span>
-          <span>{b.text}</span>
-        </div>
-      ))}
-    </div>
-  );
-};
-
 const HORIZON_LABELS: Record<string, string> = { short: '短线', mid: '中线', long: '长线' };
 
-/** 持仓时间维度建议卡片 */
 /** 持仓周期建议 —— 进度条可视化版 */
 const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) => {
   const items = (['short', 'mid', 'long'] as const).map(k => ({
@@ -204,7 +118,6 @@ const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) 
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium ml-auto">推荐</span>
                 )}
               </div>
-              {/* 进度条 */}
               <div className="flex items-center gap-2 mb-1.5">
                 <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
                   <div
@@ -238,68 +151,26 @@ const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) 
   );
 };
 
-const SKILL_NAME_CN: Record<string, string> = {
-  policy_tailwind: 'A股政策顺风',
-  northbound_smart: '北向聪明钱',
-  ashare_growth_value: 'A股成长价值',
-  default: '通用',
-};
-
-const SkillAnalysisCard: React.FC<{
-  skillAnalysis: Record<string, any>;
-  skillUsed?: string | null;
-}> = ({ skillAnalysis, skillUsed }) => {
-  const [expanded, setExpanded] = useState(false);
-  const primaryName = SKILL_NAME_CN[skillUsed ?? ''] ?? skillUsed ?? '框架';
-  const secondaryName = skillAnalysis.secondary
-    ? (SKILL_NAME_CN[skillAnalysis.secondary] ?? skillAnalysis.secondary)
-    : null;
-  const hasSecondary = !!skillAnalysis.secondary_analysis;
-  const integratedNote = skillAnalysis.integrated_note;
-
+/** 折叠区 —— 包裹 "更多分析" 内容 */
+const CollapsibleSection: React.FC<{
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}> = ({ title, children, defaultOpen = false }) => {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-violet-500/20">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-center justify-between px-4 py-3 text-left"
-        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition"
+        onClick={() => setOpen(v => !v)}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-violet-300/90">🧠 {primaryName}框架深度分析</span>
-          {secondaryName && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400/70 border border-violet-500/15">
-              +{secondaryName}
-            </span>
-          )}
-        </div>
-        <svg
-          className={`w-3.5 h-3.5 text-white/30 transition-transform ${expanded ? 'rotate-180' : ''}`}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <span className="text-sm font-semibold text-white/50">{title}</span>
+        <span className="text-xs text-white/25">{open ? '▲ 收起' : '▼ 展开'}</span>
       </button>
-      {expanded && (
-        <div className="px-4 pb-4 space-y-3 border-t border-violet-500/10">
-          {skillAnalysis.primary_analysis && (
-            <div className="pt-3">
-              <div className="text-[10px] text-white/25 mb-1.5 font-mono">{primaryName} · 主框架</div>
-              <p className="text-[12px] text-white/70 leading-relaxed whitespace-pre-wrap">{skillAnalysis.primary_analysis}</p>
-            </div>
-          )}
-          {hasSecondary && skillAnalysis.secondary_analysis && (
-            <div className="border-t border-white/[0.05] pt-3">
-              <div className="text-[10px] text-white/25 mb-1.5 font-mono">
-                {secondaryName} · {skillAnalysis.convergent ? '增强确认' : '压力测试'}
-              </div>
-              <p className="text-[12px] text-white/60 leading-relaxed whitespace-pre-wrap">{skillAnalysis.secondary_analysis}</p>
-            </div>
-          )}
-          {integratedNote && (
-            <div className="rounded-lg px-3 py-2 bg-violet-500/[0.06] border border-violet-500/15 text-[11px] text-violet-300/80 leading-relaxed">
-              {integratedNote}
-            </div>
-          )}
+      {open && (
+        <div className="border-t border-white/[0.04] p-3 space-y-3">
+          {children}
         </div>
       )}
     </div>
@@ -307,13 +178,10 @@ const SkillAnalysisCard: React.FC<{
 };
 
 /**
- * 报告展示组件 — AI优先布局
+ * 报告展示组件 — 持仓/未持仓双模式自动切换
  *
- * 设计原则：
- * - AI分析是主角，默认展开，置于页面核心位置
- * - 持仓信息用紧凑快照条展示，不占大量空间
- * - 量化数据折叠，需要时展开
- * - 移除透明度追溯区（ReportDetails）和独立的 QuantVsAi 顶层展示
+ * 未持仓：关注"该不该进" → ReportOverview > ConceptBadge > EntryConditionCard > AiDigestCard > ValuationBar > 折叠区
+ * 持仓：关注"该走还是该留" → PnLHeader > HoldDecisionCard > HoldingHorizonCard > RiskAlertCard > ReportStrategy > 折叠区
  */
 export const ReportSummary: React.FC<ReportSummaryProps> = ({
   data,
@@ -329,17 +197,14 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
 
   const { meta, summary, strategy, details } = report;
 
-  // P3/P4 data from contextSnapshot
-  const { insiderChanges, upcomingUnlock, repurchase, priceRange52w, predictionAccuracy, northboundHolding } = useMemo(() => {
+  const { insiderChanges, upcomingUnlock, northboundHolding, conceptContext } = useMemo(() => {
     const ctx = details?.contextSnapshot as Record<string, any> | undefined;
-    if (!ctx) return { insiderChanges: undefined, upcomingUnlock: undefined, repurchase: undefined, priceRange52w: undefined, predictionAccuracy: undefined, northboundHolding: null };
+    if (!ctx) return { insiderChanges: undefined, upcomingUnlock: undefined, northboundHolding: null, conceptContext: undefined };
     return {
       insiderChanges: ctx.insider_changes ?? ctx.insiderChanges,
       upcomingUnlock: ctx.upcoming_unlock ?? ctx.upcomingUnlock,
-      repurchase: ctx.repurchase,
-      priceRange52w: ctx.price_range_52w ?? ctx.priceRange52w,
-      predictionAccuracy: ctx.prediction_accuracy ?? ctx.predictionAccuracy,
       northboundHolding: ctx.northbound_holding ?? ctx.northboundHolding ?? null,
+      conceptContext: ctx.concept_context ?? ctx.conceptContext ?? undefined,
     };
   }, [details?.contextSnapshot]);
 
@@ -349,7 +214,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
     scoreMomentumAdj, positionDiagnosis, actionNow,
     executionDifficulty, executionNote, behavioralWarning,
     skillUsed, resonanceLevel, capitalConflictWarning,
-    profitTakePlan, analysisScene, skillAnalysis,
+    profitTakePlan, analysisScene, skillAnalysis: _skillAnalysis,
   } = useMemo(() => {
     const raw = details?.rawResult as Record<string, any> | undefined;
     if (!raw) return {
@@ -385,25 +250,99 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
     };
   }, [details?.rawResult]);
 
-  const hasPosition = !!positionInfo;
+  const hasPosition = (shares != null && shares > 0) || !!positionInfo;
+  const costPrice = positionInfo?.cost_price ?? positionInfo?.costPrice;
+  const holdingDays = positionInfo?.holding_days ?? positionInfo?.holdingDays ?? null;
   const positionAdvice =
     (details?.rawResult as Record<string, any>)?.dashboard?.core_conclusion?.position_advice ??
     (details?.rawResult as Record<string, any>)?.core_conclusion?.position_advice ??
     undefined;
 
+  // ---------- 持仓模式 ----------
+  if (hasPosition) {
+    return (
+      <div className="space-y-3 animate-fade-in">
+        {/* 1. 浮盈亏 + 持有天数 + 成本价 */}
+        <PnLHeader
+          meta={meta}
+          shares={shares}
+          costPrice={costPrice}
+          holdingDays={holdingDays}
+        />
+
+        {/* 2. 决策卡：继续持有/止盈/止损/加仓/减仓 */}
+        <HoldDecisionCard
+          summary={summary}
+          strategy={strategy}
+          holdingStrategy={dashboardHoldingStrategy}
+          currentPrice={meta.currentPrice}
+          costPrice={costPrice}
+        />
+
+        {/* 3. 持仓周期建议 */}
+        {strategy?.holdingHorizon && strategy.holdingHorizon.recommended !== 'none' && (
+          <HoldingHorizonCard horizon={strategy.holdingHorizon} />
+        )}
+
+        {/* 4. 风险预警 */}
+        <RiskAlertCard
+          upcomingUnlock={upcomingUnlock}
+          insiderChanges={insiderChanges}
+          conceptContext={conceptContext}
+        />
+
+        {/* 5. 作战计划（分阶段止盈） */}
+        <ReportStrategy
+          strategy={strategy}
+          hasPositionInfo={true}
+          costPrice={costPrice}
+          currentPrice={meta.currentPrice}
+          holdingStrategy={dashboardHoldingStrategy}
+          defenseMode={defenseMode}
+          maxDrawdown60d={quantExtras?.max_drawdown_60d ?? quantExtras?.maxDrawdown60d}
+          positionDiagnosis={positionDiagnosis}
+          suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
+          profitTakePlan={profitTakePlan}
+          analysisScene={analysisScene ?? undefined}
+          totalShares={positionInfo?.shares ?? positionInfo?.position_shares ?? undefined}
+        />
+
+        {/* 6. 折叠区：AI诊断、信号灯、量化、新闻 */}
+        <CollapsibleSection title="📊 更多分析">
+          <AiDiagnosis
+            analysisSummary={summary.analysisSummary}
+            intelligence={intelligence}
+            counterArguments={counterArguments}
+            positionAdvice={positionAdvice}
+            defaultExpanded={false}
+          />
+          <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
+          <QuantPanel quantExtras={quantExtras} skillUsed={skillUsed ?? undefined} />
+          <ReportNews stockCode={meta.stockCode} />
+        </CollapsibleSection>
+
+        {/* 7. 交易日志 */}
+        <TradeLog
+          stockCode={meta.stockCode}
+          stockName={meta.stockName}
+          analysisScore={summary.sentimentScore}
+          analysisAdvice={summary.operationAdvice}
+          queryId={queryId}
+          currentPrice={meta.currentPrice}
+        />
+      </div>
+    );
+  }
+
+  // ---------- 未持仓模式 ----------
   return (
     <div className="space-y-3 animate-fade-in">
-      {/* 0. 雷区预警（解禁/减持，如有强制首屏）*/}
-      <DangerBanners upcomingUnlock={upcomingUnlock} insiderChanges={insiderChanges} />
-
-      {/* 1. 股票概览（紧凑 Hero）*/}
+      {/* 1. 股票概览（精简：名称+价格+涨跌+操作建议+评分） */}
       <ReportOverview
         meta={meta}
         summary={summary}
-        hasPositionInfo={hasPosition}
+        hasPositionInfo={false}
         oneSentence={oneSentence ?? undefined}
-        costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
-        positionAmount={positionInfo?.position_amount ?? positionInfo?.positionAmount}
         shares={shares}
         totalCapital={totalCapital}
         scoreMomentumAdj={scoreMomentumAdj}
@@ -421,146 +360,36 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
         analysisScene={analysisScene ?? undefined}
       />
 
-      {/* 1.5 三秒决策卡（操作/价格区间/止损/目标/盈交计算器）*/}
-      <DecisionCard
-        summary={summary}
+      {/* 2. 概念标签 */}
+      <ConceptBadge conceptContext={conceptContext} />
+
+      {/* 3. 建仓条件卡 */}
+      <EntryConditionCard
+        entryConditions={report.entryConditions}
         strategy={strategy}
-        meta={meta}
-        totalCapital={totalCapital}
+        currentPrice={meta.currentPrice}
       />
 
-      {/* 1.7 三色信号灯（技术面/基本面/资金面/北向）*/}
-      <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
+      {/* 4. AI 精简诊断 */}
+      <AiDigestCard analysisSummary={summary.analysisSummary} />
 
-      {/* 2. 持仓快照（有持仓时：紧凑一行，成本/浮盈/持有天数）*/}
-      {positionInfo && (
-        <PositionSnapshotBar
-          positionInfo={positionInfo}
+      {/* 5. 估值定位 */}
+      <ValuationBar quantExtras={quantExtras} />
+
+      {/* 6. 折叠区：信号灯、量化、新闻、交易日志 */}
+      <CollapsibleSection title="📊 更多分析">
+        <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
+        <QuantPanel quantExtras={quantExtras} skillUsed={skillUsed ?? undefined} />
+        <ReportNews stockCode={meta.stockCode} />
+        <TradeLog
+          stockCode={meta.stockCode}
+          stockName={meta.stockName}
+          analysisScore={summary.sentimentScore}
+          analysisAdvice={summary.operationAdvice}
+          queryId={queryId}
           currentPrice={meta.currentPrice}
         />
-      )}
-
-      {/* 1.5 历史准确率信任条（散户心理安全感）*/}
-      {predictionAccuracy && (() => {
-        const pa = predictionAccuracy as Record<string, any>;
-        const wr = pa.bullish_win_rate ?? pa.bullishWinRate;
-        const cnt = pa.bullish_count ?? pa.bullishCount ?? pa.total_records ?? pa.totalRecords;
-        const avg = pa.avg_5d_return ?? pa.avg5dReturn;
-        if (wr == null && avg == null) return null;
-        const wrGood = wr != null && wr >= 60;
-        const wrBad = wr != null && wr < 40;
-        const wrColor = wrGood ? 'text-emerald-400' : wrBad ? 'text-red-400/70' : 'text-amber-400/80';
-        return (
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.05] text-[11px]">
-            <span className="text-white/25 flex-shrink-0">📊 该股历史准确率</span>
-            {wr != null && (
-              <span className={`font-mono font-semibold ${wrColor}`}>
-                看多胜率 {wr.toFixed(0)}%
-                {cnt != null && <span className="text-white/25 font-normal ml-1">({cnt}次)</span>}
-              </span>
-            )}
-            {avg != null && (
-              <span className={`font-mono ${avg >= 0 ? 'text-emerald-400/70' : 'text-red-400/60'}`}>
-                5日均益 {avg >= 0 ? '+' : ''}{avg.toFixed(1)}%
-              </span>
-            )}
-            <span className="text-white/15 text-[10px] ml-auto">90日回填</span>
-          </div>
-        );
-      })()}
-
-      {/* 2.5 当日行情快照（成交量/中/振幅/换手率/量比）*/}
-      {report.todaySnapshot && (
-        <TodaySnapshot data={report.todaySnapshot} />
-      )}
-
-      {/* 3. AI 分析（主角：默认展开）*/}
-      <AiDiagnosis
-        analysisSummary={summary.analysisSummary}
-        intelligence={intelligence}
-        counterArguments={counterArguments}
-        positionAdvice={positionAdvice}
-        defaultExpanded={true}
-      />
-
-      {/* 3.1 Skills深度分析卡（standard_3call专用，有skill_analysis时展示）*/}
-      {skillAnalysis && (skillAnalysis.primary_analysis || skillAnalysis.secondary_analysis) && (
-        <SkillAnalysisCard skillAnalysis={skillAnalysis} skillUsed={skillUsed} />
-      )}
-
-      {/* 3.25 重要信号（AI风险+正面摔化+量化指标）*/}
-      <KeyInsights
-        intelligence={intelligence ?? undefined}
-        counterArguments={counterArguments ?? undefined}
-        quantExtras={quantExtras ?? undefined}
-      />
-
-      {/* 3.5 52周价格区间（散户直观感知价格高低位）*/}
-      <PriceRangeBar
-        range={priceRange52w}
-        currentPrice={meta.currentPrice}
-      />
-
-      {/* 3.6 股东动态（P3 增减持/解禁/回购）*/}
-      <ShareholderCard
-        insiderChanges={insiderChanges}
-        upcomingUnlock={upcomingUnlock}
-        repurchase={repurchase}
-      />
-
-      {/* 4. 操作计划（止损/止盈/仓位）*/}
-      <ReportStrategy
-        strategy={strategy}
-        hasPositionInfo={hasPosition}
-        costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
-        currentPrice={meta.currentPrice}
-        holdingStrategy={dashboardHoldingStrategy}
-        defenseMode={defenseMode}
-        maxDrawdown60d={quantExtras?.max_drawdown_60d ?? quantExtras?.maxDrawdown60d}
-        positionDiagnosis={positionDiagnosis}
-        suggestedPositionPct={quantExtras?.suggested_position_pct ?? quantExtras?.suggestedPositionPct ?? null}
-        profitTakePlan={profitTakePlan}
-        analysisScene={analysisScene ?? undefined}
-        totalShares={positionInfo?.shares ?? positionInfo?.position_shares ?? undefined}
-      />
-
-      {/* 4.5 持仓周期建议（短线/中线/长线）*/}
-      {strategy?.holdingHorizon && strategy.holdingHorizon.recommended !== 'none' && (
-        <HoldingHorizonCard horizon={strategy.holdingHorizon} />
-      )}
-
-      {/* 5. 关键价位（有时才显示）*/}
-      {strategy?.keyPriceLevels && strategy.keyPriceLevels.length > 0 && (
-        <KeyPriceLevels
-          levels={strategy.keyPriceLevels}
-          currentPrice={meta.currentPrice}
-          riskRewardRatio={strategy.riskRewardRatio}
-          takeProfitPlan={strategy.takeProfitPlan}
-          hasPositionInfo={hasPosition}
-          costPrice={positionInfo?.cost_price ?? positionInfo?.costPrice}
-          defenseMode={defenseMode}
-        />
-      )}
-
-      {/* 6. 量化数据（折叠）*/}
-      <QuantPanel
-        quantExtras={quantExtras}
-        quantVsAi={summary.quantVsAi}
-        skillUsed={skillUsed ?? undefined}
-      />
-
-      {/* 7. 公告与资讯 */}
-      <ReportNews stockCode={meta.stockCode} />
-
-      {/* 8. 交易日志 */}
-      <TradeLog
-        stockCode={meta.stockCode}
-        stockName={meta.stockName}
-        analysisScore={summary.sentimentScore}
-        analysisAdvice={summary.operationAdvice}
-        queryId={queryId}
-        currentPrice={meta.currentPrice}
-      />
+      </CollapsibleSection>
     </div>
   );
 };

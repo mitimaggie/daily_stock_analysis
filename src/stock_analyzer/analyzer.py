@@ -23,6 +23,9 @@ from .pattern_recognition import PatternRecognition
 
 logger = logging.getLogger(__name__)
 
+# _prepare_weekly_df 中 DB fallback 使用的长历史天数
+_WEEKLY_LONG_HISTORY_DAYS = 500
+
 # A股 ETF 代码前缀
 _ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
 
@@ -42,6 +45,29 @@ class StockTrendAnalyzer:
     def __init__(self):
         """初始化分析器"""
         pass
+
+    @staticmethod
+    def _prepare_weekly_df(df: pd.DataFrame, code: str = '') -> Optional[pd.DataFrame]:
+        """统一生成周线 DataFrame，供 resonance 和 scoring 共用
+
+        优先从 DB 取长历史（500 天），确保周线 MA20 等需要足够数据的计算准确。
+        """
+        long_df = df
+        try:
+            from src.storage import DatabaseManager
+            db = DatabaseManager.get_instance()
+            stock_code = code or df.attrs.get('stock_code', '')
+            if stock_code:
+                history = db.get_stock_history_df(stock_code, days=_WEEKLY_LONG_HISTORY_DAYS)
+                if history is not None and len(history) > len(df):
+                    long_df = history
+        except Exception:
+            pass
+
+        weekly_df = TechnicalIndicators.resample_to_weekly(long_df)
+        if weekly_df is not None and len(weekly_df) >= 10:
+            TechnicalIndicators.calculate_all(weekly_df)
+        return weekly_df
     
     @staticmethod
     def detect_market_regime(df: pd.DataFrame, index_change_pct: float = 0.0, 
@@ -315,8 +341,7 @@ class StockTrendAnalyzer:
                         break
                 result.consecutive_limits = count
 
-            # VWAP
-            df = TechnicalIndicators.calc_vwap(df)
+            # VWAP（由 calculate_all() 中的 _calc_vwap 统一计算，含 VWAP/VWAP_bias 列）
             result.vwap = round(float(df.iloc[-1].get('VWAP', 0) or 0), 2)
             result.vwap_bias = round(float(df.iloc[-1].get('VWAP_bias', 0) or 0), 2)
 
@@ -388,11 +413,13 @@ class StockTrendAnalyzer:
             self._analyze_volume(result, df, latest, prev)
             self._analyze_macd(result, prev)
             self._analyze_rsi(result, df, prev)
-            self._analyze_kdj(result, df, prev)
             self._analyze_trend(result, df, prev)
+            self._analyze_kdj(result, df, prev)
             self._calculate_bias(result)
             
             result.support_levels, result.resistance_levels = RiskManager.compute_support_resistance_levels(df, result)
+
+            weekly_df = self._prepare_weekly_df(df, code=code)
             
             score = ScoringSystem.calculate_base_score(result, market_regime, time_horizon=time_horizon)
             result.signal_score = score
@@ -400,7 +427,7 @@ class StockTrendAnalyzer:
             
             ResonanceDetector.detect_indicator_resonance(result, df, prev)
             ResonanceDetector.detect_market_behavior(result, df)
-            ResonanceDetector.check_multi_timeframe_resonance(result, df)
+            ResonanceDetector.check_multi_timeframe_resonance(result, df, weekly_df=weekly_df)
             
             is_etf_code = _is_etf(code)
 
@@ -435,7 +462,7 @@ class StockTrendAnalyzer:
             ScoringSystem.detect_rsi_macd_divergence(result, df)
             if not is_etf_code:
                 ScoringSystem.detect_volume_spike_trap(result, df)  # 游资陷阱对 ETF 无意义
-            ScoringSystem.score_weekly_trend(result, df)
+            ScoringSystem.score_weekly_trend(result, df, weekly_df=weekly_df)
             ScoringSystem.apply_kdj_weekly_bonus(result)  # P4: 必须在weekly_trend计算后调用
             ScoringSystem.score_chart_patterns(result, df)
             ScoringSystem.score_vol_anomaly(result, df)
@@ -702,7 +729,7 @@ class StockTrendAnalyzer:
         # === J 值连续极端检测 ===
         result.kdj_consecutive_extreme = TechnicalIndicators.detect_kdj_consecutive_extreme(df)
         
-        # === KDJ 钝化识别（需要趋势强度，先用临时值，_analyze_trend 后会更新）===
+        # === KDJ 钝化识别（_analyze_trend 已先于本方法执行，trend_strength 已正确赋值）===
         result.kdj_passivation = TechnicalIndicators.detect_kdj_passivation(df, result.trend_strength)
         
         # === KDJ 背离优先级最高 ===

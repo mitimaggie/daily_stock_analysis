@@ -570,11 +570,45 @@ class DataFetcherManager:
         return stock_code
         
     def batch_get_stock_names(self, stock_codes: List[str]) -> Dict[str, str]:
-        res = {}
+        """批量获取股票名称，优先用缓存，缓存未命中时批量请求全A映射表"""
+        result: Dict[str, str] = {}
+        missing_codes: List[str] = []
+
         for code in stock_codes:
+            cached_name = self._stock_name_cache.get(code)
+            if cached_name:
+                result[code] = cached_name
+            else:
+                missing_codes.append(code)
+
+        if not missing_codes:
+            return result
+
+        try:
+            import akshare as ak
+            df_all = ak.stock_info_a_code_name()
+            if df_all is not None and not df_all.empty:
+                code_col = 'code' if 'code' in df_all.columns else df_all.columns[0]
+                name_col = 'name' if 'name' in df_all.columns else df_all.columns[1]
+                name_map = dict(zip(
+                    df_all[code_col].astype(str).str.zfill(6),
+                    df_all[name_col],
+                ))
+                for code in missing_codes:
+                    name = name_map.get(code)
+                    if name:
+                        result[code] = name
+                        self._stock_name_cache[code] = name
+                missing_codes = [c for c in missing_codes if c not in result]
+        except Exception as e:
+            logger.warning(f"批量获取股票名称失败，回退到逐个请求: {e}")
+
+        for code in missing_codes:
             name = self.get_stock_name(code)
-            if name: res[code] = name
-        return res
+            if name:
+                result[code] = name
+
+        return result
     
     def get_sector_rankings(self, n=5):
         for f in self._fetchers:

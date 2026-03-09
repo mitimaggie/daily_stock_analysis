@@ -5,6 +5,7 @@
 """
 
 import logging
+import numpy as np
 import pandas as pd
 from typing import List, Tuple, Dict, Any, Optional
 from .types import TrendAnalysisResult, TrendStatus, MarketRegime, RSIStatus, VolumeStatus, MACDStatus
@@ -274,68 +275,166 @@ class RiskManager:
                     result.risk_reward_verdict = "不值得"
     
     @staticmethod
+    def _calc_volume_profile(df: pd.DataFrame, window: int = 60, bins: int = 50) -> Dict[str, float]:
+        """计算成交量密集区（Volume Profile）
+
+        Returns:
+            {'poc': float, 'val_low': float, 'val_high': float} 或 {}
+        """
+        tail = df.tail(window)
+        if len(tail) < 10:
+            return {}
+
+        try:
+            price_low = float(tail['low'].min())
+            price_high = float(tail['high'].max())
+            if price_high <= price_low:
+                return {}
+
+            bin_edges = np.linspace(price_low, price_high, bins + 1)
+            vol_profile = np.zeros(bins)
+
+            for _, row in tail.iterrows():
+                low_idx = int(np.searchsorted(bin_edges, float(row['low']))) - 1
+                high_idx = int(np.searchsorted(bin_edges, float(row['high']))) - 1
+                low_idx = max(0, min(low_idx, bins - 1))
+                high_idx = max(0, min(high_idx, bins - 1))
+                vol = float(row['volume'])
+                if high_idx > low_idx:
+                    vol_per_bin = vol / (high_idx - low_idx + 1)
+                    vol_profile[low_idx:high_idx + 1] += vol_per_bin
+                else:
+                    vol_profile[low_idx] += vol
+
+            poc_idx = int(np.argmax(vol_profile))
+            poc = (bin_edges[poc_idx] + bin_edges[poc_idx + 1]) / 2
+
+            total_vol = vol_profile.sum()
+            if total_vol <= 0:
+                return {'poc': round(poc, 2), 'val_low': round(price_low, 2), 'val_high': round(price_high, 2)}
+
+            target = total_vol * 0.70
+            cum_vol = vol_profile[poc_idx]
+            low_bound = poc_idx
+            high_bound = poc_idx
+            while cum_vol < target and (low_bound > 0 or high_bound < bins - 1):
+                expand_low = vol_profile[low_bound - 1] if low_bound > 0 else 0
+                expand_high = vol_profile[high_bound + 1] if high_bound < bins - 1 else 0
+                if expand_low >= expand_high and low_bound > 0:
+                    low_bound -= 1
+                    cum_vol += expand_low
+                elif high_bound < bins - 1:
+                    high_bound += 1
+                    cum_vol += expand_high
+                else:
+                    low_bound -= 1
+                    cum_vol += expand_low
+
+            val_low = bin_edges[low_bound]
+            val_high = bin_edges[min(high_bound + 1, bins)]
+
+            return {
+                'poc': round(float(poc), 2),
+                'val_low': round(float(val_low), 2),
+                'val_high': round(float(val_high), 2),
+            }
+        except Exception:
+            return {}
+
+    @staticmethod
     def compute_support_resistance_levels(df: pd.DataFrame, result: TrendAnalysisResult) -> Tuple[List[float], List[float]]:
         """
-        计算支撑位和阻力位：Swing高低点 + 均线 + 整数关口 + 筹码峰值 (Q2增强)
-        
-        Args:
-            df: K线数据
-            result: 分析结果对象
-            
+        计算支撑位和阻力位（优先级排序版）
+
+        数据源及权重优先级：均线(1.0) > Volume Profile(0.8) > Swing(0.6) > 整数关口(0.4)
+
         Returns:
-            (支撑位列表, 阻力位列表)
+            (支撑位列表, 阻力位列表)  — 按权重降序排列
         """
-        support_set, resistance_set = set(), set()
-        tail = df.tail(30)
-        
-        if len(tail) >= 5:
+        levels: List[Dict[str, Any]] = []
+        price = result.current_price
+        if price <= 0:
+            return [], []
+
+        # === 1. 多窗口 Swing 高低点 ===
+        swing_weights = {30: 0.6, 60: 0.55, 120: 0.5}
+        for window, weight in swing_weights.items():
+            if len(df) < window:
+                continue
+            label = {30: '短期', 60: '中期', 120: '长期'}[window]
+            tail = df.tail(window)
+            if len(tail) < 5:
+                continue
             tail_records = tail[['high', 'low']].to_dict('records')
             for i in range(2, len(tail_records) - 2):
                 h = float(tail_records[i]['high'])
                 l = float(tail_records[i]['low'])
-                prev_h = float(tail_records[i-1]['high'])
-                prev_l = float(tail_records[i-1]['low'])
-                next_h = float(tail_records[i+1]['high'])
-                next_l = float(tail_records[i+1]['low'])
-                
+                prev_h = float(tail_records[i - 1]['high'])
+                prev_l = float(tail_records[i - 1]['low'])
+                next_h = float(tail_records[i + 1]['high'])
+                next_l = float(tail_records[i + 1]['low'])
                 if h > prev_h and h > next_h:
-                    resistance_set.add(h)
+                    levels.append({'price': h, 'type': 'resistance', 'source': f'{label}高点', 'weight': weight})
                 if l < prev_l and l < next_l:
-                    support_set.add(l)
-        
-        price = result.current_price
+                    levels.append({'price': l, 'type': 'support', 'source': f'{label}低点', 'weight': weight})
 
-        for ma_val in [result.ma5, result.ma10, result.ma20, result.ma60]:
-            if ma_val > 0:
-                if ma_val < price:
-                    support_set.add(ma_val)
-                elif ma_val > price:
-                    resistance_set.add(ma_val)
+        # === 2. 均线（最高权重 1.0）===
+        ma_map = {'MA5': result.ma5, 'MA10': result.ma10, 'MA20': result.ma20, 'MA60': result.ma60}
+        for ma_name, ma_val in ma_map.items():
+            if ma_val and ma_val > 0 and abs(ma_val - price) / price < 0.15:
+                ltype = 'support' if ma_val < price else 'resistance'
+                levels.append({'price': ma_val, 'type': ltype, 'source': ma_name, 'weight': 1.0})
 
-        # Q2: 整数关口效应（A股特有：10/20/50/100等整数位有天然支撑/阻力）
-        if price > 0:
-            # 根据价格量级确定整数关口间距
-            if price >= 100:
-                step = 10
-            elif price >= 50:
-                step = 5
-            elif price >= 10:
-                step = 2
-            else:
-                step = 1
-            # 找到价格附近的整数关口（上下各2个）
-            base = int(price / step) * step
-            for offset in range(-2, 3):
-                level = base + offset * step
-                if level > 0 and level != price:
-                    if level < price:
-                        support_set.add(float(level))
-                    else:
-                        resistance_set.add(float(level))
+        # === 3. Volume Profile（权重 0.8）===
+        vp = RiskManager._calc_volume_profile(df)
+        if vp:
+            result.volume_profile = vp
+            levels.append({'price': vp['poc'], 'type': 'support_resistance', 'source': '成交量密集区(POC)', 'weight': 0.8})
+            levels.append({'price': vp['val_low'], 'type': 'support', 'source': '成交量密集区下沿', 'weight': 0.7})
+            levels.append({'price': vp['val_high'], 'type': 'resistance', 'source': '成交量密集区上沿', 'weight': 0.7})
 
-        supports = sorted([s for s in support_set if 0 < s < price], reverse=True)[:5]
-        resistances = sorted([r for r in resistance_set if r > price])[:5]
-        
+        # === 4. 整数关口（A 股特有，权重 0.4）===
+        if price >= 100:
+            step = 10
+        elif price >= 50:
+            step = 5
+        elif price >= 10:
+            step = 2
+        else:
+            step = 1
+        base_level = int(price / step) * step
+        for offset in range(-2, 3):
+            level = base_level + offset * step
+            if level > 0 and abs(level - price) > 0.01:
+                ltype = 'support' if level < price else 'resistance'
+                levels.append({'price': float(level), 'type': ltype, 'source': '整数关口', 'weight': 0.4})
+
+        # === 去重合并（价格相近的取高权重）===
+        merged: List[Dict[str, Any]] = []
+        for lv in sorted(levels, key=lambda x: -x['weight']):
+            too_close = False
+            for m in merged:
+                if abs(m['price'] - lv['price']) / price < 0.005:
+                    if lv['weight'] > m['weight']:
+                        m.update(lv)
+                    too_close = True
+                    break
+            if not too_close:
+                merged.append(lv)
+
+        # === 分离支撑/阻力并按权重排序 ===
+        supports_raw = [lv for lv in merged if lv['type'] in ('support', 'support_resistance') and lv['price'] < price]
+        resistances_raw = [lv for lv in merged if lv['type'] in ('resistance', 'support_resistance') and lv['price'] > price]
+
+        supports_raw.sort(key=lambda x: -x['weight'])
+        resistances_raw.sort(key=lambda x: -x['weight'])
+
+        result.support_levels_detail = supports_raw[:7]
+        result.resistance_levels_detail = resistances_raw[:7]
+
+        supports = [round(lv['price'], 2) for lv in supports_raw[:5]]
+        resistances = [round(lv['price'], 2) for lv in resistances_raw[:5]]
+
         return supports, resistances
     
     # ================================================================
