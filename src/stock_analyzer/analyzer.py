@@ -420,11 +420,15 @@ class StockTrendAnalyzer:
             result.support_levels, result.resistance_levels = RiskManager.compute_support_resistance_levels(df, result)
 
             weekly_df = self._prepare_weekly_df(df, code=code)
-            
+
+            # 背离检测必须在 base_score 之后、共振检测之前执行：
+            # - 在 base_score 之后：避免 RSI 背离分重复计入 base_score
+            # - 在共振之前：rsi_status 需反映背离状态，共振模块才能检测 MACD+RSI 共振
             score = ScoringSystem.calculate_base_score(result, market_regime, time_horizon=time_horizon)
             result.signal_score = score
             ScoringSystem.update_buy_signal(result)
-            
+            ScoringSystem.detect_rsi_macd_divergence(result, df)
+
             ResonanceDetector.detect_indicator_resonance(result, df, prev)
             ResonanceDetector.detect_market_behavior(result, df)
             ResonanceDetector.check_multi_timeframe_resonance(result, df, weekly_df=weekly_df)
@@ -459,7 +463,6 @@ class StockTrendAnalyzer:
                 result.score_breakdown['candle_pattern'] = result.candle_score_adj
             # OBV/ADX/均线发散 评分修正
             ScoringSystem.score_obv_adx(result)
-            ScoringSystem.detect_rsi_macd_divergence(result, df)
             if not is_etf_code:
                 ScoringSystem.detect_volume_spike_trap(result, df)  # 游资陷阱对 ETF 无意义
             ScoringSystem.score_weekly_trend(result, df, weekly_df=weekly_df)
@@ -637,7 +640,7 @@ class StockTrendAnalyzer:
             result.macd_signal = "MACD中性"
     
     def _analyze_rsi(self, result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
-        """RSI分析"""
+        """RSI分析（背离检测已移至 detect_rsi_macd_divergence 统一处理）"""
         rsi_mid = result.rsi_12
         rsi_short = result.rsi_6
         _prev_rsi6_raw = prev.get(f'RSI_{TechnicalIndicators.RSI_SHORT}')
@@ -646,49 +649,8 @@ class StockTrendAnalyzer:
         prev_rsi12 = float(_prev_rsi12_raw) if pd.notna(_prev_rsi12_raw) else 50.0
         is_rsi_golden = (prev_rsi6 <= prev_rsi12) and (rsi_short > rsi_mid)
         is_rsi_death = (prev_rsi6 >= prev_rsi12) and (rsi_short < rsi_mid)
-        
-        rsi_divergence = ""
-        rsi_col = f'RSI_{TechnicalIndicators.RSI_MID}'
-        # 双窗口背离检测：30日（短期）+ 60日（中期，捕捉更大级别顶底）
-        for window, label_suffix in [(30, ""), (60, "(中期)")]:
-            if len(df) < window or rsi_divergence:
-                continue
-            tail = df.tail(window)
-            half = window // 2
-            first_half = tail.head(half)
-            second_half = tail.tail(half)
-            
-            price_high_prev = float(first_half['high'].max())
-            price_high_recent = float(second_half['high'].max())
-            rsi_high_prev = float(first_half[rsi_col].max())
-            rsi_high_recent = float(second_half[rsi_col].max())
-            
-            price_low_prev = float(first_half['low'].min())
-            price_low_recent = float(second_half['low'].min())
-            rsi_low_prev = float(first_half[rsi_col].min())
-            rsi_low_recent = float(second_half[rsi_col].min())
-            
-            # 中期窗口用更宽松的阈值（价格差>2%，RSI差>5）
-            price_thr = 1.02 if window >= 60 else 1.01
-            rsi_thr = 5 if window >= 60 else 3
-            
-            if (price_high_recent > price_high_prev * price_thr and 
-                rsi_high_recent < rsi_high_prev - rsi_thr):
-                rsi_divergence = f"顶背离{label_suffix}"
-            elif (price_low_recent < price_low_prev * (2 - price_thr) and 
-                  rsi_low_recent > rsi_low_prev + rsi_thr):
-                rsi_divergence = f"底背离{label_suffix}"
-        result.rsi_divergence = rsi_divergence
-        
-        if "底背离" in rsi_divergence:
-            result.rsi_status = RSIStatus.BULLISH_DIVERGENCE
-            mid_tag = "（中期大级别）" if "中期" in rsi_divergence else ""
-            result.rsi_signal = f"RSI底背离{mid_tag}(价格新低但RSI未新低)，反转买入信号"
-        elif "顶背离" in rsi_divergence:
-            result.rsi_status = RSIStatus.BEARISH_DIVERGENCE
-            mid_tag = "（中期大级别）" if "中期" in rsi_divergence else ""
-            result.rsi_signal = f"RSI顶背离{mid_tag}(价格新高但RSI未新高)，回调风险"
-        elif is_rsi_golden and rsi_mid < 30:
+
+        if is_rsi_golden and rsi_mid < 30:
             result.rsi_status = RSIStatus.GOLDEN_CROSS_OVERSOLD
             result.rsi_signal = f"RSI超卖区金叉(RSI6={rsi_short:.1f}上穿RSI12={rsi_mid:.1f})，强买入"
         elif is_rsi_golden:
@@ -732,15 +694,11 @@ class StockTrendAnalyzer:
         # === KDJ 钝化识别（_analyze_trend 已先于本方法执行，trend_strength 已正确赋值）===
         result.kdj_passivation = TechnicalIndicators.detect_kdj_passivation(df, result.trend_strength)
         
-        # === KDJ 背离优先级最高 ===
+        # === KDJ 背离（仅底背离影响状态，顶背离回测失效已移除评分影响）===
         if "KDJ底背离" in result.kdj_divergence:
             result.kdj_status = KDJStatus.GOLDEN_CROSS_OVERSOLD
             mid_tag = "（中期大级别）" if "中期" in result.kdj_divergence else ""
             result.kdj_signal = f"KDJ底背离{mid_tag}(价格新低但J值未新低)，反转买入信号"
-        elif "KDJ顶背离" in result.kdj_divergence:
-            result.kdj_status = KDJStatus.OVERBOUGHT
-            mid_tag = "（中期大级别）" if "中期" in result.kdj_divergence else ""
-            result.kdj_signal = f"KDJ顶背离{mid_tag}(价格新高但J值未新高)，见顶风险"
         # === 连续极端信号 ===
         elif result.kdj_consecutive_extreme:
             if "超买" in result.kdj_consecutive_extreme:

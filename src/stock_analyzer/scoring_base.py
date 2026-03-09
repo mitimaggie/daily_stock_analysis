@@ -311,11 +311,9 @@ class ScoringBase:
         if result.kdj_passivation:
             score = int(score * 0.6 + 5 * 0.4)  # 向中性值5靠拢40%
         
-        # KDJ 背离额外修正
+        # KDJ 背离额外修正（仅底背离有效，顶背离回测失效已移除评分影响）
         if result.kdj_divergence == "KDJ底背离":
             score = min(13, score + 2)
-        elif result.kdj_divergence == "KDJ顶背离":
-            score = max(0, score - 2)
         
         # J 值连续极端额外修正
         if result.kdj_consecutive_extreme:

@@ -4,6 +4,8 @@
 包含所有技术指标的计算逻辑：MA、MACD、RSI、KDJ、ATR、布林带等
 """
 
+from typing import List, Tuple, Optional
+
 import numpy as np
 import pandas as pd
 import logging
@@ -649,6 +651,145 @@ class TechnicalIndicators:
         except Exception as e:
             logger.debug(f"VWAP计算失败: {e}")
         return df
+
+    # ── swing point 极值检测与背离分析 ──────────────────────────
+
+    @staticmethod
+    def find_swing_highs(highs: np.ndarray, n: int = 3, lookback: int = 60) -> List[Tuple[int, float]]:
+        """在最近 lookback 根 K 线中，用 N-bar high 算法检测局部最高点。
+
+        Args:
+            highs: 全部 K 线的 high 数组
+            n: 左右各需 n 根 K 线作为比较窗口
+            lookback: 只扫描最近 lookback 根 K 线
+
+        Returns:
+            [(绝对索引, 价格值), ...] 按索引升序
+        """
+        if len(highs) < 2 * n + 1:
+            return []
+
+        start_idx = max(0, len(highs) - lookback)
+        result: List[Tuple[int, float]] = []
+
+        for i in range(start_idx + n, len(highs) - n):
+            window = highs[i - n: i + n + 1]
+            val = highs[i]
+            if val >= window.max() - 1e-9 and (val > highs[i - n] or val > highs[i + n]):
+                result.append((i, float(val)))
+
+        return result
+
+    @staticmethod
+    def find_swing_lows(lows: np.ndarray, n: int = 3, lookback: int = 60) -> List[Tuple[int, float]]:
+        """在最近 lookback 根 K 线中，用 N-bar low 算法检测局部最低点。
+
+        Args:
+            lows: 全部 K 线的 low 数组
+            n: 左右各需 n 根 K 线作为比较窗口
+            lookback: 只扫描最近 lookback 根 K 线
+
+        Returns:
+            [(绝对索引, 价格值), ...] 按索引升序
+        """
+        if len(lows) < 2 * n + 1:
+            return []
+
+        start_idx = max(0, len(lows) - lookback)
+        result: List[Tuple[int, float]] = []
+
+        for i in range(start_idx + n, len(lows) - n):
+            window = lows[i - n: i + n + 1]
+            val = lows[i]
+            if val <= window.min() + 1e-9 and (val < lows[i - n] or val < lows[i + n]):
+                result.append((i, float(val)))
+
+        return result
+
+    @staticmethod
+    def detect_divergence_swing(
+        df: pd.DataFrame,
+        indicator_col: str = 'RSI_12',
+        swing_n: int = 3,
+        lookback: int = 60,
+        price_min_pct: float = 1.0,
+        indicator_min_diff: float = 3.0,
+    ) -> dict:
+        """基于 swing point 的价格-指标背离检测。
+
+        对比最近两个价格极值点与对应位置的指标值，
+        判断是否出现顶背离（价格新高但指标走弱）或底背离（价格新低但指标走强）。
+
+        Args:
+            df: 含 high/low 及指标列的 DataFrame
+            indicator_col: 用于比较的指标列名
+            swing_n: swing point 窗口半径
+            lookback: 回溯 K 线数
+            price_min_pct: 价格差异最小百分比阈值
+            indicator_min_diff: 指标差异最小绝对值阈值
+
+        Returns:
+            包含 top_divergence / bottom_divergence 布尔值及详情的字典
+        """
+        empty: dict = {
+            'top_divergence': False,
+            'bottom_divergence': False,
+            'top_detail': '',
+            'bottom_detail': '',
+            'swing_highs': [],
+            'swing_lows': [],
+        }
+
+        if df is None or len(df) < 2 * swing_n + 1:
+            return empty
+        if indicator_col not in df.columns:
+            logger.debug(f"detect_divergence_swing: 指标列 {indicator_col} 不存在")
+            return empty
+
+        indicator = df[indicator_col].values
+        swing_highs = TechnicalIndicators.find_swing_highs(df['high'].values, swing_n, lookback)
+        swing_lows = TechnicalIndicators.find_swing_lows(df['low'].values, swing_n, lookback)
+
+        result: dict = {
+            'top_divergence': False,
+            'bottom_divergence': False,
+            'top_detail': '',
+            'bottom_detail': '',
+            'swing_highs': swing_highs,
+            'swing_lows': swing_lows,
+        }
+
+        # ── 顶背离：价格创新高、指标走弱 ──
+        valid_highs = [(idx, val) for idx, val in swing_highs
+                       if idx < len(indicator) and not np.isnan(indicator[idx])]
+        if len(valid_highs) >= 2:
+            p1_idx, p1_val = valid_highs[-2]
+            p2_idx, p2_val = valid_highs[-1]
+            ind1, ind2 = indicator[p1_idx], indicator[p2_idx]
+            if (p2_val > p1_val * (1 + price_min_pct / 100)
+                    and ind2 < ind1 - indicator_min_diff):
+                result['top_divergence'] = True
+                result['top_detail'] = (
+                    f"价格高点{p2_val:.1f}>{p1_val:.1f}，"
+                    f"{indicator_col} {ind2:.1f}<{ind1:.1f}"
+                )
+
+        # ── 底背离：价格创新低、指标走强 ──
+        valid_lows = [(idx, val) for idx, val in swing_lows
+                      if idx < len(indicator) and not np.isnan(indicator[idx])]
+        if len(valid_lows) >= 2:
+            t1_idx, t1_val = valid_lows[-2]
+            t2_idx, t2_val = valid_lows[-1]
+            ind1, ind2 = indicator[t1_idx], indicator[t2_idx]
+            if (t2_val < t1_val * (1 - price_min_pct / 100)
+                    and ind2 > ind1 + indicator_min_diff):
+                result['bottom_divergence'] = True
+                result['bottom_detail'] = (
+                    f"价格低点{t2_val:.1f}<{t1_val:.1f}，"
+                    f"{indicator_col} {ind2:.1f}>{ind1:.1f}"
+                )
+
+        return result
 
     @staticmethod
     def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:

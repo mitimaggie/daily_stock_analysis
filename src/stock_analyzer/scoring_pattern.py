@@ -16,6 +16,7 @@ from .types import VolumeStatus, MACDStatus, RSIStatus, KDJStatus
 from data_provider.fundamental_types import FundamentalData, ValuationSnapshot, FinancialSummary, ForecastData
 from data_provider.analysis_types import CapitalFlowData, SectorContext, QuoteExtra
 from data_provider.realtime_types import ChipDistribution
+from .indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +30,12 @@ class ScoringPattern:
         """OBV量能趋势 + ADX趋势强度 + 均线发散速率 综合评分修正"""
         adj = 0
         
-        # === OBV 背离（比量价背离更可靠）===
+        # === OBV 背离（仅顶背离有效，底背离回测失效已移除评分影响）===
         obv_div = getattr(result, 'obv_divergence', '')
         if obv_div == "OBV顶背离":
             adj -= 3
             result.risk_factors.append("OBV顶背离：价格新高但累积量能未跟上，上涨可能虚假")
             result.score_breakdown['obv_divergence'] = -3
-        elif obv_div == "OBV底背离":
-            adj += 3
-            result.signal_reasons.append("OBV底背离：价格新低但累积量能企稳，底部信号")
-            result.score_breakdown['obv_divergence'] = 3
         
         # === OBV 趋势确认/否定 ===
         obv_trend = getattr(result, 'obv_trend', '')
@@ -99,21 +96,11 @@ class ScoringPattern:
 
     @staticmethod
     def detect_rsi_macd_divergence(result: TrendAnalysisResult, df: pd.DataFrame):
-        """P2: RSI / MACD 背离检测（顶背离看空、底背离看多）
+        """RSI / MACD 背离检测（混合策略）
 
-        背离定义：
-        - 顶背离：价格创近期新高，但 RSI/MACD_DIF 未创新高（动量衰竭，看空信号）
-        - 底背离：价格创近期新低，但 RSI/MACD_DIF 未创新低（下跌动力减弱，看多信号）
-
-        检测窗口：以近 40 根日线的局部高/低点为基础，识别最近两个同向极值点。
-
-        评分调整：
-        - RSI 顶背离：-4（高位追涨风险）
-        - MACD 顶背离：-3（动量衰竭）
-        - RSI+MACD 双顶背离：-6（强顶部警告）
-        - RSI 底背离：+4（超跌反弹）
-        - MACD 底背离：+3（动力衰竭止跌）
-        - RSI+MACD 双底背离：+6（强底部信号）
+        顶背离：Swing Point (N=3) — 震荡市误报率更低
+        底背离：半分法 (30日窗口) — 信号质量更稳定
+        同时写入 rsi_divergence/rsi_status/rsi_signal，作为 RSI 背离的唯一来源。
         """
         if df is None or len(df) < 30:
             return
@@ -121,104 +108,77 @@ class ScoringPattern:
             close = df['close'].values.astype(float)
             n = len(close)
 
-            # 计算 RSI(14)
             delta = pd.Series(close).diff()
             gain = delta.clip(lower=0).rolling(14).mean()
             loss = (-delta.clip(upper=0)).rolling(14).mean()
             rsi_series = (100 - 100 / (1 + gain / (loss + 1e-9))).values
 
-            # 计算 MACD DIF（EMA12-EMA26）
             ema12 = pd.Series(close).ewm(span=12, adjust=False).mean().values
             ema26 = pd.Series(close).ewm(span=26, adjust=False).mean().values
             macd_dif = ema12 - ema26
 
-            # --- 寻找最近两个局部高点（近 60 日内，窗口=5）---
-            window = 5
-            lookback = min(60, n - 1)
-            start_idx = n - lookback
-
-            def find_peaks(arr, start, end, k=2):
-                """在 arr[start:end] 中找最近 k 个局部高点，返回 [(idx, val)]"""
-                peaks = []
-                for i in range(end - 1, start + window - 1, -1):
-                    lo, hi = max(0, i - window), min(len(arr), i + window + 1)
-                    if arr[i] >= max(arr[lo:hi]) - 1e-9:
-                        # 与上一个高点至少间隔 window 日
-                        if not peaks or (peaks[-1][0] - i) >= window:
-                            peaks.append((i, float(arr[i])))
-                        if len(peaks) >= k:
-                            break
-                return peaks
-
-            def find_troughs(arr, start, end, k=2):
-                """在 arr[start:end] 中找最近 k 个局部低点，返回 [(idx, val)]"""
-                troughs = []
-                for i in range(end - 1, start + window - 1, -1):
-                    lo, hi = max(0, i - window), min(len(arr), i + window + 1)
-                    if arr[i] <= min(arr[lo:hi]) + 1e-9:
-                        if not troughs or (troughs[-1][0] - i) >= window:
-                            troughs.append((i, float(arr[i])))
-                        if len(troughs) >= k:
-                            break
-                return troughs
-
-            price_peaks = find_peaks(close, start_idx, n)
-            price_troughs = find_troughs(close, start_idx, n)
-
-            rsi_div = 0    # >0 底背离, <0 顶背离
+            rsi_div = 0
             macd_div = 0
 
-            # === 顶背离检测 ===
-            if len(price_peaks) >= 2:
-                p1_idx, p1_val = price_peaks[0]   # 最近高点
-                p2_idx, p2_val = price_peaks[1]   # 上一个高点
-                # 价格创新高（近高点 > 前高点）
-                if p1_val > p2_val * 1.005 and p1_idx > p2_idx:
+            # ══ 顶背离：Swing Point (N=3) ══
+            swing_highs = TechnicalIndicators.find_swing_highs(
+                df['high'].values.astype(float), n=3, lookback=60)
+            valid_highs = [(idx, val) for idx, val in swing_highs
+                           if idx < len(rsi_series) and not np.isnan(rsi_series[idx])]
+            if len(valid_highs) >= 2:
+                p1_idx, p1_val = valid_highs[-2]
+                p2_idx, p2_val = valid_highs[-1]
+                if p2_val > p1_val * 1.01:
                     rsi1, rsi2 = rsi_series[p1_idx], rsi_series[p2_idx]
                     dif1, dif2 = macd_dif[p1_idx], macd_dif[p2_idx]
-                    # RSI 顶背离：价格新高但 RSI 更低
-                    if not (np.isnan(rsi1) or np.isnan(rsi2)) and rsi1 < rsi2 - 3 and rsi1 > 50:
+                    if rsi2 < rsi1 - 3 and rsi2 > 50:
                         rsi_div = -1
                         result.risk_factors.append(
-                            f"📉 RSI顶背离：价格高点{p1_val:.2f}>{p2_val:.2f}，"
-                            f"但RSI从{rsi2:.0f}降至{rsi1:.0f}，动量衰竭"
-                        )
-                    # MACD 顶背离：价格新高但 DIF 更低
-                    if not (np.isnan(dif1) or np.isnan(dif2)) and dif1 < dif2 - 0.001 * abs(p1_val):
+                            f"📉 RSI顶背离：价格高点{p2_val:.2f}>{p1_val:.2f}，"
+                            f"但RSI从{rsi1:.0f}降至{rsi2:.0f}，动量衰竭")
+                    if dif2 < dif1 - 0.001 * abs(p2_val):
                         macd_div = -1
                         result.risk_factors.append(
                             f"📉 MACD顶背离：价格新高但DIF回落"
-                            f"({dif2:.4f}→{dif1:.4f})，上涨动力不足"
-                        )
+                            f"({dif1:.4f}→{dif2:.4f})，上涨动力不足")
 
-            # === 底背离检测 ===
-            if len(price_troughs) >= 2:
-                t1_idx, t1_val = price_troughs[0]   # 最近低点
-                t2_idx, t2_val = price_troughs[1]   # 上一个低点
-                # 价格创新低（近低点 < 前低点）
-                if t1_val < t2_val * 0.995 and t1_idx > t2_idx:
-                    rsi1, rsi2 = rsi_series[t1_idx], rsi_series[t2_idx]
-                    dif1, dif2 = macd_dif[t1_idx], macd_dif[t2_idx]
-                    # RSI 底背离：价格新低但 RSI 更高
-                    if not (np.isnan(rsi1) or np.isnan(rsi2)) and rsi1 > rsi2 + 3 and rsi1 < 50:
+            # ══ 底背离：半分法 (30日窗口) ══
+            if n >= 30:
+                tail_30 = df.tail(30)
+                first_half = tail_30.head(15)
+                second_half = tail_30.tail(15)
+
+                p_low_prev = float(first_half['low'].min())
+                p_low_recent = float(second_half['low'].min())
+
+                if p_low_recent < p_low_prev * 0.99:
+                    rsi_col_vals = rsi_series[n-30:]
+                    rsi_first = rsi_col_vals[:15]
+                    rsi_second = rsi_col_vals[15:]
+                    rsi_low_prev = float(np.nanmin(rsi_first))
+                    rsi_low_recent = float(np.nanmin(rsi_second))
+
+                    dif_first = macd_dif[n-30:n-15]
+                    dif_second = macd_dif[n-15:]
+                    dif_low_prev = float(np.nanmin(dif_first)) if len(dif_first) > 0 else 0
+                    dif_low_recent = float(np.nanmin(dif_second)) if len(dif_second) > 0 else 0
+
+                    if (not np.isnan(rsi_low_prev) and not np.isnan(rsi_low_recent)
+                            and rsi_low_recent > rsi_low_prev + 3 and rsi_low_recent < 50):
                         rsi_div = 1
                         result.signal_reasons.append(
-                            f"📈 RSI底背离：价格低点{t1_val:.2f}<{t2_val:.2f}，"
-                            f"但RSI从{rsi2:.0f}升至{rsi1:.0f}，下跌动力衰竭"
-                        )
-                    # MACD 底背离：价格新低但 DIF 更高
-                    if not (np.isnan(dif1) or np.isnan(dif2)) and dif1 > dif2 + 0.001 * abs(t1_val):
+                            f"📈 RSI底背离：价格低点{p_low_recent:.2f}<{p_low_prev:.2f}，"
+                            f"但RSI从{rsi_low_prev:.0f}升至{rsi_low_recent:.0f}，下跌动力衰竭")
+                    if dif_low_recent > dif_low_prev + 0.001 * abs(p_low_recent):
                         macd_div = 1
                         result.signal_reasons.append(
                             f"📈 MACD底背离：价格新低但DIF抬升"
-                            f"({dif2:.4f}→{dif1:.4f})，止跌迹象"
-                        )
+                            f"({dif_low_prev:.4f}→{dif_low_recent:.4f})，止跌迹象")
 
-            # 综合评分
             adj = 0
             if rsi_div < 0 and macd_div < 0:
                 adj = -6
-                result.risk_factors.append("⚠️ RSI+MACD双顶背离，高位反转风险极高，建议止盈减仓")
+                result.risk_factors.append("⚠️ RSI+MACD双顶背离，高位反转风险极高，建议关注止盈")
             elif rsi_div < 0:
                 adj = -4
             elif macd_div < 0:
@@ -234,6 +194,16 @@ class ScoringPattern:
 
             if adj != 0:
                 result.score_breakdown['divergence_adj'] = adj
+
+            # ══ 同步写入 rsi_divergence / rsi_status / rsi_signal ══
+            if rsi_div < 0:
+                result.rsi_divergence = "顶背离"
+                result.rsi_status = RSIStatus.BEARISH_DIVERGENCE
+                result.rsi_signal = "RSI顶背离(价格新高但RSI未新高)，上涨动能减弱"
+            elif rsi_div > 0:
+                result.rsi_divergence = "底背离"
+                result.rsi_status = RSIStatus.BULLISH_DIVERGENCE
+                result.rsi_signal = "RSI底背离(价格新低但RSI未新低)，反转买入信号"
 
         except Exception as e:
             logger.debug(f"[背离检测] 失败: {e}")
