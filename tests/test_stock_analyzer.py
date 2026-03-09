@@ -617,26 +617,23 @@ class TestCapAdjustments:
         assert 'adj_cap' in result.score_breakdown
 
     def test_negative_cap(self, analyzer):
-        """负向修正超过-20时截断"""
+        """负向修正经分组互斥+组预算截断后正确计算"""
         result = TrendAnalysisResult(code="600000")
-        # valuation_adj=-15 → 被 SINGLE_ADJ_CAP=8 截断为-8
-        # capital_flow_adj=-5, chip_adj=-5 → 各不超8，neg_adj = -8 + -5 + -5 = -18
-        # NEG_CAP=-20，-18 > -20，不需要总量截断
-        # 最终 signal_score = 25 - (-25) + (-18) = 25 - 7 = 25 + (-8-5-5) = 25-18=7？
-        # 重新计算：signal_score=25，adj在score_breakdown中，cap_adjustments把adj加到signal_score
-        # 实际：adj_total = -8 + -5 + -5 = -18，capped = max(-18, -20) = -18
-        # signal_score = 25 + (-18) = 7... 但25本来已经含了adj
-        # 修正：signal_score应该是base_score（不含adj），adj通过cap_adjustments一次性加
-        # 让neg_adj总计超过-20：valuation_adj=-8(截断后), capital_flow_adj=-8, chip_adj=-8 → neg=-24 < NEG_CAP=-20
+        # 新逻辑（分组互斥+组预算）：
+        # valuation_adj=-15 → 单因子截断为-8 → fundamental组(budget ±8) → clamp=-8
+        # capital_flow_adj=-9 → 单因子截断为-8 → capital组(budget ±10) → clamp=-8
+        # chip_adj=-9 → 单因子截断为-8 → other组(budget ±5) → clamp=-5
+        # total_adj = -8 + -8 + -5 = -21
+        # signal_score = 50 + (-21) = 29
         result.score_breakdown = {
-            'valuation_adj': -15,   # → 被截断为 -8
-            'capital_flow_adj': -9, # → 被截断为 -8
-            'chip_adj': -9,         # → 被截断为 -8，合计neg=-24 < NEG_CAP=-20，触发总量截断
+            'valuation_adj': -15,
+            'capital_flow_adj': -9,
+            'chip_adj': -9,
         }
-        result.signal_score = 50  # base_score=50（不含任何adj）
+        result.signal_score = 50
         result.buy_signal = BuySignal.SELL
         ScoringSystem.cap_adjustments(result)
-        assert result.signal_score == 30  # 50 + NEG_CAP(-20) = 30
+        assert result.signal_score == 29
         assert 'adj_cap' in result.score_breakdown
 
     def test_within_range_no_cap(self, analyzer):

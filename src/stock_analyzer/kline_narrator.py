@@ -38,6 +38,7 @@ class KlineNarrator:
         try:
             sections = [
                 KlineNarrator._describe_trend_overview(result, daily_df),
+                KlineNarrator._describe_risk_guard(result),
                 KlineNarrator._describe_ma_structure(result),
                 KlineNarrator._describe_ma_interaction(result, daily_df),
                 KlineNarrator._describe_candle_sequence(result, daily_df),
@@ -106,6 +107,31 @@ class KlineNarrator:
         parts = [p for p in [swing_desc, bb_desc] if p]
         body = "，".join(parts) if parts else f"当前价{price:.2f}"
         return f"【走势概况】{body}{weekly_desc}。"
+
+    @staticmethod
+    def _describe_risk_guard(result: TrendAnalysisResult) -> str:
+        """汇总风控预警信号（不宜交易/信号冲突/止损触发/流动性警告），利用 primacy bias 置顶"""
+        parts = []
+
+        if result.no_trade and result.no_trade_reasons:
+            parts.append(f"- 不宜交易：{'；'.join(result.no_trade_reasons)}")
+
+        conflict_warnings = getattr(result, '_conflict_warnings', None)
+        if conflict_warnings:
+            items = conflict_warnings if isinstance(conflict_warnings, list) else [str(conflict_warnings)]
+            parts.append(f"- 信号冲突：{'；'.join(items)}")
+
+        if getattr(result, 'stop_loss_breached', False):
+            detail = getattr(result, 'stop_loss_breach_detail', '') or '已触发止损'
+            parts.append(f"- 止损触发：{detail}")
+
+        liq_warn = getattr(result, 'liquidity_warning', '') or ''
+        if liq_warn:
+            parts.append(f"- 流动性警告：{liq_warn}")
+
+        if not parts:
+            return ""
+        return "【⚠️ 风控预警】\n" + "\n".join(parts)
 
     @staticmethod
     def _describe_ma_structure(result: TrendAnalysisResult) -> str:

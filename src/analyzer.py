@@ -1166,6 +1166,30 @@ class GeminiAnalyzer:
             + "\n"
         ) if _constraint_items else ""
 
+        # 个股风控信号段落（从 trend_result 提取，优先级高于技术分析结论）
+        _risk_guard_section = ""
+        _tr = context.get('trend_result')
+        if _tr:
+            _rg_parts = []
+            if getattr(_tr, 'no_trade', False) and getattr(_tr, 'no_trade_reasons', None):
+                _rg_parts.append(f"- 不宜交易：{'；'.join(_tr.no_trade_reasons)}")
+            _cw = getattr(_tr, '_conflict_warnings', None)
+            if _cw:
+                _cw_items = _cw if isinstance(_cw, list) else [str(_cw)]
+                _rg_parts.append(f"- 信号冲突：{'；'.join(_cw_items)}")
+            if getattr(_tr, 'stop_loss_breached', False):
+                _sl_detail = getattr(_tr, 'stop_loss_breach_detail', '') or '已触发止损'
+                _rg_parts.append(f"- 止损触发：{_sl_detail}")
+            _lw = getattr(_tr, 'liquidity_warning', '') or ''
+            if _lw:
+                _rg_parts.append(f"- 流动性警告：{_lw}")
+            if _rg_parts:
+                _risk_guard_section = (
+                    "\n## 🚨 个股风控信号（优先级高于技术分析结论）\n"
+                    + "\n".join(_rg_parts)
+                    + '\n⚡ 上述任一项触发时，操作建议不得为"买入"或"加仓"。\n'
+                )
+
         # P2a-2: 组合 Beta section
         _pb = context.get('portfolio_beta')
         if _pb and isinstance(_pb, dict) and _pb.get('portfolio_beta') is not None:
@@ -1515,7 +1539,7 @@ Step 4（{_has_pos_label}） - 结论：
 {f10_str}{sector_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
-{data_availability_section}{prediction_accuracy_section}{constraints_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}{profit_take_plan_section}
+{data_availability_section}{prediction_accuracy_section}{constraints_section}{_risk_guard_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}{profit_take_plan_section}
 ## JSON 输出协议
 {_json_constraint}
 只输出 JSON，不要 markdown 代码块包裹。字段：

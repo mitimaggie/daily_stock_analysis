@@ -207,35 +207,47 @@ class StockTrendAnalyzer:
             prev = df.iloc[-2]
             
             result.current_price = float(latest['close'])
-            result.ma5 = float(latest['MA5'])
-            result.ma10 = float(latest['MA10'])
-            result.ma20 = float(latest['MA20'])
-            result.ma60 = float(latest.get('MA60', 0) or 0)
-            result.atr14 = float(latest.get('ATR14', 0) or 0)
+            result.ma5 = float(latest['MA5']) if pd.notna(latest.get('MA5')) else None
+            result.ma10 = float(latest['MA10']) if pd.notna(latest.get('MA10')) else None
+            result.ma20 = float(latest['MA20']) if pd.notna(latest.get('MA20')) else None
+            result.ma60 = float(latest['MA60']) if pd.notna(latest.get('MA60')) else None
+            result.atr14 = float(latest['ATR14']) if pd.notna(latest.get('ATR14')) else 0
             
-            result.rsi_6 = float(latest.get(f'RSI_{TechnicalIndicators.RSI_SHORT}', 50) or 50)
-            result.rsi_12 = float(latest.get(f'RSI_{TechnicalIndicators.RSI_MID}', 50) or 50)
-            result.rsi_24 = float(latest.get(f'RSI_{TechnicalIndicators.RSI_LONG}', 50) or 50)
+            _rsi6_raw = latest.get(f'RSI_{TechnicalIndicators.RSI_SHORT}')
+            _rsi12_raw = latest.get(f'RSI_{TechnicalIndicators.RSI_MID}')
+            _rsi24_raw = latest.get(f'RSI_{TechnicalIndicators.RSI_LONG}')
+            result.rsi_6 = float(_rsi6_raw) if pd.notna(_rsi6_raw) else 50.0
+            result.rsi_12 = float(_rsi12_raw) if pd.notna(_rsi12_raw) else 50.0
+            result.rsi_24 = float(_rsi24_raw) if pd.notna(_rsi24_raw) else 50.0
             result.rsi = result.rsi_12
             
-            result.macd_dif = float(latest['MACD_DIF'])
-            result.macd_dea = float(latest['MACD_DEA'])
-            result.macd_bar = float(latest.get('MACD_BAR', 0) or 0)
+            result.macd_dif = float(latest['MACD_DIF']) if pd.notna(latest.get('MACD_DIF')) else 0.0
+            result.macd_dea = float(latest['MACD_DEA']) if pd.notna(latest.get('MACD_DEA')) else 0.0
+            result.macd_bar = float(latest['MACD_BAR']) if pd.notna(latest.get('MACD_BAR')) else 0.0
             
-            result.kdj_k = round(float(latest.get('K', 50) or 50), 2)
-            result.kdj_d = round(float(latest.get('D', 50) or 50), 2)
-            result.kdj_j = round(float(latest.get('J', 50) or 50), 2)
+            _k_raw = latest.get('K')
+            _d_raw = latest.get('D')
+            _j_raw = latest.get('J')
+            result.kdj_k = round(float(_k_raw) if pd.notna(_k_raw) else 50.0, 2)
+            result.kdj_d = round(float(_d_raw) if pd.notna(_d_raw) else 50.0, 2)
+            result.kdj_j = round(float(_j_raw) if pd.notna(_j_raw) else 50.0, 2)
             
-            result.bb_upper = round(float(latest.get('BB_UPPER', 0) or 0), 2)
-            result.bb_lower = round(float(latest.get('BB_LOWER', 0) or 0), 2)
+            _bb_upper_raw = latest.get('BB_UPPER')
+            _bb_lower_raw = latest.get('BB_LOWER')
+            result.bb_upper = round(float(_bb_upper_raw), 2) if pd.notna(_bb_upper_raw) else None
+            result.bb_lower = round(float(_bb_lower_raw), 2) if pd.notna(_bb_lower_raw) else None
             result.bb_width = round(float(latest.get('BB_WIDTH', 0) or 0), 4)
             result.bb_pct_b = round(float(latest.get('BB_PCT_B', 0.5) or 0.5), 4)
 
             # P5-B: VWAP 机构成本线
-            _vwap10 = float(latest.get('VWAP10', 0) or 0)
-            _vwap20 = float(latest.get('VWAP20', 0) or 0)
-            _vwap10_slope = float(latest.get('VWAP10_SLOPE', 0) or 0)
-            _vwap20_slope = float(latest.get('VWAP20_SLOPE', 0) or 0)
+            _vwap10_raw = latest.get('VWAP10')
+            _vwap20_raw = latest.get('VWAP20')
+            _vwap10 = float(_vwap10_raw) if pd.notna(_vwap10_raw) else 0.0
+            _vwap20 = float(_vwap20_raw) if pd.notna(_vwap20_raw) else 0.0
+            _v10s_raw = latest.get('VWAP10_SLOPE')
+            _v20s_raw = latest.get('VWAP20_SLOPE')
+            _vwap10_slope = float(_v10s_raw) if pd.notna(_v10s_raw) else 0.0
+            _vwap20_slope = float(_v20s_raw) if pd.notna(_v20s_raw) else 0.0
             if _vwap10 > 0:
                 result.vwap10 = round(_vwap10, 2)
                 result.vwap10_slope = round(_vwap10_slope, 4)
@@ -564,7 +576,8 @@ class StockTrendAnalyzer:
     def _analyze_macd(self, result: TrendAnalysisResult, prev: pd.Series):
         """MACD分析"""
         dif, dea = result.macd_dif, result.macd_dea
-        pdif, pdea = float(prev['MACD_DIF']), float(prev['MACD_DEA'])
+        pdif = float(prev['MACD_DIF']) if pd.notna(prev.get('MACD_DIF')) else 0.0
+        pdea = float(prev['MACD_DEA']) if pd.notna(prev.get('MACD_DEA')) else 0.0
         is_golden_cross = (pdif - pdea) <= 0 and (dif - dea) > 0
         is_death_cross = (pdif - pdea) >= 0 and (dif - dea) < 0
         is_crossing_up = pdif <= 0 and dif > 0
@@ -599,8 +612,10 @@ class StockTrendAnalyzer:
         """RSI分析"""
         rsi_mid = result.rsi_12
         rsi_short = result.rsi_6
-        prev_rsi6 = float(prev.get(f'RSI_{TechnicalIndicators.RSI_SHORT}', 50) or 50)
-        prev_rsi12 = float(prev.get(f'RSI_{TechnicalIndicators.RSI_MID}', 50) or 50)
+        _prev_rsi6_raw = prev.get(f'RSI_{TechnicalIndicators.RSI_SHORT}')
+        _prev_rsi12_raw = prev.get(f'RSI_{TechnicalIndicators.RSI_MID}')
+        prev_rsi6 = float(_prev_rsi6_raw) if pd.notna(_prev_rsi6_raw) else 50.0
+        prev_rsi12 = float(_prev_rsi12_raw) if pd.notna(_prev_rsi12_raw) else 50.0
         is_rsi_golden = (prev_rsi6 <= prev_rsi12) and (rsi_short > rsi_mid)
         is_rsi_death = (prev_rsi6 >= prev_rsi12) and (rsi_short < rsi_mid)
         
@@ -673,7 +688,10 @@ class StockTrendAnalyzer:
     def _analyze_kdj(self, result: TrendAnalysisResult, df: pd.DataFrame, prev: pd.Series):
         """KDJ分析（含背离检测、连续极端、钝化识别）"""
         k_val, d_val, j_val = result.kdj_k, result.kdj_d, result.kdj_j
-        pk_val, pd_val = float(prev.get('K', 50) or 50), float(prev.get('D', 50) or 50)
+        _pk_raw = prev.get('K')
+        _pd_raw = prev.get('D')
+        pk_val = float(_pk_raw) if pd.notna(_pk_raw) else 50.0
+        pd_val = float(_pd_raw) if pd.notna(_pd_raw) else 50.0
         is_kdj_golden = (pk_val <= pd_val) and (k_val > d_val)
         is_kdj_death = (pk_val >= pd_val) and (k_val < d_val)
         
@@ -750,9 +768,17 @@ class StockTrendAnalyzer:
         """趋势分析"""
         ma5, ma10, ma20 = result.ma5, result.ma10, result.ma20
         
+        if ma5 is None or ma10 is None or ma20 is None:
+            result.trend_status = TrendStatus.CONSOLIDATION
+            result.ma_alignment = "均线数据不足（预热期），暂无法判断趋势"
+            result.trend_strength = 50
+            return
+        
         if ma5 > ma10 > ma20:
             prev5 = df.iloc[-5] if len(df) >= 5 else prev
-            prev_spread = (float(prev5['MA5']) - float(prev5['MA20'])) / float(prev5['MA20']) * 100 if float(prev5['MA20']) > 0 else 0
+            _p5_ma5 = float(prev5['MA5']) if pd.notna(prev5.get('MA5')) else 0
+            _p5_ma20 = float(prev5['MA20']) if pd.notna(prev5.get('MA20')) else 0
+            prev_spread = (_p5_ma5 - _p5_ma20) / _p5_ma20 * 100 if _p5_ma20 > 0 else 0
             curr_spread = (ma5 - ma20) / ma20 * 100 if ma20 > 0 else 0
             if curr_spread > prev_spread and curr_spread > 5:
                 result.trend_status = TrendStatus.STRONG_BULL
@@ -768,7 +794,9 @@ class StockTrendAnalyzer:
             result.trend_strength = 55
         elif ma5 < ma10 < ma20:
             prev5 = df.iloc[-5] if len(df) >= 5 else prev
-            prev_spread = (float(prev5['MA20']) - float(prev5['MA5'])) / float(prev5['MA5']) * 100 if float(prev5['MA5']) > 0 else 0
+            _p5_ma5 = float(prev5['MA5']) if pd.notna(prev5.get('MA5')) else 0
+            _p5_ma20 = float(prev5['MA20']) if pd.notna(prev5.get('MA20')) else 0
+            prev_spread = (_p5_ma20 - _p5_ma5) / _p5_ma5 * 100 if _p5_ma5 > 0 else 0
             curr_spread = (ma20 - ma5) / ma5 * 100 if ma5 > 0 else 0
             if curr_spread > prev_spread and curr_spread > 5:
                 result.trend_status = TrendStatus.STRONG_BEAR
@@ -789,9 +817,9 @@ class StockTrendAnalyzer:
     
     def _calculate_bias(self, result: TrendAnalysisResult):
         """计算乖离率"""
-        result.bias_ma5 = (result.current_price - result.ma5) / result.ma5 * 100 if result.ma5 > 0 else 0
-        result.bias_ma10 = (result.current_price - result.ma10) / result.ma10 * 100 if result.ma10 > 0 else 0
-        result.bias_ma20 = (result.current_price - result.ma20) / result.ma20 * 100 if result.ma20 > 0 else 0
+        result.bias_ma5 = (result.current_price - result.ma5) / result.ma5 * 100 if result.ma5 and result.ma5 > 0 else 0
+        result.bias_ma10 = (result.current_price - result.ma10) / result.ma10 * 100 if result.ma10 and result.ma10 > 0 else 0
+        result.bias_ma20 = (result.current_price - result.ma20) / result.ma20 * 100 if result.ma20 and result.ma20 > 0 else 0
     
     def format_analysis(self, result: TrendAnalysisResult) -> str:
         """格式化分析结果（完整版）"""

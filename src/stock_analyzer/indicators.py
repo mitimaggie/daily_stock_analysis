@@ -43,7 +43,25 @@ class TechnicalIndicators:
         df = TechnicalIndicators._calc_ma_spread_rate(df)
         df = TechnicalIndicators._calc_vwap(df)
         
-        return df.fillna(0)
+        # 核心指标列：保留 NaN（预热期不应被零值污染）
+        _CORE_INDICATOR_COLS = {
+            'MA5', 'MA10', 'MA20', 'MA60',
+            'MACD_DIF', 'MACD_DEA', 'MACD_BAR',
+            'RSI_6', 'RSI_12', 'RSI_24',
+            'ATR14',
+            'BOLL_UPPER', 'BOLL_MID', 'BOLL_LOWER',
+            'OBV',
+            'VWAP10', 'VWAP20',
+        }
+        # 预热期标记：任一关键指标仍为 NaN 的行
+        _warmup_cols = [c for c in ['MA60', 'MACD_DIF', 'RSI_12', 'ATR14'] if c in df.columns]
+        df['_warmup'] = df[_warmup_cols].isna().any(axis=1) if _warmup_cols else False
+
+        # 非核心衍生列填零（MACD_BAR_ACCEL、MA_SPREAD_RATE 等）
+        _fill_cols = [c for c in df.columns if c not in _CORE_INDICATOR_COLS and c != '_warmup']
+        df[_fill_cols] = df[_fill_cols].fillna(0)
+
+        return df
     
     @staticmethod
     def _calc_moving_averages(df: pd.DataFrame) -> pd.DataFrame:
@@ -102,8 +120,7 @@ class TechnicalIndicators:
             avg_loss = loss_s.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
             rs = avg_gain / avg_loss.replace(0, np.nan)
             rsi = 100 - (100 / (1 + rs))
-            # avg_loss==0 时 RS 为 NaN，此时全为涨，RSI 应为 100；其他 NaN（初始预热期）填 50
-            rsi = rsi.where(avg_loss != 0, 100.0).fillna(50)
+            rsi = rsi.where(avg_loss != 0, 100.0)
             df[f'RSI_{period}'] = rsi
         df['RSI'] = df[f'RSI_{TechnicalIndicators.RSI_MID}']
         return df
@@ -321,10 +338,16 @@ class TechnicalIndicators:
         if len(df) < 2:
             return df
 
-        pct_chg = df['close'].pct_change() * 100
-        tolerance = limit_pct * 0.02  # 2% 容差（如10%板用9.8%判定）
-        df['limit_up'] = pct_chg >= (limit_pct - tolerance)
-        df['limit_down'] = pct_chg <= -(limit_pct - tolerance)
+        if 'pct_chg' in df.columns and df['pct_chg'].notna().sum() > len(df) * 0.5:
+            pct = df['pct_chg']
+        else:
+            pct = df['close'].pct_change() * 100
+
+        suspected_ex_right = pct.abs() > limit_pct * 1.5
+
+        tolerance = limit_pct * 0.02
+        df['limit_up'] = (pct >= (limit_pct - tolerance)) & ~suspected_ex_right
+        df['limit_down'] = (pct <= -(limit_pct - tolerance)) & ~suspected_ex_right
         return df
 
     @staticmethod

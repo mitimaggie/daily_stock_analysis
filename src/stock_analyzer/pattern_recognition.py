@@ -2,9 +2,14 @@
 """
 K线形态识别模块
 检测经典 K 线形态：锤子线、吞没、十字星、启明星、黄昏星、三只乌鸦、红三兵、跳空缺口等
+
+盘中（9:30-15:00 未收盘）时自动排除最后一行未收盘 K 线，
+检测结果标记 confirmed=False，不参与评分修正。
 """
 
 import logging
+from datetime import datetime
+
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any
@@ -21,6 +26,7 @@ class CandlePattern:
     strength: int       # 信号强度 1-5
     description: str    # 中文描述
     bar_index: int = -1 # 出现在第几根K线（-1=最新）
+    confirmed: bool = True  # False=盘中未确认形态，不参与评分修正
 
 
 class PatternRecognition:
@@ -31,50 +37,78 @@ class PatternRecognition:
     LONG_SHADOW_RATIO = 2.0     # 长影线：影线 >= 实体的 2 倍
     ENGULF_MIN_BODY = 0.005     # 吞没最小实体比例（避免噪音）
 
+    @staticmethod
+    def _is_a_share_intraday() -> bool:
+        """判断当前是否处于 A 股盘中（交易日 9:30 <= now < 15:00）"""
+        now = datetime.now()
+        after_open = (now.hour > 9) or (now.hour == 9 and now.minute >= 30)
+        before_close = now.hour < 15
+        return after_open and before_close
+
     @classmethod
-    def detect_all(cls, df: pd.DataFrame) -> List[CandlePattern]:
+    def detect_all(cls, df: pd.DataFrame,
+                   allow_intraday: bool = False) -> List[CandlePattern]:
         """
         检测所有 K 线形态，返回按强度降序排列的形态列表。
         需要至少 5 根 K 线。
+
+        盘中时自动去掉最后一行未收盘 K 线，基于已收盘数据检测，
+        结果标记 confirmed=False 且 description 追加盘中标注。
+        设置 allow_intraday=True 可强制使用全量数据（含未收盘 K 线）。
         """
         if df is None or len(df) < 5:
             return []
 
+        is_intraday = (not allow_intraday) and cls._is_a_share_intraday()
+
+        if is_intraday:
+            detect_df = df.iloc[:-1].copy()
+            if len(detect_df) < 5:
+                return []
+        else:
+            detect_df = df
+
         patterns: List[CandlePattern] = []
 
         try:
-            patterns.extend(cls._detect_doji(df))
-            patterns.extend(cls._detect_hammer(df))
-            patterns.extend(cls._detect_engulfing(df))
-            patterns.extend(cls._detect_morning_evening_star(df))
-            patterns.extend(cls._detect_three_soldiers_crows(df))
-            patterns.extend(cls._detect_gaps(df))
-            patterns.extend(cls._detect_harami(df))
-            patterns.extend(cls._detect_tweezer(df))
+            patterns.extend(cls._detect_doji(detect_df))
+            patterns.extend(cls._detect_hammer(detect_df))
+            patterns.extend(cls._detect_engulfing(detect_df))
+            patterns.extend(cls._detect_morning_evening_star(detect_df))
+            patterns.extend(cls._detect_three_soldiers_crows(detect_df))
+            patterns.extend(cls._detect_gaps(detect_df))
+            patterns.extend(cls._detect_harami(detect_df))
+            patterns.extend(cls._detect_tweezer(detect_df))
         except Exception as e:
             logger.debug(f"K线形态检测异常: {e}")
+
+        if is_intraday:
+            for p in patterns:
+                p.confirmed = False
+                p.description += "（基于昨日K线，盘中未确认）"
 
         # 按强度降序
         patterns.sort(key=lambda p: p.strength, reverse=True)
         return patterns
 
     @classmethod
-    def detect_and_summarize(cls, df: pd.DataFrame) -> Dict[str, Any]:
+    def detect_and_summarize(cls, df: pd.DataFrame,
+                             allow_intraday: bool = False) -> Dict[str, Any]:
         """
         检测形态并返回结构化摘要，供 TrendAnalysisResult 使用。
 
         Returns:
             {
-                'patterns': [{'name', 'direction', 'strength', 'description'}, ...],
+                'patterns': [{'name', 'direction', 'strength', 'description', 'confirmed'}, ...],
                 'bullish_count': int,
                 'bearish_count': int,
                 'net_signal': str,           # "看多" / "看空" / "中性"
                 'top_pattern': str,          # 最强形态名称
-                'pattern_score_adj': int,    # 评分调整 (-5 ~ +5)
+                'pattern_score_adj': int,    # 评分调整 (-5 ~ +5)，盘中未确认时为 0
                 'summary': str,              # 一句话摘要
             }
         """
-        patterns = cls.detect_all(df)
+        patterns = cls.detect_all(df, allow_intraday=allow_intraday)
 
         bullish = [p for p in patterns if p.direction == "bullish"]
         bearish = [p for p in patterns if p.direction == "bearish"]
@@ -89,15 +123,16 @@ class PatternRecognition:
         else:
             net = "中性"
 
-        # 评分调整：只有 bullish/bearish 才贡献分值，neutral 不影响评分
+        all_unconfirmed = patterns and all(not p.confirmed for p in patterns)
+
+        # 评分调整：未确认的盘中形态不参与评分修正
         adj = 0
-        if patterns:
+        if patterns and not all_unconfirmed:
             top = patterns[0]
             if top.direction == "bullish":
                 adj = top.strength
             elif top.direction == "bearish":
                 adj = -top.strength
-            # neutral: adj = 0
             adj = max(-5, min(5, adj))
 
         top_name = patterns[0].name if patterns else ""
@@ -107,12 +142,14 @@ class PatternRecognition:
             summary = "近期无明显K线形态"
         else:
             names = [p.name for p in patterns[:3]]
-            summary = f"检测到{'、'.join(names)}，整体{net}"
+            suffix = "（盘中未确认，仅供参考）" if all_unconfirmed else ""
+            summary = f"检测到{'、'.join(names)}，整体{net}{suffix}"
 
         return {
             'patterns': [
                 {'name': p.name, 'direction': p.direction,
-                 'strength': p.strength, 'description': p.description}
+                 'strength': p.strength, 'description': p.description,
+                 'confirmed': p.confirmed}
                 for p in patterns
             ],
             'bullish_count': len(bullish),

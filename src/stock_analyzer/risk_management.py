@@ -226,27 +226,27 @@ class RiskManager:
         result.recommended_position = position
         
         # 动态仓位上限（替代硬编码30%）
-        # 根据信号确定性分级：普通→20%，强信号→40%，极强→50%
+        # 根据信号确定性分级：普通→15%，中强→20%，强→25%，极强→30%
         has_resonance = bool(getattr(result, 'timeframe_resonance', ''))
         has_multi_resonance = getattr(result, 'resonance_count', 0) >= 3
         rr_good = result.risk_reward_ratio >= 2.0
         
         if score >= 90 and has_resonance and rr_good:
             # 极强信号：评分>90 + 多周期共振 + R:R>2
-            cap = 50
+            cap = 30
         elif score >= 80 and (has_resonance or has_multi_resonance) and rr_good:
             # 强信号：评分>80 + (共振或多指标共振) + R:R>2
-            cap = 40
+            cap = 25
         elif score >= 70 and rr_good:
             # 中强信号：评分>70 + R:R>2
-            cap = 30
+            cap = 20
         else:
             # 普通信号
-            cap = 20
+            cap = 15
         
         # 熊市环境额外压缩
         if market_regime == MarketRegime.BEAR:
-            cap = min(cap, 20)
+            cap = min(cap, 15)
         
         result.suggested_position_pct = min(cap, max(0, position // 2))
         
@@ -255,7 +255,7 @@ class RiskManager:
             'multipliers': multipliers,
             'final': position,
             'cap': cap,
-            'cap_reason': f"{'极强' if cap >= 50 else '强' if cap >= 40 else '中强' if cap >= 30 else '普通'}信号",
+            'cap_reason': f"{'极强' if cap >= 30 else '强' if cap >= 25 else '中强' if cap >= 20 else '普通'}信号",
         }
     
     @staticmethod

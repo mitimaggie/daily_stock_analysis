@@ -231,8 +231,14 @@ class DataFetcherManager:
                         df_history.loc[idx, 'low'] = min(cur_low, realtime_quote.low) if cur_low > 0 else realtime_quote.low
                     if realtime_quote.volume and realtime_quote.volume > 0:
                         elapsed_w = self._calc_elapsed_weight()
-                        if elapsed_w > 0.03:
-                            df_history.loc[idx, 'volume'] = realtime_quote.volume / elapsed_w
+                        yesterday_vol = None
+                        if len(df_history) >= 2 and 'volume' in df_history.columns:
+                            yesterday_vol = float(df_history.iloc[-2].get('volume', 0) or 0)
+                            if yesterday_vol <= 0:
+                                yesterday_vol = None
+                        df_history.loc[idx, 'volume'] = self._predict_full_day_volume(
+                            realtime_quote.volume, elapsed_w, yesterday_vol
+                        )
                     if realtime_quote.amount and realtime_quote.amount > 0:
                         df_history.loc[idx, 'amount'] = realtime_quote.amount
                     if realtime_quote.change_pct is not None:
@@ -247,6 +253,10 @@ class DataFetcherManager:
         
         # 如果无需缝合，直接返回历史
         return df_history
+
+    # 盘中成交量折算的最低可靠权重（约对应 10:00，已交易约 30 分钟）
+    # 低于此阈值的折算会将实际成交量放大过多倍，导致量能指标严重失真
+    MIN_RELIABLE_WEIGHT = 0.15
 
     # A 股日内成交量分布权重 (U 型曲线，每 30 分钟一段，共 8 段)
     # 数据来源：万得统计 A 股典型交易日分钟级成交量分布
@@ -276,6 +286,26 @@ class DataFetcherManager:
             # t < start 说明这段还没开始
         return min(total_w, 1.0)
 
+    def _predict_full_day_volume(self, current_volume: float, elapsed_w: float,
+                                  yesterday_vol: Optional[float] = None) -> float:
+        """
+        三段式盘中成交量折算：
+        - elapsed_w >= MIN_RELIABLE_WEIGHT: 正常折算
+        - 0.03 < elapsed_w < MIN_RELIABLE_WEIGHT: 过渡区，与昨日成交量线性混合
+        - elapsed_w <= 0.03: 不折算，返回原始 volume
+        """
+        if elapsed_w >= self.MIN_RELIABLE_WEIGHT:
+            return current_volume / elapsed_w
+
+        if elapsed_w > 0.03:
+            alpha = (elapsed_w - 0.03) / (self.MIN_RELIABLE_WEIGHT - 0.03)
+            projected = current_volume / elapsed_w
+            if yesterday_vol is not None and yesterday_vol > 0:
+                return alpha * projected + (1 - alpha) * yesterday_vol
+            return current_volume
+
+        return current_volume
+
     def _create_mock_bar(self, quote, df_history: pd.DataFrame) -> Optional[pd.DataFrame]:
         """
         构造"虚拟 K 线" (Mock Bar)
@@ -288,12 +318,15 @@ class DataFetcherManager:
                 return None
 
             current_volume = quote.volume if quote.volume else 0
-            predicted_volume = current_volume
 
-            # U 型曲线成交量预测
+            # 三段式成交量预测（避免开盘初期极小 elapsed_weight 导致量能放大失真）
             elapsed_weight = self._calc_elapsed_weight()
-            if elapsed_weight > 0.03:  # 至少交易了 ~4 分钟才做预测
-                predicted_volume = current_volume / elapsed_weight
+            yesterday_vol = None
+            if not df_history.empty and 'volume' in df_history.columns:
+                yesterday_vol = float(df_history.iloc[-1].get('volume', 0) or 0)
+                if yesterday_vol <= 0:
+                    yesterday_vol = None
+            predicted_volume = self._predict_full_day_volume(current_volume, elapsed_weight, yesterday_vol)
 
             # 用 price 兜底缺失的 OHLC（部分数据源不提供完整的 open/high/low）
             price = quote.price or 0

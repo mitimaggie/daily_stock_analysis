@@ -7,6 +7,7 @@
 import logging
 import numpy as np
 import pandas as pd
+from collections import defaultdict
 from typing import Dict, Union, Optional
 from .types import TrendAnalysisResult, BuySignal, MarketRegime, TrendStatus
 from .types import VolumeStatus, MACDStatus, RSIStatus, KDJStatus
@@ -3107,13 +3108,15 @@ class ScoringSystem:
 
     @staticmethod
     def cap_adjustments(result: TrendAnalysisResult):
-        """统一应用所有评分修正因子（取代逐步截断）
-        
+        """统一应用所有评分修正因子（分组互斥 + 组预算）
+
         流程：
-        1. 汇总 score_breakdown 中所有 adj 键
-        2. 应用正向上限 POS_CAP=15、负向下限 NEG_CAP=-20
-        3. 一次性加到 base_score 并 clamp 到 [0, 100]
-        4. 仅调用一次 update_buy_signal
+        1. 计算 Beta 系数修正并写入 score_breakdown
+        2. 单因子 clamp ±8
+        3. 将所有修正项按趋势/超买超卖/资金面/基本面/其他分组
+        4. 组内矛盾信号互斥（取绝对值最大），同向信号求和但受组预算约束
+        5. 各组 clamp 后求和，一次性加到 base_score 并 clamp [0, 100]
+        6. 仅调用一次 update_buy_signal
         """
         adj_keys = ['valuation_adj', 'capital_flow_adj', 'cf_trend', 'cf_continuity',
                    'cross_resonance', 'sector_adj', 'chip_adj', 'fundamental_adj',
@@ -3125,55 +3128,85 @@ class ScoringSystem:
                    'weekly_trend_adj', 'chart_pattern_adj',
                    'fib_adj', 'vol_price_structure', 'vol_anomaly',
                    'p3_resonance', 'p4_capital_flow', 'p5c_lhb', 'p5c_dzjy', 'p5c_holder',
-                   'market_sentiment_adj', 'volume_spike_trap', 'divergence_adj']
-        
+                   'market_sentiment_adj', 'volume_spike_trap', 'divergence_adj',
+                   'support_strength', 'kdj_weekly_bonus']
+
         # === Beta 系数调整 ===
-        # 高 Beta (>1.5) 在熊市中系统性放大下跌，降分惩罚
-        # 低 Beta (<0.6) 说明安全属性强、独立行情概率大，酌情加分
         beta = getattr(result, 'beta_vs_index', 1.0) or 1.0
-        from .types import MarketRegime
-        trend_st = getattr(result, 'trend_status', None)
-        # 从 score_breakdown 推断 market_regime（BEAR标记由外部在 bear_market_cap 注入）
         is_bear = 'bear_market_cap' in result.score_breakdown
         beta_adj = 0
         if beta > 1.5 and is_bear:
-            # 高Beta + 熊市：额外降分（最多 -5）
             beta_adj = max(-5, round(-(beta - 1.5) * 5, 0))
         elif beta > 1.3 and is_bear:
             beta_adj = -2
         elif beta < 0.6:
-            # 低Beta：独立行情属性，弱市中是优势（最多 +4）
             beta_adj = min(4, round((0.6 - beta) * 8, 0))
         if beta_adj != 0:
             result.score_breakdown['beta_adj'] = int(beta_adj)
-        
-        # 单类 adj 上限 ±8：防止单一因子（如估值严重高估 -15）过度主导总分
+
+        # 单因子 clamp ±8
         SINGLE_ADJ_CAP = 8
-        clamped_breakdown = {}
         for k in adj_keys:
             v = result.score_breakdown.get(k, 0)
             if v != 0:
                 cv = max(-SINGLE_ADJ_CAP, min(SINGLE_ADJ_CAP, v))
                 if cv != v:
-                    clamped_breakdown[k] = cv  # 记录被截断的键
                     result.score_breakdown[k] = cv
-        
-        pos_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) > 0)
-        neg_adj = sum(v for k in adj_keys if (v := result.score_breakdown.get(k, 0)) < 0)
-        total_adj = pos_adj + neg_adj
-        
-        POS_CAP = 15
-        NEG_CAP = -20
-        
-        # 应用 cap
-        capped_pos = min(pos_adj, POS_CAP)
-        capped_neg = max(neg_adj, NEG_CAP)
-        capped_total = capped_pos + capped_neg
-        
-        if pos_adj > POS_CAP or neg_adj < NEG_CAP:
-            result.score_breakdown['adj_cap'] = capped_total - total_adj
-        
-        # base_score = signal_score 此时仍是 calculate_base_score 的原始值（因为各 score_xxx 不再修改它）
+
+        # --- 分组互斥 + 组预算 ---
+        GROUP_BUDGETS: Dict[str, int] = {
+            'trend': 12,
+            'oscillator': 12,
+            'capital': 10,
+            'fundamental': 8,
+            'other': 5,
+        }
+
+        def _classify(key: str) -> str:
+            kl = key.lower()
+            if any(t in kl for t in ['macd', 'adx', 'weekly', 'trend', 'resonance',
+                                      'multi_timeframe', 'timeframe', 'ma_', 'ema',
+                                      'chart_pattern', 'divergence', 'candle_pattern',
+                                      'support_strength', 'fib_']):
+                return 'trend'
+            if any(t in kl for t in ['rsi', 'kdj', 'boll', 'oversold', 'overbought',
+                                      'sentiment_extreme']):
+                return 'oscillator'
+            if any(t in kl for t in ['capital', 'north', 'lhb', 'dzjy', 'holder',
+                                      'insider', 'fund_flow', 'p4_capital', 'p5c_']):
+                return 'capital'
+            if any(t in kl for t in ['valuation', 'fundamental', 'earning', 'profit',
+                                      'pe_', 'pb_', 'forecast']):
+                return 'fundamental'
+            return 'other'
+
+        groups: Dict[str, list] = defaultdict(list)
+        raw_total = 0
+        for k in adj_keys:
+            v = result.score_breakdown.get(k, 0)
+            if v != 0:
+                groups[_classify(k)].append(v)
+                raw_total += v
+
+        capped_total = 0
+        for group_name, values in groups.items():
+            budget = GROUP_BUDGETS.get(group_name, 5)
+            positives = [v for v in values if v > 0]
+            negatives = [v for v in values if v < 0]
+
+            if positives and negatives:
+                max_pos = max(positives)
+                min_neg = min(negatives)
+                group_adj = max_pos if max_pos >= abs(min_neg) else min_neg
+            else:
+                group_adj = sum(values)
+
+            group_adj = max(-budget, min(budget, group_adj))
+            capped_total += group_adj
+
+        if capped_total != raw_total:
+            result.score_breakdown['adj_cap'] = capped_total - raw_total
+
         result.signal_score = max(0, min(100, result.signal_score + capped_total))
         ScoringSystem.update_buy_signal(result)
     

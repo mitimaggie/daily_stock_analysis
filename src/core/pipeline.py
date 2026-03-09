@@ -105,6 +105,33 @@ _shareholder_warmup_done = _threading.Event()
 _macro_intel_mem_cache: dict = {'data': None, 'ts': 0.0}
 _macro_intel_mem_lock = _threading.Lock()
 
+_POLICY_NEGATION_KW = frozenset({
+    '否决', '取消', '退坡', '减持', '暂停', '叫停', '下调',
+    '收紧', '严禁', '限制', '处罚', '违规', '失败', '不及预期', '低于预期',
+})
+
+
+def _has_policy_keyword(news_text: str, keywords: set, negation_kw: frozenset, window: int = 30) -> bool:
+    """检查政策关键词命中，排除被否定词包围的情况。
+
+    对每个命中的关键词，取其前后 *window* 个字符构成窗口，
+    若窗口内出现否定词则视为该关键词被否定、不计入命中。
+    """
+    for kw in keywords:
+        pos = 0
+        while True:
+            idx = news_text.find(kw, pos)
+            if idx == -1:
+                break
+            w_start = max(0, idx - window)
+            w_end = idx + len(kw) + window
+            window_text = news_text[w_start:w_end]
+            if not any(neg in window_text for neg in negation_kw):
+                return True
+            pos = idx + len(kw)
+    return False
+
+
 class StockAnalysisPipeline:
     """
     股票分析流水线 (最终完整修复版)
@@ -218,8 +245,59 @@ class StockAnalysisPipeline:
         except Exception as e:
             return False, str(e), None, None
 
-    @staticmethod
-    def _score_skills(context: dict) -> dict:
+    def _llm_classify_policy_sentiment(self, news_text: str, sector_name: str) -> Optional[Dict[str, Any]]:
+        """调用 Flash 模型对政策新闻做语义级正/负/中判断。
+
+        仅在关键词初筛命中时调用，节省 Token。返回示例：
+        {"sentiment": "positive", "confidence": 0.8}
+
+        调用失败或 JSON 解析失败时返回 None，调用方 fallback 到纯算法。
+        """
+        genai = getattr(self.analyzer, '_genai_module', None)
+        if not genai:
+            return None
+
+        cfg = self.config
+        model_name = getattr(cfg, 'gemini_model_when_cached', None) or getattr(cfg, 'gemini_model_flash_fallback', None)
+        if not model_name:
+            return None
+
+        prompt = (
+            "你是A股政策分析助手。判断以下新闻对该股票是政策利好还是利空。\n\n"
+            f"股票行业：{sector_name}\n\n"
+            f"新闻摘要（最多200字）：\n{news_text[:200]}\n\n"
+            '请仅输出JSON：\n{"sentiment": "positive|negative|neutral", "confidence": 0.8}\n\n'
+            "规则：\n"
+            '- "补贴退坡"、"政策收紧"、"xx否决" = negative\n'
+            '- "国家队减持" = negative\n'
+            "- 仅提及机构名称但无实质动作 = neutral"
+        )
+
+        try:
+            model = genai.GenerativeModel(model_name)
+            gen_cfg = {"temperature": 0.1, "max_output_tokens": 80}
+            with ThreadPoolExecutor(max_workers=1) as tp:
+                fut = tp.submit(model.generate_content, prompt, generation_config=gen_cfg)
+                resp = fut.result(timeout=10)
+            raw = (resp.text or "").strip()
+            if not raw:
+                return None
+            start = raw.find('{')
+            end = raw.rfind('}') + 1
+            if start < 0 or end <= start:
+                return None
+            import json as _json
+            data = _json.loads(raw[start:end])
+            sentiment = data.get('sentiment', '').lower()
+            confidence = float(data.get('confidence', 0))
+            if sentiment not in ('positive', 'negative', 'neutral'):
+                return None
+            return {"sentiment": sentiment, "confidence": confidence}
+        except Exception as e:
+            logger.debug(f"[Policy-LLM] Flash政策情感判断失败(fallback纯算法): {e}")
+            return None
+
+    def _score_skills(self, context: dict) -> dict:
         """
         Skills 评分模型：为三个A股特有框架各打分(0-10)，返回主副框架推荐。
         A股驱动顺序：政策 > 流动性 > 资金面 > 基本面（与美股相反）
@@ -273,12 +351,31 @@ class StockAnalysisPipeline:
                                    '产业政策', '重点支持', '财政补贴', '政策红利', '利好政策', '两会'}
             _policy_restrict_kw = {'监管收紧', '整顿', '反垄断', '防止资本', '整改', '处罚', '罚款', '调查',
                                     '违规', '暂停', '禁止', '叫停', '清查'}
-            has_policy_support = any(kw in news_text for kw in _policy_support_kw)
+            has_policy_support = _has_policy_keyword(news_text, _policy_support_kw, _POLICY_NEGATION_KW)
             has_policy_restrict = any(kw in news_text for kw in _policy_restrict_kw)
-            if has_policy_support and not has_policy_restrict:
-                p_score += 4
-            elif has_policy_support and has_policy_restrict:
-                p_score += 1
+            _llm_policy_used = False
+            if has_policy_support or has_policy_restrict:
+                llm_result = self._llm_classify_policy_sentiment(news_text, sector_name)
+                if llm_result:
+                    _llm_policy_used = True
+                    llm_sentiment = llm_result['sentiment']
+                    llm_confidence = llm_result['confidence']
+                    if llm_sentiment == "positive" and llm_confidence >= 0.7:
+                        p_score += 4
+                    elif llm_sentiment == "positive":
+                        p_score += 2
+                    elif llm_sentiment == "negative" and llm_confidence >= 0.7:
+                        p_score -= 3
+                    elif llm_sentiment == "negative":
+                        p_score -= 1
+                    logger.debug(f"[Policy-LLM] 使用Flash精判: sentiment={llm_sentiment}, confidence={llm_confidence:.2f}, p_score调整后={p_score}")
+            if not _llm_policy_used:
+                if has_policy_support and not has_policy_restrict:
+                    p_score += 4
+                elif has_policy_support and has_policy_restrict:
+                    p_score += 1
+                elif has_policy_restrict and not has_policy_support:
+                    p_score -= 3
             _policy_sectors = {'半导体', '人工智能', 'AI', '机器人', '新能源', '光伏', '储能', '军工',
                                 '航天', '北斗', '信创', '国产替代', '大数据', '数字经济', '碳中和',
                                 '核电', '高端装备', '专精特新'}
@@ -380,10 +477,9 @@ class StockAnalysisPipeline:
             pass
         return {'primary': 'default', 'secondary': None, 'primary_score': 0, 'secondary_score': 0, 'scores': {}, 'convergent': False}
 
-    @staticmethod
-    def _select_skill(context: dict) -> str:
+    def _select_skill(self, context: dict) -> str:
         """向后兼容包装，调用评分模型返回主框架名称"""
-        return Pipeline._score_skills(context)['primary']
+        return self._score_skills(context)['primary']
 
     @staticmethod
     def _detect_scene(context: dict, position_info: Optional[Dict[str, Any]] = None) -> str:
