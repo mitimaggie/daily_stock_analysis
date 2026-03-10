@@ -267,7 +267,12 @@ const TradeForm: React.FC<{ code: string; onDone: () => void }> = ({ code, onDon
 };
 
 // ─── 持仓监控卡片 ─────────────────────────────
-const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) => void; onRefresh: () => void }> = ({ signal, onRemove, onRefresh }) => {
+const MonitorCard: React.FC<{
+  signal: MonitorSignal;
+  onRemove: (code: string) => void;
+  onRefresh: () => void;
+  scoreTrend?: { score: number; change: number; direction: string } | null;
+}> = ({ signal, onRemove, onRefresh, scoreTrend }) => {
   const navigate = useNavigate();
   const cfg = signalConfig[signal.signal] || signalConfig.unknown;
   const pnl = signal.pnlPct;
@@ -275,18 +280,6 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
   const pnlStr = pnl == null ? '--' : `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
   const [showLogs, setShowLogs] = useState(false);
   const [showTradeForm, setShowTradeForm] = useState(false);
-
-  const [scoreTrend, setScoreTrend] = useState<{ score: number; change: number; direction: string } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    scoreTrendApi.getTrend(signal.code, 5).then(resp => {
-      if (cancelled || !resp?.trend) return;
-      const t = resp.trend;
-      const latest = t.scores?.[t.scores.length - 1];
-      if (latest) setScoreTrend({ score: latest.score, change: t.score_change, direction: t.trend_direction });
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [signal.code]);
 
   return (
     <div className={`rounded-lg border p-3 space-y-2 ${cfg.bg}`}>
@@ -451,6 +444,54 @@ const WatchlistCard: React.FC<{
   );
 };
 
+// ─── 骨架屏组件 ─────────────────────────────
+const MonitorCardSkeleton: React.FC = () => (
+  <div className="rounded-lg border border-black/[0.06] bg-black/[0.02] p-3 space-y-2 animate-pulse">
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <div className="w-2 h-2 rounded-full bg-black/[0.06]" />
+        <div className="h-3.5 w-16 rounded bg-black/[0.06]" />
+        <div className="h-3 w-12 rounded bg-black/[0.06]" />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <div className="h-5 w-10 rounded bg-black/[0.06]" />
+        <div className="h-5 w-12 rounded bg-black/[0.06]" />
+        <div className="h-5 w-12 rounded bg-black/[0.06]" />
+      </div>
+    </div>
+    <div className="flex items-center gap-4">
+      <div className="h-3 w-20 rounded bg-black/[0.06]" />
+      <div className="h-3 w-20 rounded bg-black/[0.06]" />
+      <div className="h-3 w-16 rounded bg-black/[0.06]" />
+    </div>
+    <div className="flex items-center gap-4">
+      <div className="h-3 w-24 rounded bg-black/[0.06]" />
+      <div className="h-3 w-28 rounded bg-black/[0.06]" />
+    </div>
+    <div className="h-3 w-full rounded bg-black/[0.06]" />
+    <div className="pt-1">
+      <div className="h-1 rounded-full bg-black/[0.04]" />
+    </div>
+  </div>
+);
+
+const WatchlistCardSkeleton: React.FC = () => (
+  <div className="rounded-lg border border-black/[0.08] bg-black/[0.02] p-3 space-y-2 animate-pulse">
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <div className="h-3.5 w-16 rounded bg-black/[0.06]" />
+        <div className="h-3 w-12 rounded bg-black/[0.06]" />
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="h-4 w-8 rounded bg-black/[0.06]" />
+        <div className="h-5 w-10 rounded bg-black/[0.06]" />
+      </div>
+    </div>
+    <div className="h-3 w-3/4 rounded bg-black/[0.06]" />
+    <div className="h-2.5 w-24 rounded bg-black/[0.06]" />
+  </div>
+);
+
 // ─── 主页面 ───────────────────────────────────
 const PortfolioPage: React.FC = () => {
   const [tab, setTab] = useState<'monitor' | 'watchlist'>('monitor');
@@ -468,12 +509,15 @@ const PortfolioPage: React.FC = () => {
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
   const [addWatchCode, setAddWatchCode] = useState('');
   const [addWatchName, setAddWatchName] = useState('');
+  const [signalError, setSignalError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [scoreTrends, setScoreTrends] = useState<Record<string, { score: number; change: number; direction: string }>>({});
 
-  const fetchSignals = useCallback(async () => {
+  const fetchSignals = useCallback(async (forceRefresh = false) => {
     setLoadingSignals(true);
+    setSignalError(false);
     try {
-      const data = await portfolioApi.monitor();
+      const data = await portfolioApi.monitor(forceRefresh);
       const signalPriority: Record<string, number> = {
         stop_loss: 1, reduce: 2, add_watch: 3, hold: 4,
       };
@@ -488,6 +532,7 @@ const PortfolioPage: React.FC = () => {
       setLastUpdated(new Date());
     } catch (e) {
       console.error('监控信号获取失败', e);
+      setSignalError(true);
     } finally { setLoadingSignals(false); }
   }, []);
 
@@ -537,7 +582,28 @@ const PortfolioPage: React.FC = () => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [fetchSignals, fetchWatchlist]);
 
-  useEffect(() => { fetchWatchlist(); }, [sortBy, fetchWatchlist]);
+  const prevSortBy = useRef(sortBy);
+  useEffect(() => {
+    if (prevSortBy.current !== sortBy) {
+      prevSortBy.current = sortBy;
+      fetchWatchlist();
+    }
+  }, [sortBy, fetchWatchlist]);
+
+  useEffect(() => {
+    if (signals.length === 0) return;
+    let cancelled = false;
+    scoreTrendApi.getBatchTrend(signals.map(s => s.code), 5).then(results => {
+      if (cancelled) return;
+      const mapped: Record<string, { score: number; change: number; direction: string }> = {};
+      for (const [code, trend] of Object.entries(results)) {
+        const latest = trend.scores?.[trend.scores.length - 1];
+        if (latest) mapped[code] = { score: latest.score, change: trend.score_change, direction: trend.trend_direction };
+      }
+      setScoreTrends(mapped);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [signals]);
 
   const handleRemovePortfolio = async (code: string) => {
     await portfolioApi.remove(code);
@@ -595,14 +661,15 @@ const PortfolioPage: React.FC = () => {
           {(['monitor', 'watchlist'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-1.5 rounded text-[12px] transition ${tab === t ? 'bg-black/[0.06] text-primary' : 'text-muted hover:text-secondary'}`}>
-              {t === 'monitor' ? `持仓监控（${signals.length}）` : `关注股（${watchlist.length}）`}
+              {t === 'monitor'
+                ? (loadingSignals ? '持仓监控' : `持仓监控（${signals.length}）`)
+                : (loadingWatchlist ? '关注股' : `关注股（${watchlist.length}）`)}
             </button>
           ))}
         </div>
 
         {/* 持仓监控 Tab */}
-        {tab === 'monitor' && (
-          <div className="space-y-4">
+        <div className="space-y-4" style={{ display: tab === 'monitor' ? 'block' : 'none' }}>
             {/* 添加持仓按钮 */}
             <div className="flex justify-end">
               <button onClick={() => setShowAddForm(v => !v)}
@@ -622,7 +689,7 @@ const PortfolioPage: React.FC = () => {
                     {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}…` : `一键分析持仓（${signals.length}）`}
                   </button>
                 )}
-                <button onClick={fetchSignals} disabled={loadingSignals}
+                <button onClick={() => fetchSignals(true)} disabled={loadingSignals}
                   className="text-[11px] px-2 py-1 rounded border border-black/[0.08] text-muted hover:text-secondary transition disabled:opacity-50">
                   {loadingSignals ? '刷新中…' : '立即刷新'}
                 </button>
@@ -818,23 +885,32 @@ const PortfolioPage: React.FC = () => {
             )}
 
             {/* 持仓卡片列表 */}
-            {signals.length === 0 ? (
+            {loadingSignals ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {Array.from({ length: 3 }, (_, i) => <MonitorCardSkeleton key={i} />)}
+              </div>
+            ) : !loadingSignals && signalError && signals.length === 0 ? (
+              <div className="text-center py-12 space-y-3">
+                <p className="text-[13px] text-red-500/80">数据加载失败</p>
+                <button onClick={() => fetchSignals(true)} className="text-[12px] px-3 py-1 rounded border border-black/[0.08] text-secondary hover:text-primary/70 transition">
+                  点击重试
+                </button>
+              </div>
+            ) : !signalError && signals.length === 0 ? (
               <div className="text-center py-12 text-muted/70 text-[13px]">
                 暂无持仓，点击「新增持仓」添加
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {signals.map(s => (
-                  <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} onRefresh={fetchSignals} />
+                  <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} onRefresh={fetchSignals} scoreTrend={scoreTrends[s.code] ?? null} />
                 ))}
               </div>
             )}
           </div>
-        )}
 
         {/* 关注股 Tab */}
-        {tab === 'watchlist' && (
-          <div className="space-y-4">
+        <div className="space-y-4" style={{ display: tab === 'watchlist' ? 'block' : 'none' }}>
             {/* 添加关注股 */}
             <form onSubmit={handleAddWatchlist} className="flex gap-2">
               <input value={addWatchCode} onChange={e => setAddWatchCode(e.target.value)} placeholder="股票代码" className="flex-1 bg-black/[0.03] border border-black/[0.08] rounded px-3 py-1.5 text-[13px] text-primary placeholder-muted focus:outline-none focus:border-black/[0.15]" />
@@ -857,7 +933,9 @@ const PortfolioPage: React.FC = () => {
 
             {/* 关注股列表 */}
             {loadingWatchlist ? (
-              <div className="text-center py-8 text-muted/70 text-[13px]">加载中…</div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {Array.from({ length: 3 }, (_, i) => <WatchlistCardSkeleton key={i} />)}
+              </div>
             ) : watchlist.length === 0 ? (
               <div className="text-center py-12 text-muted/70 text-[13px]">
                 暂无关注股，在报告页点击「加入关注」添加
@@ -869,8 +947,7 @@ const PortfolioPage: React.FC = () => {
                 ))}
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -132,8 +132,11 @@ export const portfolioApi = {
   },
 
   // 持仓监控
-  monitor: async (): Promise<{ signals: MonitorSignal[]; concentrationWarnings: string[]; portfolioSize: number; totalMarketValue: number }> => {
-    const res = await apiClient.get<{ signals: unknown[]; concentration_warnings?: string[]; portfolio_size?: number; total_market_value?: number }>('/api/v1/portfolio/monitor/signals');
+  monitor: async (forceRefresh = false): Promise<{ signals: MonitorSignal[]; concentrationWarnings: string[]; portfolioSize: number; totalMarketValue: number }> => {
+    const res = await apiClient.get<{ signals: unknown[]; concentration_warnings?: string[]; portfolio_size?: number; total_market_value?: number }>(
+      '/api/v1/portfolio/monitor/signals',
+      { params: { force_refresh: forceRefresh } },
+    );
     return {
       signals: (res.data.signals || []).map(s => toCamelCase<MonitorSignal>(s as Record<string, unknown>)),
       concentrationWarnings: res.data.concentration_warnings || [],

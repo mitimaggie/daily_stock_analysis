@@ -271,8 +271,49 @@ def get_portfolio_sector_risk(current_code: str) -> Optional[Dict[str, Any]]:
 # 关注股 CRUD
 # ─────────────────────────────────────────────
 
+def _resolve_stock_name(code: str) -> str:
+    """当 name 为空时，从本地数据库或数据源解析股票名称。优先本地，避免额外网络请求。
+
+    查找顺序：
+    1. analysis_history 表（最近一条记录）
+    2. AkshareFetcher 实时行情接口（含 name）
+    3. 失败则返回空字符串
+
+    Note: stock_daily 表无 name 列，故仅查 analysis_history。
+    """
+    if not code or not str(code).strip():
+        return ''
+    from src.storage import AnalysisHistory
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        rec = session.execute(
+            select(AnalysisHistory)
+            .where(AnalysisHistory.code == code)
+            .order_by(desc(AnalysisHistory.created_at))
+            .limit(1)
+        ).scalar_one_or_none()
+        if rec and rec.name and str(rec.name).strip():
+            return str(rec.name).strip()
+    try:
+        from data_provider.akshare_fetcher import AkshareFetcher
+        fetcher = AkshareFetcher()
+        quote = fetcher.get_realtime_quote(code)
+        if quote and quote.name and str(quote.name).strip():
+            return str(quote.name).strip()
+    except Exception:
+        pass
+    return ''
+
+
 def add_watchlist(code: str, name: str, notes: str = '') -> Dict[str, Any]:
-    """新增关注股（已存在则仅更新备注）"""
+    """新增关注股（已存在则仅更新备注）。
+
+    当传入的 name 为空时，自动从 analysis_history 或 AkshareFetcher 实时行情解析股票名称填充。
+    """
+    effective_name = (name or '').strip()
+    if not effective_name:
+        effective_name = _resolve_stock_name(code)
+
     db = DatabaseManager.get_instance()
     with db.get_session() as session:
         existing = session.execute(
@@ -280,14 +321,14 @@ def add_watchlist(code: str, name: str, notes: str = '') -> Dict[str, Any]:
         ).scalar_one_or_none()
 
         if existing:
-            existing.name = name or existing.name
+            existing.name = effective_name or existing.name
             existing.notes = notes or existing.notes
             existing.updated_at = datetime.now()
             session.commit()
             session.refresh(existing)
             return existing.to_dict()
         else:
-            record = Watchlist(code=code, name=name, notes=notes)
+            record = Watchlist(code=code, name=effective_name, notes=notes)
             session.add(record)
             session.commit()
             session.refresh(record)
@@ -349,18 +390,10 @@ def update_watchlist_analysis(code: str, score: int, advice: str, summary: str) 
 # ─────────────────────────────────────────────
 
 def _get_realtime_price(code: str) -> Optional[float]:
-    """获取实时价格（复用现有 realtime 接口）"""
+    """获取实时价格（复用 AkshareFetcher 的统一实时行情接口）"""
     try:
         from data_provider.akshare_fetcher import AkshareFetcher
         fetcher = AkshareFetcher()
-        quote = fetcher.get_realtime_quote(code)
-        if quote and quote.price:
-            return float(quote.price)
-    except Exception:
-        pass
-    try:
-        from data_provider.efinance_fetcher import EfinanceFetcher
-        fetcher = EfinanceFetcher()
         quote = fetcher.get_realtime_quote(code)
         if quote and quote.price:
             return float(quote.price)

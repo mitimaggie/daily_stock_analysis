@@ -32,8 +32,25 @@ USER_AGENTS = [
 ]
 
 # 缓存
-_realtime_cache: Dict[str, Any] = {'data': None, 'timestamp': 0, 'ttl': 1200}
-_etf_realtime_cache: Dict[str, Any] = {'data': None, 'timestamp': 0, 'ttl': 1200}
+_realtime_cache: Dict[str, Any] = {'data': None, 'timestamp': 0}
+_etf_realtime_cache: Dict[str, Any] = {'data': None, 'timestamp': 0}
+
+_REALTIME_TTL_INTRADAY = 120     # 盘中 2 分钟
+_REALTIME_TTL_CLOSED = 1800      # 盘后 30 分钟
+
+
+def _get_realtime_ttl() -> int:
+    """根据当前时段返回实时行情缓存 TTL（秒）。
+    盘中（交易日 9:15-15:05）返回 120s，其余返回 1800s。
+    """
+    from datetime import datetime as _dt
+    now = _dt.now()
+    if now.weekday() >= 5:
+        return _REALTIME_TTL_CLOSED
+    minutes = now.hour * 60 + now.minute
+    if 555 <= minutes <= 905:  # 9:15=555, 15:05=905
+        return _REALTIME_TTL_INTRADAY
+    return _REALTIME_TTL_CLOSED
 
 def _is_etf_code(code): return code.startswith(('51', '52', '56', '58', '15', '16', '18')) and len(code) == 6
 def _is_hk_code(code): return code.lower().startswith('hk') or (code.isdigit() and len(code)==5)
@@ -171,7 +188,7 @@ class AkshareFetcher(BaseFetcher):
         import akshare as ak
         circuit_breaker = get_realtime_circuit_breaker()
         current_time = time.time()
-        if _realtime_cache['data'] is not None and current_time - _realtime_cache['timestamp'] < _realtime_cache['ttl']:
+        if _realtime_cache['data'] is not None and current_time - _realtime_cache['timestamp'] < _get_realtime_ttl():
             df = _realtime_cache['data']
         else:
             self._enforce_rate_limit()

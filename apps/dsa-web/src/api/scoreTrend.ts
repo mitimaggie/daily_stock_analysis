@@ -40,6 +40,14 @@ export const scoreTrendApi = {
     return resp.data;
   },
 
+  getBatchTrend: async (codes: string[], days = 5): Promise<Record<string, ScoreTrend>> => {
+    const resp = await apiClient.post<{ results: Record<string, ScoreTrend> }>(
+      '/api/v1/stocks/batch-score-trend',
+      { codes, days },
+    );
+    return resp.data.results;
+  },
+
   getTimeframeWinrates: async (
     stockCode: string,
     signalScore: number,

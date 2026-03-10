@@ -4,8 +4,9 @@
 """
 
 import logging
+import time
 from datetime import date
-from typing import Optional, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -297,13 +298,23 @@ def api_simple_view(code: str):
 
 # ─── 持仓监控 ────────────────────────────────
 
+_monitor_cache: Dict[str, Any] = {"data": None, "timestamp": 0}
+_MONITOR_CACHE_TTL = 30  # 30 秒
+
+
 @router.get("/portfolio/monitor/signals", summary="获取所有持仓的实时监控信号")
-def api_monitor_portfolio():
+def api_monitor_portfolio(
+    force_refresh: bool = Query(False, description="强制刷新，跳过缓存（手动点击立即刷新时使用）"),
+):
     """
     遍历持仓列表，获取实时价格、更新ATR追踪止损、生成操作信号。
-    前端每2分钟轮询一次。
+    前端每2分钟轮询一次。服务端 30 秒缓存，force_refresh=true 可跳过。
     """
     try:
+        if not force_refresh and _monitor_cache["data"] is not None:
+            if time.time() - _monitor_cache["timestamp"] < _MONITOR_CACHE_TTL:
+                return _monitor_cache["data"]
+
         from src.services.portfolio_risk_service import calculate_sector_exposure
         signals = monitor_portfolio()
         _NUMERIC_DEFAULTS = {
@@ -316,9 +327,17 @@ def api_monitor_portfolio():
                 if sig.get(key) is None:
                     sig[key] = default
         concentration_warnings = _calc_concentration_warnings(signals)
-        portfolio_items = list_portfolio()
         sector_exposure = None
         try:
+            portfolio_items = [
+                {
+                    'code': s.get('code'),
+                    'name': s.get('name'),
+                    'cost_price': s.get('cost_price', 0),
+                    'shares': s.get('shares', 0),
+                }
+                for s in signals
+            ]
             sector_exposure = calculate_sector_exposure(portfolio_items)
         except Exception:
             pass
@@ -328,7 +347,7 @@ def api_monitor_portfolio():
             (s.get('current_price') or 0) * (s.get('shares') or 0)
             for s in signals
         )
-        return {
+        result = {
             "signals": signals,
             "count": len(signals),
             "concentration_warnings": concentration_warnings,
@@ -336,6 +355,9 @@ def api_monitor_portfolio():
             "portfolio_size": portfolio_size,
             "total_market_value": round(total_market_value, 2),
         }
+        _monitor_cache["data"] = result
+        _monitor_cache["timestamp"] = time.time()
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -347,7 +369,7 @@ def _calc_concentration_warnings(signals: list) -> list:
         from src.storage import DatabaseManager, AnalysisHistory
         from src.analyzer import AnalysisResult
         from src.portfolio_analyzer import PortfolioAnalyzer
-        from sqlalchemy import select, desc, and_
+        from sqlalchemy import select, desc, func, and_
 
         if not signals:
             return []
@@ -355,18 +377,30 @@ def _calc_concentration_warnings(signals: list) -> list:
         db = DatabaseManager.get_instance()
         codes = [s['code'] for s in signals]
 
-        # 取每只股票最近一条分析记录（含 score_breakdown / sector / position_pct）
+        # 批量查询：每个 code 取最新一条 AnalysisHistory（子查询 + JOIN）
+        latest_subq = (
+            select(
+                AnalysisHistory.code,
+                func.max(AnalysisHistory.created_at).label('max_created_at')
+            )
+            .where(AnalysisHistory.code.in_(codes))
+            .group_by(AnalysisHistory.code)
+            .subquery()
+        )
+        with db.get_session() as session:
+            records = session.execute(
+                select(AnalysisHistory)
+                .join(latest_subq, and_(
+                    AnalysisHistory.code == latest_subq.c.code,
+                    AnalysisHistory.created_at == latest_subq.c.max_created_at,
+                ))
+            ).scalars().all()
+        rec_map = {rec.code: rec for rec in records}
+
         fake_results = []
         for sig in signals:
             code = sig['code']
-            with db.get_session() as session:
-                rec = session.execute(
-                    select(AnalysisHistory)
-                    .where(AnalysisHistory.code == code)
-                    .order_by(desc(AnalysisHistory.created_at))
-                    .limit(1)
-                ).scalar_one_or_none()
-
+            rec = rec_map.get(code)
             if not rec:
                 continue
 
@@ -379,11 +413,9 @@ def _calc_concentration_warnings(signals: list) -> list:
                 analysis_summary='',
                 success=True,
             )
-            # 根据信号确定 decision_type
             signal_val = sig.get('signal', 'hold')
             r.decision_type = 'sell' if signal_val in ('stop_loss', 'reduce') else 'hold'
 
-            # 从 raw_result 里提取 dashboard 数据（板块、仓位）
             if rec.raw_result:
                 try:
                     raw = json.loads(rec.raw_result)

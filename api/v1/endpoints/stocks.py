@@ -10,8 +10,10 @@
 """
 
 import logging
+from typing import List
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from api.v1.schemas.stocks import (
     StockQuote,
@@ -173,6 +175,37 @@ def get_stock_history(
                 "error": "internal_error",
                 "message": f"获取历史行情失败: {str(e)}"
             }
+        )
+
+
+class BatchScoreTrendRequest(BaseModel):
+    """批量获取评分趋势的请求体"""
+
+    codes: List[str] = Field(..., max_length=20, description="股票代码列表，最多20只")
+    days: int = Field(default=5, ge=3, le=30, description="回溯天数")
+
+
+@router.post(
+    "/batch-score-trend",
+    summary="批量获取多只股票评分趋势",
+    description="一次请求获取多只股票的历史量化评分趋势，用于持仓页 MonitorCard 批量展示"
+)
+def batch_score_trend(req: BatchScoreTrendRequest):
+    """批量获取股票评分趋势，复用 get_score_trend 逻辑"""
+    try:
+        from src.storage import DatabaseManager
+
+        db = DatabaseManager()
+        results = {}
+        for code in req.codes:
+            trend = db.get_score_trend(code, days=req.days)
+            results[code] = trend
+        return {"results": results}
+    except Exception as e:
+        logger.error(f"批量获取评分趋势失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "internal_error", "message": str(e)},
         )
 
 
