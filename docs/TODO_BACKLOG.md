@@ -4,21 +4,23 @@
 
 | 编号 | 问题 | 来源 | 优先级 |
 |------|------|------|--------|
-| I-15 | Cmd+K 在 Firefox 中 preventDefault 可能不完全生效；input 聚焦时可能干扰编辑 | Inspector | P3 |
-| UX-2 | 分析页评分与持仓页评分因时间差不同，可加时间标注帮助用户理解 | UX | P3 |
-| UX-3 | 市场页涨跌停统计全为 0 但概念热度有数据，非交易时段数据矛盾 | UX | P2 |
 | UX-5 | 个人配置页内容过于简单，大片空白，可增加更多配置项 | UX | P3 |
-
-### 后端 & 量化
-
-| 编号 | 问题 | 来源 | 优先级 |
-|------|------|------|--------|
-| I-12 | monitor_portfolio() 的 detached session ORM 对象传入线程池，当前 SQLite 无问题，迁移 PostgreSQL 时会出错 | Inspector | P3 |
-| I-13 | _resolve_stock_name() 无内存缓存，重复查询效率低，建议加 lru_cache | Inspector | P3 |
 
 ---
 
 ## 已完成
+
+### ~~I-12 / I-15 关闭（经核实已修复/不适用）~~ ✅
+- **I-12**：monitor_portfolio() ORM detached 问题——经核实已改为传 dict（`holdings_list = [h.to_dict() for h in holdings]`），不再传 ORM 对象
+- **I-15**：Cmd+K Firefox 兼容问题——用户仅使用 Chrome，当前实现已有 INPUT/TEXTAREA 焦点跳过逻辑，关闭
+
+### ~~市场页数据矛盾解释 + 分析页时间标注 + stock name 缓存关闭~~ ✅
+- **UX-3 问题**：非交易时段涨跌停全 0 但概念热度有数据，用户困惑
+- **UX-3 解决**：LimitPoolStats 补充解释文案"非交易时段数据源暂不提供，交易日 9:30 后自动更新"
+- **UX-2 问题**：分析页评分无时间标注，用户不理解为什么与持仓页评分不同
+- **UX-2 解决**：ReportOverview 第一行增加"分析于 MM/DD HH:mm"标注（盘中实时刷新时隐藏）
+- **I-13**：经核实已有 `@functools.lru_cache(maxsize=256)`，直接关闭
+- **涉及文件**：LimitPoolStats.tsx、ReportOverview.tsx
 
 ### ~~持仓监控 Beta 实时化：三级 fallback 替代纯 analysis_history 读取~~ ✅
 - **问题**：持仓监控时 Beta 来源是上次分析的 raw_result，间隔长时过时，止损倍数可能错配 33%

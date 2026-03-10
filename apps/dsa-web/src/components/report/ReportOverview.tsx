@@ -221,6 +221,11 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
             </span>
           )}
           {lastUpdate && <span className="text-[10px] text-muted/70 font-mono">{lastUpdate}</span>}
+          {!lastUpdate && meta.createdAt && (
+            <span className="text-[10px] text-muted/50 font-mono">
+              分析于 {new Date(meta.createdAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} {new Date(meta.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
           {/* 场景模式 badge（紧跟股票名）*/}
           {analysisScene && SCENE_CONFIG[analysisScene] && (
             <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${SCENE_CONFIG[analysisScene].color}`}>

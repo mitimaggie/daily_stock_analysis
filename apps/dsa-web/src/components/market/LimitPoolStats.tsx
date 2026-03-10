@@ -23,7 +23,10 @@ const LimitPoolStats: React.FC<LimitPoolStatsProps> = ({ data }) => {
           </svg>
           涨跌停统计
         </h3>
-        <div className="text-[12px] text-muted text-center py-4">暂无最新涨跌停数据</div>
+        <div className="text-center py-4 space-y-1">
+          <p className="text-[12px] text-muted">暂无最新涨跌停数据</p>
+          <p className="text-[10px] text-muted/50">非交易时段数据源暂不提供，交易日 9:30 后自动更新</p>
+        </div>
       </div>
     );
   }
