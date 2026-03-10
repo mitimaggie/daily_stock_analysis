@@ -6,6 +6,7 @@ import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
 import PortfolioPage from './pages/PortfolioPage';
 import SimpleViewPage from './pages/SimpleViewPage';
+import ScreenerPage from './pages/ScreenerPage';
 import BottomNav from './components/layout/BottomNav';
 import './App.css';
 
@@ -17,6 +18,7 @@ const AppLayout: React.FC = () => {
         <div className="min-h-screen bg-base">
             <Routes>
                 <Route path="/" element={<MarketPage />} />
+                <Route path="/screener" element={<ScreenerPage />} />
                 <Route path="/analysis" element={<HomePage />} />
                 <Route path="/portfolio" element={<PortfolioPage />} />
                 <Route path="/portfolio/:code/simple" element={<SimpleViewPage />} />

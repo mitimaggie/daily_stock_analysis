@@ -19,6 +19,12 @@ const BriefcaseIcon = () => (
   </svg>
 );
 
+const FilterIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+  </svg>
+);
+
 const UserIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -34,6 +40,7 @@ interface TabItem {
 
 const tabs: TabItem[] = [
   { path: '/', label: '市场', icon: <TrendingUpIcon /> },
+  { path: '/screener', label: '选股', icon: <FilterIcon /> },
   { path: '/analysis', label: '分析', icon: <SearchIcon /> },
   { path: '/portfolio', label: '持仓', icon: <BriefcaseIcon />, matchPrefix: true },
   { path: '/profile', label: '我的', icon: <UserIcon /> },

@@ -1,4 +1,5 @@
 import type React from 'react';
+import { mapAdviceDisplay } from '../../types/analysis';
 import type { ReportSummary, ReportStrategy, HoldingStrategy } from '../../types/analysis';
 
 interface HoldDecisionCardProps {
@@ -16,9 +17,10 @@ export const HoldDecisionCard: React.FC<HoldDecisionCardProps> = ({
   currentPrice,
   costPrice: _costPrice,
 }) => {
-  const advice = summary.operationAdvice || '持有';
-  const isBuy = advice.includes('买入') || advice.includes('加仓') || advice.includes('吸纳');
-  const isSell = advice.includes('卖出') || advice.includes('减仓') || advice.includes('清仓');
+  const rawAdvice = summary.operationAdvice || '持有';
+  const advice = mapAdviceDisplay(rawAdvice);
+  const isBuy = rawAdvice.includes('买入') || rawAdvice.includes('加仓') || rawAdvice.includes('吸纳');
+  const isSell = rawAdvice.includes('卖出') || rawAdvice.includes('减仓') || rawAdvice.includes('清仓');
   const isHold = !isBuy && !isSell;
 
   const borderColor = isBuy

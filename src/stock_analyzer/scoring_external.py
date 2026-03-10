@@ -38,6 +38,8 @@ class ScoringExternal:
         import logging
         _logger = logging.getLogger(__name__)
 
+        thread_results: Dict = {}
+
         def _fetch():
             try:
                 import akshare as ak
@@ -64,31 +66,31 @@ class ScoringExternal:
                 inst_net = float(row.get('机构买入净额', 0) or 0)
                 times = int(row.get('上榜次数', 0) or 0)
 
-                result.lhb_net_buy = round(lhb_net, 2)
-                result.lhb_institution_net = round(inst_net, 2)
-                result.lhb_times = times
+                thread_results['lhb_net_buy'] = round(lhb_net, 2)
+                thread_results['lhb_institution_net'] = round(inst_net, 2)
+                thread_results['lhb_times'] = times
 
                 p5c_adj = 0
                 inst_net_wan = inst_net / 10000
 
                 if inst_net_wan > 5000:
                     p5c_adj += 3
-                    result.lhb_signal = "机构持续买入"
+                    thread_results['lhb_signal'] = "机构持续买入"
                 elif inst_net_wan > 1000:
                     p5c_adj += 2
-                    result.lhb_signal = "机构净买入"
+                    thread_results['lhb_signal'] = "机构净买入"
                 elif inst_net_wan < -5000:
                     p5c_adj -= 3
-                    result.lhb_signal = "机构持续卖出"
+                    thread_results['lhb_signal'] = "机构持续卖出"
                 elif inst_net_wan < -1000:
                     p5c_adj -= 2
-                    result.lhb_signal = "机构净卖出"
+                    thread_results['lhb_signal'] = "机构净卖出"
                 elif times >= 3:
-                    result.lhb_signal = "龙虎榜活跃"
+                    thread_results['lhb_signal'] = "龙虎榜活跃"
 
                 p5c_adj = max(-3, min(3, p5c_adj))
                 if p5c_adj != 0:
-                    result.score_breakdown['p5c_lhb'] = p5c_adj
+                    thread_results['p5c_lhb'] = p5c_adj
             except Exception as e:
                 _logger.debug(f"[P5-C] {stock_code} 龙虎榜情绪分析失败: {e}")
 
@@ -97,6 +99,12 @@ class ScoringExternal:
         t.join(timeout=5)
         if t.is_alive():
             _logger.debug(f"[P5-C] {stock_code} 龙虎榜情绪分析超时，已跳过")
+        else:
+            for attr in ('lhb_net_buy', 'lhb_institution_net', 'lhb_times', 'lhb_signal'):
+                if attr in thread_results:
+                    setattr(result, attr, thread_results[attr])
+            if 'p5c_lhb' in thread_results:
+                result.score_breakdown['p5c_lhb'] = thread_results['p5c_lhb']
 
 
     @staticmethod
@@ -109,6 +117,9 @@ class ScoringExternal:
         import threading
         import logging
         logger = logging.getLogger(__name__)
+
+        dzjy_results: Dict = {}
+        holder_results: Dict = {}
 
         # ---- 大宗交易（线程+超时5秒）----
         def _fetch_dzjy():
@@ -126,20 +137,20 @@ class ScoringExternal:
                 premiums = rows['折溢率'].astype(float).tolist()
                 avg_prem = sum(premiums) / len(premiums)
                 times = len(premiums)
-                result.dzjy_avg_premium = round(avg_prem, 4)
-                result.dzjy_times = times
+                dzjy_results['dzjy_avg_premium'] = round(avg_prem, 4)
+                dzjy_results['dzjy_times'] = times
                 adj_dz = 0
                 if avg_prem > 0.02:
                     adj_dz = 2
-                    result.dzjy_signal = "大宗溢价成交"
+                    dzjy_results['dzjy_signal'] = "大宗溢价成交"
                 elif avg_prem < -0.02 and times >= 3:
                     adj_dz = -3
-                    result.dzjy_signal = "大宗持续折价出货"
+                    dzjy_results['dzjy_signal'] = "大宗持续折价出货"
                 elif avg_prem < -0.02:
                     adj_dz = -2
-                    result.dzjy_signal = "大宗折价出货"
+                    dzjy_results['dzjy_signal'] = "大宗折价出货"
                 if adj_dz != 0:
-                    result.score_breakdown['p5c_dzjy'] = adj_dz
+                    dzjy_results['p5c_dzjy'] = adj_dz
             except Exception as e:
                 logger.debug(f"[P5-C] {stock_code} 大宗交易查询失败: {e}")
 
@@ -159,34 +170,45 @@ class ScoringExternal:
                 if prev <= 0:
                     return
                 change_pct = (latest - prev) / prev * 100
-                result.holder_change_pct = round(change_pct, 2)
+                holder_results['holder_change_pct'] = round(change_pct, 2)
                 adj_holder = 0
                 if change_pct < -5:
-                    result.holder_signal = "筹码集中（缩股）"
+                    holder_results['holder_signal'] = "筹码集中（缩股）"
                     adj_holder = 2
                 elif change_pct < -2:
-                    result.holder_signal = "筹码小幅集中"
+                    holder_results['holder_signal'] = "筹码小幅集中"
                     adj_holder = 1
                 elif change_pct > 5:
-                    result.holder_signal = "筹码分散（增股）"
+                    holder_results['holder_signal'] = "筹码分散（增股）"
                     adj_holder = -1
                 if adj_holder != 0:
-                    result.score_breakdown['p5c_holder'] = adj_holder
+                    holder_results['p5c_holder'] = adj_holder
             except Exception as e:
                 logger.debug(f"[P5-C] {stock_code} 股东人数查询失败: {e}")
 
-        # 两个线程并行启动，各自独立5秒超时（防止大宗交易耗尽时间导致股东人数无法执行）
         import time as _time
         t_dz = threading.Thread(target=_fetch_dzjy, daemon=True)
         t_holder = threading.Thread(target=_fetch_holder, daemon=True)
         t_dz.start()
         t_holder.start()
-        t_dz.join(timeout=5)      # 大宗交易：独立5s
-        t_holder.join(timeout=5)  # 股东人数：独立5s（两者并行，最坏10s，实际多为同步完成）
+        t_dz.join(timeout=5)
+        t_holder.join(timeout=5)
         if t_dz.is_alive():
             logger.debug(f"[P5-C] {stock_code} 大宗交易查询超时，已跳过")
+        else:
+            for attr in ('dzjy_avg_premium', 'dzjy_times', 'dzjy_signal'):
+                if attr in dzjy_results:
+                    setattr(result, attr, dzjy_results[attr])
+            if 'p5c_dzjy' in dzjy_results:
+                result.score_breakdown['p5c_dzjy'] = dzjy_results['p5c_dzjy']
         if t_holder.is_alive():
             logger.debug(f"[P5-C] {stock_code} 股东人数查询超时，已跳过")
+        else:
+            for attr in ('holder_change_pct', 'holder_signal'):
+                if attr in holder_results:
+                    setattr(result, attr, holder_results[attr])
+            if 'p5c_holder' in holder_results:
+                result.score_breakdown['p5c_holder'] = holder_results['p5c_holder']
 
 
     @staticmethod

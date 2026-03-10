@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useRef, useCallback, useEffect } from 'react';
 import type { HistoryItem } from '../../types/analysis';
-import { getSentimentColor } from '../../types/analysis';
+import { getSentimentColor, mapAdviceDisplay } from '../../types/analysis';
 import { formatDateTime } from '../../utils/format';
 
 interface HistoryListProps {
@@ -132,7 +132,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                         const isSell = adv.includes('卖出') || adv.includes('减仓') || adv.includes('清仓');
                         const advCls = isBuy ? 'text-emerald-400/70' : isSell ? 'text-red-400/60' : 'text-white/25';
                         return (
-                          <span className={`text-[10px] truncate max-w-[60px] ${advCls}`}>{adv}</span>
+                          <span className={`text-[10px] truncate max-w-[60px] ${advCls}`}>{mapAdviceDisplay(adv)}</span>
                         );
                       })()}
                       <span className="text-xs text-muted/50 ml-auto flex-shrink-0">

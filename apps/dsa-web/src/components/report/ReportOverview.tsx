@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { mapAdviceDisplay } from '../../types/analysis';
 import type { ReportMeta, ReportSummary as ReportSummaryType } from '../../types/analysis';
 import apiClient from '../../api';
 import { scoreTrendApi } from '../../api/scoreTrend';
@@ -245,6 +246,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
           <div className="flex items-center gap-1.5">
             {summary.operationAdvice && (() => {
               const adv = summary.operationAdvice;
+              const displayAdv = mapAdviceDisplay(adv);
               const isBuy = adv.includes('买入') || adv.includes('吸纳');
               const isSell = adv.includes('卖出') || adv.includes('减仓');
               const colorClass = isBuy
@@ -254,7 +256,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   : 'bg-white/[0.07] text-white/50 border-white/10';
               return (
                 <span className={`text-[11px] px-2 py-0.5 rounded font-mono font-semibold border ${colorClass}`}>
-                  {adv}
+                  {displayAdv}
                 </span>
               );
             })()}
@@ -271,6 +273,24 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ⚠️ 追涨风险警告（当日涨幅>5%且有买入类建议时醒目提示） */}
+      {(() => {
+        const todayPctChg = displayChangePct;
+        const adv = summary.operationAdvice ?? '';
+        const isBuyAdvice = adv.includes('买入') || adv.includes('吸纳') || adv.includes('做多') || adv.includes('加仓');
+        if (todayPctChg != null && todayPctChg > 5 && isBuyAdvice) {
+          return (
+            <div className="rounded-lg px-3 py-2.5 border border-red-500/30 bg-red-500/[0.08] flex items-start gap-2">
+              <span className="text-red-400 text-sm flex-shrink-0 leading-5">⚠️</span>
+              <p className="text-[12px] text-red-300/90 leading-relaxed">
+                该股今日已涨 <span className="font-mono font-semibold text-red-300">{todayPctChg.toFixed(1)}%</span>，追高买入风险较大，历史追涨胜率偏低。建议等待回调再考虑入场。
+              </p>
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* ★ 核心决策卡（立即行动 + 一句话结论） */}
       {(actionNow || oneSentence) && (
@@ -419,7 +439,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
       {/* 操作建议摘要（紧凑单行） */}
       <div className="flex items-center gap-3 text-[12px] text-white/50 flex-wrap">
         {summary.operationAdvice && (
-          <span>建议：<span className="text-white/75">{summary.operationAdvice}</span></span>
+          <span>建议：<span className="text-white/75">{mapAdviceDisplay(summary.operationAdvice)}</span></span>
         )}
         <button
           type="button"

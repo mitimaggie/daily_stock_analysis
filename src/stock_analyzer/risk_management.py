@@ -78,7 +78,13 @@ class RiskManager:
             atr_multiplier_mid *= 0.85
         
         # A股涨跌停限制：止损价不应低于跌停价（无法执行）
-        limit_pct = getattr(result, 'limit_pct', 10.0) or 10.0
+        limit_pct = getattr(result, 'limit_pct', None)
+        if not limit_pct:
+            code = getattr(result, 'stock_code', '') or ''
+            if code.startswith(('300', '301', '688', '689')):
+                limit_pct = 20.0
+            else:
+                limit_pct = 10.0
         limit_floor = round(price * (1 - limit_pct / 100), 2)
         
         result.stop_loss_intraday = round(max(price - 0.7 * atr_multiplier_short * atr, limit_floor), 2)
@@ -224,6 +230,7 @@ class RiskManager:
             position = position * mult
         
         position = max(0, min(80, int(position)))
+        result._raw_position = position
         result.recommended_position = position
         
         # 动态仓位上限（替代硬编码30%）

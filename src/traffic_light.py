@@ -87,8 +87,9 @@ def _build_reason(sentiment: MarketSentiment) -> str:
     return "，".join(parts) if parts else "数据不足"
 
 
-def _smooth_signal(today_signal: str, db: Any, today_str: str) -> str:
-    """平滑：防止信号跳变超过 1 级（自动跳过非交易日查找上一交易日缓存）"""
+def _smooth_signal(today_signal: str, db: Any, today_str: str,
+                   raw_score: float = 50.0) -> str:
+    """平滑：防止信号跳变超过 1 级；极端行情（分数变化>=30）允许跳变 2 级"""
     prev_cached = None
     for offset in range(1, 8):
         prev_str = (datetime.now() - timedelta(days=offset)).strftime('%Y-%m-%d')
@@ -108,8 +109,19 @@ def _smooth_signal(today_signal: str, db: Any, today_str: str) -> str:
         return today_signal
 
     yesterday_signal = prev_data.get("signal", "")
+    prev_score = prev_data.get("score", 50.0)
     today_level = SIGNAL_LEVELS.get(today_signal, 3)
     yesterday_level = SIGNAL_LEVELS.get(yesterday_signal, 3)
+
+    score_delta = abs(raw_score - prev_score)
+    if score_delta >= 30:
+        if abs(today_level - yesterday_level) <= 2:
+            return today_signal
+        if today_level > yesterday_level:
+            smoothed_level = yesterday_level + 2
+        else:
+            smoothed_level = yesterday_level - 2
+        return _LEVEL_TO_SIGNAL.get(smoothed_level, today_signal)
 
     if abs(today_level - yesterday_level) <= 1:
         return today_signal
@@ -145,7 +157,7 @@ def compute_traffic_light(sentiment: MarketSentiment,
     raw_signal = _score_to_signal(score)
 
     today_str = datetime.now().strftime('%Y-%m-%d')
-    signal = _smooth_signal(raw_signal, db, today_str)
+    signal = _smooth_signal(raw_signal, db, today_str, raw_score=score)
 
     meta = SIGNAL_META.get(signal, SIGNAL_META["cautious"])
     reason = _build_reason(sentiment)

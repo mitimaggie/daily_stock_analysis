@@ -50,11 +50,19 @@ class SearchResponse:
         if not self.results:
             return "未找到相关重大舆情。"
         
-        # Perplexity 深度报告直接返回全文
-        if len(self.results) == 1:
-            return self.results[0].snippet
+        _MAX_SNIPPET_CHARS = 1500
 
-        return "\n".join([f"{i+1}. {r.to_text()}" for i, r in enumerate(self.results[:max_results])])
+        # Perplexity 深度报告直接返回全文（截断保护）
+        if len(self.results) == 1:
+            snippet = self.results[0].snippet
+            return snippet[:_MAX_SNIPPET_CHARS] + '...' if len(snippet) > _MAX_SNIPPET_CHARS else snippet
+
+        trimmed = []
+        for i, r in enumerate(self.results[:max_results]):
+            if len(r.snippet) > _MAX_SNIPPET_CHARS:
+                r = SearchResult(r.title, r.snippet[:_MAX_SNIPPET_CHARS] + '...', r.url, r.source, r.published_date)
+            trimmed.append(f"{i+1}. {r.to_text()}")
+        return "\n".join(trimmed)
 
 # === 核心：Perplexity 搜索提供者 (连接池增强版) ===
 class PerplexitySearchProvider:

@@ -4,6 +4,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 from src.config import get_config
 import warnings
@@ -194,6 +195,7 @@ class GeminiAnalyzer:
 你的任务是分析市场整体的“天气状况”。
 - 关注核心：流动性、央行政策、汇率波动、市场情绪、赚钱效应。
 - 输出风格：高屋建瓴，不纠结细枝末节，给出明确的仓位控制建议（如：进攻/防守/空仓）。
+你的输出读者是A股个人散户投资者，宏观建议要转化为可执行的仓位策略（如“建议总仓位不超过X成”），不要给出机构级别的配置建议。
 """
 
     # 角色2: 行业侦探 (用于 Search/Info Gathering)
@@ -348,6 +350,8 @@ class GeminiAnalyzer:
                 system_prompt = self.PROMPT_TRADER_HOLDING
             else:
                 system_prompt = self.PROMPT_TRADER
+
+            system_prompt = system_prompt.rstrip() + f"\n今天是{datetime.now().strftime('%Y年%m月%d日')}。"
 
             # 2. Flash 预判断（trader 角色 + 非 llm_only 变体时启用双阶段）
             # Flash 读取极简技术快照 → 输出方向摘要 → Pro 用摘要替换原始技术数据
@@ -1605,11 +1609,8 @@ dashboard: {{
 ③counter_arguments必须≥2条，每条含具体数字或事件
 
 ---
-⚠️ CRITICAL CONSTRAINTS REMINDER（开始输出前再次确认）：
-• 当前场景：{_scene.upper() if _scene else 'UNKNOWN'} | 当前角色：{role.upper()}
-• 你的核心任务：①{('判断是否执行止盈退出计划' if _scene == 'profit_take' else ('评估危机严重程度并给出止损决策' if _scene == 'crisis' else '给出入场/持仓/出场的具体操作建议'))}  ②识别Tier-0/Tier-1风险事件  ③填写counter_arguments≥2条（禁止重复）
-• stop_loss / ideal_buy / target 必须是具体数字，禁止输出 null 或 0
-• analysis_summary 3句话格式：①方向+核心数字 ②最关键因素 ③操作建议+触发条件
+⚠️ 场景：{_scene.upper() if _scene else 'UNKNOWN'} | 角色：{role.upper()}
+• counter_arguments≥2条（含具体数字/事件）；stop_loss/ideal_buy/target 必须为具体数字
 
 开始分析：
 """
@@ -1715,7 +1716,17 @@ dashboard: {{
                             "counter_arguments": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "反面论证，必须列出2-3条当前判断可能错误的理由，禁止为空数组"
+                                "description": "反面论证（至少2条，禁止为空数组），必须列出2-3条当前判断可能错误的理由，每条含具体数字或事件"
+                            },
+                            "override_intel": {
+                                "type": "object",
+                                "properties": {
+                                    "triggered": {"type": "boolean", "description": "是否触发Tier-0/Tier-1风险事件降级"},
+                                    "tier": {"type": "string", "description": "风险等级：Tier-0(监管/退市) 或 Tier-1(实控人减持/业绩暴雷)"},
+                                    "reason": {"type": "string", "description": "降级原因"},
+                                    "downgrade_to": {"type": "string", "description": "降级后的操作建议"}
+                                },
+                                "description": "Tier-0/Tier-1重大风险事件降级覆写，无风险时triggered=false"
                             },
                             "action_now": {"type": "string", "description": "≤30字一句话行动指令"},
                             "execution_difficulty": {"type": "string", "enum": ["低", "中", "高"]},
@@ -1983,18 +1994,19 @@ dashboard: {{
     def chat(self, prompt: str) -> str:
         """通用对话接口 (大盘复盘用)"""
         if not self.is_available(): return "AI未配置"
+        macro_prompt = self.PROMPT_MACRO.rstrip() + f"\n今天是{datetime.now().strftime('%Y年%m月%d日')}。"
         try:
             if self._use_openai:
                 return self._openai_client.chat.completions.create(
                     model=get_config().openai_model,
                     messages=[
-                        {"role": "system", "content": self.PROMPT_MACRO},
+                        {"role": "system", "content": macro_prompt},
                         {"role": "user", "content": prompt}
                     ]
                 ).choices[0].message.content
             
             # Gemini
-            return self._model.generate_content(f"{self.PROMPT_MACRO}\n\n{prompt}").text
+            return self._model.generate_content(f"{macro_prompt}\n\n{prompt}").text
         except Exception as e:
             err_str = str(e)
             # 识别常见错误并给出友好提示

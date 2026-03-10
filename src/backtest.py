@@ -183,7 +183,7 @@ class BacktestRunner:
             sql = text("""
                 SELECT date, close
                 FROM index_daily
-                WHERE code = '上证指数' AND date >= :start_date
+                WHERE code = '沪深300' AND date >= :start_date
                 ORDER BY date ASC
                 LIMIT :limit
             """).bindparams(start_date=str(start_date), limit=_limit)
@@ -520,7 +520,8 @@ class BacktestRunner:
             std_return = np.std(returns_array, ddof=1)
             if std_return == 0:
                 return 0.0
-            sharpe = (avg_return - rf_rate / 50) / std_return
+            rf_5d = rf_rate / 50
+            sharpe = (avg_return - rf_5d) / std_return * np.sqrt(50)
 
         return round(sharpe, 2)
 
@@ -562,11 +563,22 @@ class BacktestRunner:
         else:
             info_ratio = 0.0
 
-        # 3. 最大回撤（几何累乘净值曲线）
-        nav = np.cumprod([1 + r / 100 for r in returns])
-        running_max = np.maximum.accumulate(nav)
-        drawdown = (nav - running_max) / running_max * 100
-        max_drawdown = abs(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        # 3. 最大回撤（按日聚合等权组合后计算）
+        from collections import defaultdict as _dd
+        daily_rets: Dict[str, List[float]] = _dd(list)
+        for r in records:
+            if r.actual_pct_5d is not None and r.created_at:
+                d_key = r.created_at.strftime('%Y-%m-%d') if hasattr(r.created_at, 'strftime') else str(r.created_at)
+                daily_rets[d_key].append(r.actual_pct_5d / 100)
+        if daily_rets:
+            sorted_days = sorted(daily_rets.keys())
+            daily_avg_rets = [np.mean(daily_rets[d]) for d in sorted_days]
+            nav = np.cumprod([1 + r for r in daily_avg_rets])
+            running_max = np.maximum.accumulate(nav)
+            drawdown = (nav - running_max) / running_max * 100
+            max_drawdown = abs(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        else:
+            max_drawdown = 0.0
 
         # 4. 卡玛比率 = 年化收益 / 最大回撤
         total_return = nav[-1] - 1 if len(nav) > 0 else 0

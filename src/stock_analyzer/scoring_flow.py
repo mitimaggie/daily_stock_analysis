@@ -5,6 +5,7 @@
 """
 
 import logging
+import threading
 from datetime import datetime
 from typing import Dict, List, Union, Optional
 
@@ -19,6 +20,7 @@ from data_provider.realtime_types import ChipDistribution
 
 logger = logging.getLogger(__name__)
 
+_P4_LOCK = threading.Lock()
 _P4_GLOBAL_FAIL_TS: float = 0.0
 _P4_CONSECUTIVE_FAILS: int = 0
 _P4_FUSE_THRESHOLD: int = 3
@@ -121,8 +123,9 @@ class ScoringFlow:
             import time
             import random
 
-            if _P4_CONSECUTIVE_FAILS >= _P4_FUSE_THRESHOLD and (time.time() - _P4_GLOBAL_FAIL_TS) < _P4_FUSE_DURATION:
-                return
+            with _P4_LOCK:
+                if _P4_CONSECUTIVE_FAILS >= _P4_FUSE_THRESHOLD and (time.time() - _P4_GLOBAL_FAIL_TS) < _P4_FUSE_DURATION:
+                    return
 
             market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
 
@@ -133,16 +136,18 @@ class ScoringFlow:
                     ak.stock_individual_fund_flow, stock=stock_code, market=market
                 ).result(timeout=10)
             except _FuturesTimeout:
-                _P4_CONSECUTIVE_FAILS += 1
-                if _P4_CONSECUTIVE_FAILS >= _P4_FUSE_THRESHOLD:
-                    logging.getLogger(__name__).warning(f"[P4] {stock_code} 连续{_P4_CONSECUTIVE_FAILS}次超时，熔断{_P4_FUSE_DURATION//60}min")
-                    _P4_GLOBAL_FAIL_TS = time.time()
-                else:
-                    logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(10s)，累计{_P4_CONSECUTIVE_FAILS}次")
+                with _P4_LOCK:
+                    _P4_CONSECUTIVE_FAILS += 1
+                    if _P4_CONSECUTIVE_FAILS >= _P4_FUSE_THRESHOLD:
+                        logging.getLogger(__name__).warning(f"[P4] {stock_code} 连续{_P4_CONSECUTIVE_FAILS}次超时，熔断{_P4_FUSE_DURATION//60}min")
+                        _P4_GLOBAL_FAIL_TS = time.time()
+                    else:
+                        logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(10s)，累计{_P4_CONSECUTIVE_FAILS}次")
                 return
             finally:
                 _p4_ex.shutdown(wait=False)
-            _P4_CONSECUTIVE_FAILS = 0
+            with _P4_LOCK:
+                _P4_CONSECUTIVE_FAILS = 0
             if df_flow is None or len(df_flow) < 5:
                 return
 
@@ -289,7 +294,8 @@ class ScoringFlow:
         except Exception as e:
             import logging
             import time as _t_p4
-            _P4_GLOBAL_FAIL_TS = _t_p4.time()
+            with _P4_LOCK:
+                _P4_GLOBAL_FAIL_TS = _t_p4.time()
             logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金追踪失败，全局熔断30min: {e}")
 
 

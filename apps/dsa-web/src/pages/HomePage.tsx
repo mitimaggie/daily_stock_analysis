@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { HistoryItem, AnalysisReport, TaskInfo, PositionInfo } from '../types/analysis';
+import { mapAdviceDisplay } from '../types/analysis';
 import { historyApi } from '../api/history';
 import { analysisApi, DuplicateTaskError } from '../api/analysis';
 import { validateStockCode } from '../utils/validation';
@@ -734,7 +735,7 @@ const HomePage: React.FC = () => {
                           <span className={`text-[11px] font-mono font-semibold ${scoreColor}`}>{score}分</span>
                         )}
                         {item.operationAdvice && (
-                          <span className="text-[10px] text-white/25 truncate max-w-[60px]">{item.operationAdvice}</span>
+                          <span className="text-[10px] text-white/25 truncate max-w-[60px]">{mapAdviceDisplay(item.operationAdvice)}</span>
                         )}
                       </button>
                     );
@@ -963,7 +964,7 @@ const HomePage: React.FC = () => {
                               </div>
                               <span className="text-[11px] text-white/45 truncate">{item.stockName || '—'}</span>
                               {adv && (
-                                <span className={`text-[10px] font-medium ${advColor}`}>{adv}</span>
+                                <span className={`text-[10px] font-medium ${advColor}`}>{mapAdviceDisplay(adv)}</span>
                               )}
                             </button>
                           );

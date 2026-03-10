@@ -81,7 +81,7 @@ class ResonanceDetector:
                     # 线性衰减：第0天=1.0，第N天=0.0
                     decay = max(0.0, 1.0 - offset / adjusted_days)
                     return round(decay, 2)
-            return 0.2  # 搜索窗口内未找到交叉，信号已过时，给予最低权重
+            return 0.0  # 搜索窗口外交叉已过时，信号归零
         except Exception:
             return 0.5
 

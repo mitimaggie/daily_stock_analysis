@@ -84,6 +84,7 @@ class StockDaily(Base):
     __table_args__ = (
         UniqueConstraint('code', 'date', name='uix_code_date'),
         Index('ix_code_date', 'code', 'date'),
+        Index('ix_date_code', 'date', 'code'),
     )
     
     def to_dict(self) -> Dict[str, Any]:

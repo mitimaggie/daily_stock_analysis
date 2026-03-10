@@ -317,6 +317,15 @@ export interface ApiError {
 
 // ============ 辅助函数 ============
 
+const ADVICE_DISPLAY_MAP: Record<string, string> = {
+  '激进买入': '强信号做多',
+  '强烈买入': '信号偏强',
+};
+
+/** 将后端操作建议映射为前端展示措辞 */
+export const mapAdviceDisplay = (raw: string): string =>
+  ADVICE_DISPLAY_MAP[raw] ?? raw;
+
 /** 根据情绪评分获取情绪标签 */
 export const getSentimentLabel = (score: number): SentimentLabel => {
   if (score <= 20) return '极度悲观';

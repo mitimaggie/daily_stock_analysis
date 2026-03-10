@@ -291,7 +291,10 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           conceptContext={conceptContext}
         />
 
-        {/* 5. 作战计划（分阶段止盈） */}
+        {/* 5. 信号灯（首屏展示，紧跟风险预警之后） */}
+        <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
+
+        {/* 6. 作战计划（分阶段止盈） */}
         <ReportStrategy
           strategy={strategy}
           hasPositionInfo={true}
@@ -307,7 +310,7 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
           totalShares={positionInfo?.shares ?? positionInfo?.position_shares ?? undefined}
         />
 
-        {/* 6. 折叠区：AI诊断、信号灯、量化、新闻 */}
+        {/* 7. 折叠区：AI诊断、量化、新闻 */}
         <CollapsibleSection title="📊 更多分析">
           <AiDiagnosis
             analysisSummary={summary.analysisSummary}
@@ -316,7 +319,6 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
             positionAdvice={positionAdvice}
             defaultExpanded={false}
           />
-          <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
           <QuantPanel quantExtras={quantExtras} skillUsed={skillUsed ?? undefined} />
           <ReportNews stockCode={meta.stockCode} />
         </CollapsibleSection>
@@ -373,12 +375,14 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
       {/* 4. AI 精简诊断 */}
       <AiDigestCard analysisSummary={summary.analysisSummary} />
 
-      {/* 5. 估值定位 */}
+      {/* 5. 信号灯（首屏展示，紧跟估值定位之前） */}
+      <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
+
+      {/* 6. 估值定位 */}
       <ValuationBar quantExtras={quantExtras} />
 
-      {/* 6. 折叠区：信号灯、量化、新闻、交易日志 */}
+      {/* 7. 折叠区：量化、新闻、交易日志 */}
       <CollapsibleSection title="📊 更多分析">
-        <SignalLights quantExtras={quantExtras} northboundHolding={northboundHolding} />
         <QuantPanel quantExtras={quantExtras} skillUsed={skillUsed ?? undefined} />
         <ReportNews stockCode={meta.stockCode} />
         <TradeLog

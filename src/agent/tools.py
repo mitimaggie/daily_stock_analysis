@@ -3,6 +3,7 @@
 Agent 工具层 - 封装数据获取、分析、搜索能力供 LLM function calling 使用
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -188,6 +189,93 @@ def search_stock_news(stock_code: str, stock_name: str = "") -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+def get_market_sentiment(**kwargs) -> Dict[str, Any]:
+    """获取当前A股市场情绪温度和涨跌停数据"""
+    try:
+        from src.market_sentiment import get_market_sentiment_cached
+        sentiment = get_market_sentiment_cached()
+        if sentiment is None:
+            return {"error": "市场情绪数据暂不可用"}
+        return {
+            "temperature": sentiment.temperature,
+            "temperature_label": sentiment.temperature_label,
+            "limit_up_count": sentiment.limit_up_count,
+            "limit_down_count": sentiment.limit_down_count,
+            "broken_limit_rate": sentiment.broken_limit_rate,
+        }
+    except Exception as e:
+        logger.warning(f"get_market_sentiment() failed: {e}")
+        return {"error": str(e)}
+
+
+def get_concept_hot(**kwargs) -> Dict[str, Any]:
+    """获取今日A股热门概念板块排行"""
+    try:
+        from src.storage import DatabaseManager
+        db = DatabaseManager.get_instance()
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        cached = db.get_data_cache('concept_daily', today_str, ttl_hours=12)
+        if not cached:
+            return {"error": "今日概念板块数据尚未更新"}
+        data = json.loads(cached)
+        concepts = data.get('concepts', [])[:15]
+        return {"date": today_str, "top_concepts": concepts}
+    except Exception as e:
+        logger.warning(f"get_concept_hot() failed: {e}")
+        return {"error": str(e)}
+
+
+def get_fundamental_brief(stock_code: str = "", **kwargs) -> Dict[str, Any]:
+    """获取指定股票的基本面简要数据（PE/PB/ROE/负债率等）"""
+    if not stock_code:
+        return {"error": "请提供股票代码"}
+    try:
+        from data_provider.fundamental_fetcher import get_fundamental_data
+        data = get_fundamental_data(stock_code)
+        if data is None:
+            return {"error": f"未找到{stock_code}的基本面数据"}
+        result: Dict[str, Any] = {}
+        if data.valuation:
+            v = data.valuation
+            result["pe"] = v.get("pe")
+            result["pb"] = v.get("pb")
+            result["peg"] = v.get("peg")
+            result["industry_pe_median"] = v.get("industry_pe_median")
+        if data.financial and data.financial.has_data:
+            f = data.financial
+            result["roe"] = f.roe
+            result["debt_ratio"] = f.debt_ratio
+            result["gross_margin"] = f.gross_margin
+            result["net_profit_growth"] = f.net_profit_growth
+            result["revenue_growth"] = f.revenue_growth
+        if not result:
+            return {"error": f"{stock_code}基本面数据为空"}
+        return result
+    except Exception as e:
+        logger.warning(f"get_fundamental_brief({stock_code}) failed: {e}")
+        return {"error": str(e)}
+
+
+def get_northbound_flow(**kwargs) -> Dict[str, Any]:
+    """获取最近北向资金（沪股通+深股通）流向数据"""
+    try:
+        import akshare as ak
+        df = ak.stock_hsgt_north_net_flow_in_em(symbol="北上")
+        if df is None or df.empty:
+            return {"error": "北向资金数据获取失败"}
+        recent = df.tail(5)
+        rows = []
+        for _, r in recent.iterrows():
+            rows.append({
+                "date": str(r.get("日期", "")),
+                "net_flow": float(r.get("当日净流入", 0)),
+            })
+        return {"north_flow_recent_5d": rows}
+    except Exception as e:
+        logger.warning(f"get_northbound_flow() failed: {e}")
+        return {"error": str(e)}
+
+
 def get_stock_name(stock_code: str) -> str:
     """根据股票代码获取股票名称"""
     try:
@@ -284,6 +372,44 @@ TOOL_DEFINITIONS = [
             "required": ["stock_code"]
         }
     },
+    {
+        "name": "get_market_sentiment",
+        "description": "获取当前A股市场情绪温度（0-100贪婪恐惧指数）、涨跌停家数、炸板率等。适合回答'现在市场情绪怎么样'、'今天涨停多少家'等问题。",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_concept_hot",
+        "description": "获取今日A股热门概念板块排行（前15名）。适合回答'今天什么板块热门'、'哪些概念在涨'等问题。",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_fundamental_brief",
+        "description": "获取股票基本面简要数据，包括PE/PB/PEG估值和ROE/负债率/毛利率/增长率等财务指标。适合回答'这只股票估值高不高'、'基本面怎么样'等问题。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "stock_code": {
+                    "type": "string",
+                    "description": "股票代码，如 600519"
+                }
+            },
+            "required": ["stock_code"]
+        }
+    },
+    {
+        "name": "get_northbound_flow",
+        "description": "获取最近5个交易日的北向资金（沪股通+深股通）净流入数据。适合回答'北向资金最近在买还是在卖'、'外资流向'等问题。",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
 ]
 
 TOOL_FUNCTIONS = {
@@ -292,6 +418,10 @@ TOOL_FUNCTIONS = {
     "get_chip_distribution": get_chip_distribution,
     "get_analysis_context": get_analysis_context,
     "search_stock_news": search_stock_news,
+    "get_market_sentiment": get_market_sentiment,
+    "get_concept_hot": get_concept_hot,
+    "get_fundamental_brief": get_fundamental_brief,
+    "get_northbound_flow": get_northbound_flow,
 }
 
 TOOL_DISPLAY_NAMES = {
@@ -300,4 +430,8 @@ TOOL_DISPLAY_NAMES = {
     "get_chip_distribution": "分析筹码分布",
     "get_analysis_context": "读取分析报告",
     "search_stock_news": "搜索最新情报",
+    "get_market_sentiment": "查看市场情绪",
+    "get_concept_hot": "查看热门概念",
+    "get_fundamental_brief": "查看基本面",
+    "get_northbound_flow": "查看北向资金",
 }

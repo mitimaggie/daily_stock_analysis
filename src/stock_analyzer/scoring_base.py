@@ -568,18 +568,35 @@ class ScoringBase:
             'other': 5,
         }
 
+        EXPLICIT_GROUP: Dict[str, str] = {
+            'divergence_adj': 'oscillator',
+            'p3_resonance': 'trend',
+            'p4_capital_flow': 'capital',
+            'p5c_lhb': 'capital',
+            'p5c_dzjy': 'capital',
+            'p5c_holder': 'capital',
+            'market_sentiment_adj': 'other',
+            'volume_spike_trap': 'capital',
+            'kdj_weekly_bonus': 'oscillator',
+            'concept_decay': 'fundamental',
+            'intraday_vol_signal': 'capital',
+            'support_strength': 'trend',
+        }
+
         def _classify(key: str) -> str:
+            if key in EXPLICIT_GROUP:
+                return EXPLICIT_GROUP[key]
             kl = key.lower()
             if any(t in kl for t in ['macd', 'adx', 'weekly', 'trend', 'resonance',
                                       'multi_timeframe', 'timeframe', 'ma_', 'ema',
-                                      'chart_pattern', 'divergence', 'candle_pattern',
-                                      'support_strength', 'fib_']):
+                                      'chart_pattern', 'candle_pattern',
+                                      'fib_']):
                 return 'trend'
             if any(t in kl for t in ['rsi', 'kdj', 'boll', 'oversold', 'overbought',
                                       'sentiment_extreme']):
                 return 'oscillator'
             if any(t in kl for t in ['capital', 'north', 'lhb', 'dzjy', 'holder',
-                                      'insider', 'fund_flow', 'p4_capital', 'p5c_']):
+                                      'insider', 'fund_flow']):
                 return 'capital'
             if any(t in kl for t in ['valuation', 'fundamental', 'earning', 'profit',
                                       'pe_', 'pb_', 'forecast']):
@@ -597,16 +614,7 @@ class ScoringBase:
         capped_total = 0
         for group_name, values in groups.items():
             budget = GROUP_BUDGETS.get(group_name, 5)
-            positives = [v for v in values if v > 0]
-            negatives = [v for v in values if v < 0]
-
-            if positives and negatives:
-                max_pos = max(positives)
-                min_neg = min(negatives)
-                group_adj = max_pos if max_pos >= abs(min_neg) else min_neg
-            else:
-                group_adj = sum(values)
-
+            group_adj = sum(values)
             group_adj = max(-budget, min(budget, group_adj))
             capped_total += group_adj
 
@@ -637,10 +645,6 @@ class ScoringBase:
             result._conflict_warnings = []
         result._conflict_warnings = conflicts
     
-    # ---- 市场情绪温度（已迁移至 market_sentiment.get_market_sentiment_cached）----
-    _sentiment_cache: dict = {'data': None, 'ts': 0.0}
-
-
     @staticmethod
     def update_buy_signal(result: TrendAnalysisResult):
         """根据 signal_score 重新判定 buy_signal 等级（7档精细分级）

@@ -118,7 +118,7 @@ class TechnicalIndicators:
                 abs(df['low'] - df['close'].shift(1))
             )
         )
-        df['ATR14'] = tr.rolling(window=14).mean()
+        df['ATR14'] = tr.ewm(alpha=1.0/14, min_periods=14, adjust=False).mean()
         return df
     
     @staticmethod
@@ -143,7 +143,7 @@ class TechnicalIndicators:
     def _calc_bollinger_bands(df: pd.DataFrame) -> pd.DataFrame:
         """计算布林带 (20, 2)"""
         bb_mid = df['MA20']
-        bb_std = df['close'].rolling(window=20).std(ddof=0)
+        bb_std = df['close'].rolling(window=20).std(ddof=1)
         df['BB_UPPER'] = bb_mid + 2 * bb_std
         df['BB_LOWER'] = bb_mid - 2 * bb_std
         df['BB_WIDTH'] = ((df['BB_UPPER'] - df['BB_LOWER']) / bb_mid).replace([np.inf, -np.inf], 0)

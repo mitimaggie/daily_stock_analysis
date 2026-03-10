@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { mapAdviceDisplay } from '../../types/analysis';
 import type { ReportSummary, ReportStrategy, ReportMeta } from '../../types/analysis';
 
 interface DecisionCardProps {
@@ -32,8 +33,9 @@ export const DecisionCard: React.FC<DecisionCardProps> = ({ summary, strategy, m
     totalCapital ? String(Math.round(totalCapital * 0.1 / 1000) * 1000 || 50000) : '50000'
   );
 
-  const advice = summary.operationAdvice || '观望';
-  const s = ADVICE_STYLE[advice] ?? ADVICE_STYLE['观望'];
+  const rawAdvice = summary.operationAdvice || '观望';
+  const advice = mapAdviceDisplay(rawAdvice);
+  const s = ADVICE_STYLE[rawAdvice] ?? ADVICE_STYLE['观望'];
   const conf = confidenceLevel(summary.sentimentScore ?? 50);
 
   const stopLoss   = strategy?.stopLoss   ? parseFloat(strategy.stopLoss)   : null;
