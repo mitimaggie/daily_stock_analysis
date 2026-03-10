@@ -631,7 +631,7 @@ const PortfolioPage: React.FC = () => {
   const reduceCount = signals.filter(s => s.signal === 'reduce').length;
 
   return (
-    <div className="min-h-screen bg-base text-primary pb-20">
+    <div className="min-h-screen bg-base text-primary pb-6">
       {/* 顶部导航 */}
       <div className="border-b border-black/[0.05] px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">

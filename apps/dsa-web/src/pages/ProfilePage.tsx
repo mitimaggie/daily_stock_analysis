@@ -65,8 +65,8 @@ const ProfilePage: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen pb-20">
-      <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
+    <div className="min-h-screen pb-6">
+      <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
         {/* 标题 */}
         <h1 className="text-[18px] font-bold text-primary">我的</h1>
 

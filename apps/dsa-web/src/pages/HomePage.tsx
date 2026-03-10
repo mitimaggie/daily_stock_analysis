@@ -711,7 +711,7 @@ const HomePage: React.FC = () => {
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                 placeholder="股票代码或名称  600519 茅台 / HK00700 / AAPL"
                 disabled={isAnalyzing}
-                className={`header-input w-full pl-9 ${inputError ? 'border-danger/40' : ''}`}
+                className={`header-input w-full !pl-9 ${inputError ? 'border-danger/40' : ''}`}
               />
             </div>
             {/* 自动补全下拉 */}

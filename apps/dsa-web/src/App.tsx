@@ -7,25 +7,27 @@ import NotFoundPage from './pages/NotFoundPage';
 import PortfolioPage from './pages/PortfolioPage';
 import SimpleViewPage from './pages/SimpleViewPage';
 import ScreenerPage from './pages/ScreenerPage';
-import BottomNav from './components/layout/BottomNav';
+import TopNav from './components/layout/TopNav';
 import './App.css';
 
 const AppLayout: React.FC = () => {
     const location = useLocation();
-    const hideBottomNav = location.pathname.includes('/simple');
+    const hideNav = location.pathname.includes('/simple');
 
     return (
         <div className="min-h-screen bg-base">
-            <Routes>
-                <Route path="/" element={<MarketPage />} />
-                <Route path="/screener" element={<ScreenerPage />} />
-                <Route path="/analysis" element={<HomePage />} />
-                <Route path="/portfolio" element={<PortfolioPage />} />
-                <Route path="/portfolio/:code/simple" element={<SimpleViewPage />} />
-                <Route path="/profile" element={<ProfilePage />} />
-                <Route path="*" element={<NotFoundPage />} />
-            </Routes>
-            {!hideBottomNav && <BottomNav />}
+            {!hideNav && <TopNav />}
+            <div className={hideNav ? '' : 'pt-12'}>
+                <Routes>
+                    <Route path="/" element={<MarketPage />} />
+                    <Route path="/screener" element={<ScreenerPage />} />
+                    <Route path="/analysis" element={<HomePage />} />
+                    <Route path="/portfolio" element={<PortfolioPage />} />
+                    <Route path="/portfolio/:code/simple" element={<SimpleViewPage />} />
+                    <Route path="/profile" element={<ProfilePage />} />
+                    <Route path="*" element={<NotFoundPage />} />
+                </Routes>
+            </div>
         </div>
     );
 };

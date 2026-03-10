@@ -57,8 +57,8 @@ const MarketPage: React.FC = () => {
   }, []);
 
   return (
-    <div className="min-h-screen pb-20">
-      <div className="max-w-lg lg:max-w-5xl mx-auto px-4 py-4 space-y-4">
+    <div className="min-h-screen pb-6">
+      <div className="max-w-7xl mx-auto px-4 py-4 space-y-4">
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <h1 className="text-[18px] font-bold text-primary">市场概览</h1>
