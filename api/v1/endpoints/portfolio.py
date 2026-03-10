@@ -10,7 +10,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from src.config import Config
+from src.config import Config, get_config
 from src.services.portfolio_service import (
     add_portfolio, remove_portfolio, list_portfolio, get_portfolio,
     add_watchlist, remove_watchlist, list_watchlist, update_watchlist_analysis,
@@ -322,7 +322,7 @@ def api_monitor_portfolio():
             sector_exposure = calculate_sector_exposure(portfolio_items)
         except Exception:
             pass
-        config = Config()
+        config = get_config()
         portfolio_size = config.portfolio_size
         total_market_value = sum(
             (s.get('current_price') or 0) * (s.get('shares') or 0)
@@ -392,7 +392,7 @@ def _calc_concentration_warnings(signals: list) -> list:
                     current_price = sig.get('current_price') or 0
                     shares = sig.get('shares') or 0
                     if current_price > 0 and shares > 0:
-                        config = Config()
+                        config = get_config()
                         total_capital = config.portfolio_size
                         if total_capital <= 0:
                             total_capital = sum(

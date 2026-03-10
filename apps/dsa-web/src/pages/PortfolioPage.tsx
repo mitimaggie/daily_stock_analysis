@@ -2,6 +2,7 @@ import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { portfolioApi, type MonitorSignal, type WatchlistItem, type PortfolioLog } from '../api/portfolio';
+import { analysisApi } from '../api/analysis';
 import { scoreTrendApi } from '../api/scoreTrend';
 import PortfolioHeatScan from '../components/portfolio/PortfolioHeatScan';
 import { safeFixed, isMarketOpen } from '../utils/format';
@@ -463,6 +464,8 @@ const PortfolioPage: React.FC = () => {
   const [loadingWatchlist, setLoadingWatchlist] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
   const [addWatchCode, setAddWatchCode] = useState('');
   const [addWatchName, setAddWatchName] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -497,6 +500,23 @@ const PortfolioPage: React.FC = () => {
       setCapitalInput('');
       fetchSignals();
     }
+  };
+
+  const handleBatchAnalyze = async () => {
+    if (batchAnalyzing || signals.length === 0) return;
+    setBatchAnalyzing(true);
+    const codes = signals.map(s => s.code);
+    setBatchProgress({ done: 0, total: codes.length });
+    for (let i = 0; i < codes.length; i++) {
+      try {
+        await analysisApi.analyze({ stockCode: codes[i], reportType: 'detailed', forceRefresh: true });
+      } catch (e) {
+        console.error(`分析 ${codes[i]} 失败:`, e);
+      }
+      setBatchProgress({ done: i + 1, total: codes.length });
+    }
+    setBatchAnalyzing(false);
+    fetchSignals();
   };
 
   const fetchWatchlist = useCallback(async () => {
@@ -592,13 +612,21 @@ const PortfolioPage: React.FC = () => {
             </div>
             {showAddForm && <AddPortfolioForm onAdded={() => { setShowAddForm(false); fetchSignals(); }} />}
 
-            {/* 刷新按钮 */}
+            {/* 刷新 & 一键分析 */}
             <div className="flex justify-between items-center">
               <span className="text-[11px] text-muted/70">每2分钟自动刷新 · 盘中分时信号实时更新</span>
-              <button onClick={fetchSignals} disabled={loadingSignals}
-                className="text-[11px] px-2 py-1 rounded border border-black/[0.08] text-muted hover:text-secondary transition disabled:opacity-50">
-                {loadingSignals ? '刷新中…' : '立即刷新'}
-              </button>
+              <div className="flex items-center gap-2">
+                {signals.length > 0 && (
+                  <button onClick={handleBatchAnalyze} disabled={batchAnalyzing}
+                    className="text-[11px] px-3 py-1 rounded border border-cyan-500/25 text-cyan-600 hover:bg-cyan-500/10 transition disabled:opacity-50">
+                    {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}…` : `一键分析持仓（${signals.length}）`}
+                  </button>
+                )}
+                <button onClick={fetchSignals} disabled={loadingSignals}
+                  className="text-[11px] px-2 py-1 rounded border border-black/[0.08] text-muted hover:text-secondary transition disabled:opacity-50">
+                  {loadingSignals ? '刷新中…' : '立即刷新'}
+                </button>
+              </div>
             </div>
 
             {/* 总资金引导横幅 */}

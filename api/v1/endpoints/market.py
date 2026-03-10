@@ -166,6 +166,8 @@ def _check_stop_loss(holding: Any, session: Any,
     dashboard = result_data.get("dashboard", {})
     quant = dashboard.get("quant_extras", {})
 
+    analyzed_at = latest.created_at.isoformat() if latest.created_at else None
+
     if quant.get("stop_loss_breached"):
         todos.append({
             "type": "stop_loss",
@@ -174,6 +176,7 @@ def _check_stop_loss(holding: Any, session: Any,
             "name": name,
             "message": f"{name} 已触发止损位",
             "detail": quant.get("stop_loss_breach_detail", ""),
+            "analyzed_at": analyzed_at,
         })
         return
 
@@ -190,6 +193,7 @@ def _check_stop_loss(holding: Any, session: Any,
                     "name": name,
                     "message": f"{name} 接近ATR止损位 {holding.atr_stop_loss:.2f}",
                     "detail": f"当前收盘 {current_close:.2f}，ATR止损 {holding.atr_stop_loss:.2f}",
+                    "analyzed_at": analyzed_at,
                 })
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
@@ -224,6 +228,7 @@ def _check_score_change(holding: Any, session: Any,
 
     direction = "上升" if diff > 0 else "下降"
     priority = "medium" if abs(diff) < 15 else "high"
+    analyzed_at = rows[0][1].isoformat() if rows[0][1] else None
     todos.append({
         "type": "score_change",
         "priority": priority,
@@ -231,4 +236,5 @@ def _check_score_change(holding: Any, session: Any,
         "name": name,
         "message": f"{name} 评分大幅{direction}",
         "detail": f"评分从 {prev_score} → {latest_score}（{'+' if diff > 0 else ''}{diff}分）",
+        "analyzed_at": analyzed_at,
     })

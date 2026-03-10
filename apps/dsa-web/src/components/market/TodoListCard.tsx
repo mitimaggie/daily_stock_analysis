@@ -12,6 +12,18 @@ const priorityConfig: Record<TodoItem['priority'], { dot: string; border: string
   low: { dot: 'bg-black/[0.12]', border: 'border-l-black/[0.08]' },
 };
 
+function formatTimeAgo(isoStr?: string): string {
+  if (!isoStr) return '';
+  const diff = Date.now() - new Date(isoStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '刚刚分析';
+  if (mins < 60) return `${mins}分钟前分析`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}小时前分析`;
+  const days = Math.floor(hours / 24);
+  return `${days}天前分析`;
+}
+
 const TodoListCard: React.FC<TodoListCardProps> = ({ todos }) => {
   const navigate = useNavigate();
 
@@ -52,6 +64,9 @@ const TodoListCard: React.FC<TodoListCardProps> = ({ todos }) => {
                 <p className="text-[12px] text-primary/70 pl-4">{item.message}</p>
                 {item.detail && (
                   <p className="text-[11px] text-muted pl-4 mt-0.5">{item.detail}</p>
+                )}
+                {item.analyzedAt && (
+                  <p className="text-[10px] text-muted/50 pl-4 mt-0.5">{formatTimeAgo(item.analyzedAt)}</p>
                 )}
               </button>
             );

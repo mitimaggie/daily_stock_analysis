@@ -37,12 +37,13 @@ export interface MarketOverview {
 }
 
 export interface TodoItem {
-  type: 'stop_loss' | 'concept_decay' | 'entry_ready';
+  type: 'stop_loss' | 'concept_decay' | 'entry_ready' | 'score_change';
   priority: 'high' | 'medium' | 'low';
   code: string;
   name: string;
   message: string;
   detail?: string;
+  analyzedAt?: string;
 }
 
 export interface MarketTodoList {
