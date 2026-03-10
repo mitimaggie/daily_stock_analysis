@@ -62,7 +62,7 @@ const PortfolioHeatScan: React.FC<PortfolioHeatScanProps> = ({ portfolioItems })
         <div className="flex items-center gap-2">
           <span className="text-[13px]">🔍</span>
           <span className="text-[13px] font-medium text-primary/70">市场概念热度</span>
-          <span className="text-[10px] text-muted">Top {Math.min(topConcepts.length, 10)}</span>
+          {topConcepts.length > 0 && <span className="text-[10px] text-muted">Top {Math.min(topConcepts.length, 10)}</span>}
           {!expanded && hasAnyIntersection && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-500">有持仓关联</span>
           )}

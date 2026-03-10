@@ -92,39 +92,24 @@ const ScreenerPage: React.FC = () => {
           </span>
         </div>
 
-        {/* 筛选条件卡片 */}
-        <div className="terminal-card p-4 space-y-4">
-          <div className="text-[12px] text-muted font-medium tracking-wider uppercase mb-1">
+        {/* 筛选条件卡片 — 横向紧凑布局 */}
+        <div className="terminal-card p-4 space-y-3">
+          <div className="text-[12px] text-muted font-medium tracking-wider uppercase">
             筛选条件
           </div>
 
-          {/* 评分区间 */}
-          <div className="space-y-2">
-            <label className="text-[12px] text-secondary font-medium">评分区间</label>
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={minScore}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setMinScore(Math.min(v, maxScore));
-                  }}
-                  className="w-full accent-cyan h-1.5 bg-black/[0.06] rounded-full appearance-none cursor-pointer
-                    [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
-                    [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan [&::-webkit-slider-thumb]:shadow-md"
-                />
-              </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="flex flex-wrap items-end gap-4">
+            {/* 评分区间 */}
+            <div className="space-y-1.5">
+              <label className="text-[12px] text-secondary font-medium">评分区间</label>
+              <div className="flex items-center gap-1.5">
                 <input
                   type="number"
                   min={0}
                   max={100}
                   value={minScore}
                   onChange={(e) => setMinScore(Math.min(Number(e.target.value), maxScore))}
-                  className="w-14 bg-black/[0.03] border border-black/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-primary text-center font-mono
+                  className="w-16 bg-black/[0.03] border border-black/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-primary text-center font-mono
                     focus:outline-none focus:border-cyan/40 transition"
                 />
                 <span className="text-muted/70 text-[12px]">—</span>
@@ -134,24 +119,22 @@ const ScreenerPage: React.FC = () => {
                   max={100}
                   value={maxScore}
                   onChange={(e) => setMaxScore(Math.max(Number(e.target.value), minScore))}
-                  className="w-14 bg-black/[0.03] border border-black/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-primary text-center font-mono
+                  className="w-16 bg-black/[0.03] border border-black/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-primary text-center font-mono
                     focus:outline-none focus:border-cyan/40 transition"
                 />
               </div>
             </div>
-          </div>
 
-          {/* 回溯天数 + 操作建议 */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            {/* 回溯天数 */}
+            <div className="space-y-1.5">
               <label className="text-[12px] text-secondary font-medium">回溯天数</label>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1">
                 {DAYS_OPTIONS.map((d) => (
                   <button
                     key={d}
                     type="button"
                     onClick={() => setDays(d)}
-                    className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
+                    className={`px-2.5 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
                       days === d
                         ? 'bg-cyan/15 text-cyan border border-cyan/30'
                         : 'bg-black/[0.02] text-muted border border-black/[0.04] hover:border-black/[0.08] hover:text-secondary'
@@ -163,12 +146,13 @@ const ScreenerPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="space-y-2">
+            {/* 操作建议 */}
+            <div className="space-y-1.5">
               <label className="text-[12px] text-secondary font-medium">操作建议</label>
               <select
                 value={adviceFilter}
                 onChange={(e) => setAdviceFilter(e.target.value)}
-                className="w-full bg-black/[0.03] border border-black/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-primary
+                className="bg-black/[0.03] border border-black/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-primary
                   focus:outline-none focus:border-cyan/40 transition appearance-none cursor-pointer"
               >
                 {ADVICE_OPTIONS.map((opt) => (
@@ -178,37 +162,36 @@ const ScreenerPage: React.FC = () => {
                 ))}
               </select>
             </div>
-          </div>
 
-          {/* 返回数量 */}
-          <div className="flex items-center justify-between">
-            <label className="text-[12px] text-secondary font-medium">最多返回</label>
-            <div className="flex items-center gap-2">
-              {[10, 20, 50].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setLimit(n)}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-medium transition-all ${
-                    limit === n
-                      ? 'bg-black/[0.06] text-primary/80 border border-black/[0.08]'
-                      : 'text-muted hover:text-secondary'
-                  }`}
-                >
-                  {n}条
-                </button>
-              ))}
+            {/* 返回数量 */}
+            <div className="space-y-1.5">
+              <label className="text-[12px] text-secondary font-medium">最多返回</label>
+              <div className="flex items-center gap-1">
+                {[10, 20, 50].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setLimit(n)}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
+                      limit === n
+                        ? 'bg-black/[0.06] text-primary/80 border border-black/[0.08]'
+                        : 'text-muted hover:text-secondary'
+                    }`}
+                  >
+                    {n}条
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* 搜索按钮 */}
-          <button
+            {/* 搜索按钮 — 与筛选条件同行 */}
+            <button
             type="button"
             onClick={handleSearch}
             disabled={loading}
-            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan/20 to-cyan/10 border border-cyan/25
+            className="self-end px-5 py-1.5 rounded-lg bg-gradient-to-r from-cyan/20 to-cyan/10 border border-cyan/25
               text-cyan text-[13px] font-semibold hover:from-cyan/30 hover:to-cyan/15 hover:border-cyan/40
-              disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+              disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2 whitespace-nowrap"
           >
             {loading ? (
               <>
@@ -227,6 +210,7 @@ const ScreenerPage: React.FC = () => {
               </>
             )}
           </button>
+          </div>
         </div>
 
         {/* 错误提示 */}

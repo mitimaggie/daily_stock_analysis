@@ -569,6 +569,11 @@ class ScoringFlow:
         except Exception:
             pass
 
+        # 技术指标预热期：降低市场情绪修正影响，并追加风险提示
+        if result.data_insufficient:
+            adj = round(adj / 2) if adj != 0 else 0
+            result.risk_factors.append("技术指标预热期，评分可靠性降低")
+
         if adj != 0:
             result.score_breakdown['market_sentiment_adj'] = adj
 

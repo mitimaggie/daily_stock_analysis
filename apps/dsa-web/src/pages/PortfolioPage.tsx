@@ -280,6 +280,11 @@ const MonitorCard: React.FC<{
   const pnlStr = pnl == null ? '--' : `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
   const [showLogs, setShowLogs] = useState(false);
   const [showTradeForm, setShowTradeForm] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const closeMenu = useCallback(() => {
+    setTimeout(() => setMenuOpen(false), 100);
+  }, []);
 
   return (
     <div className={`rounded-lg border p-3 space-y-2 ${cfg.bg}`}>
@@ -299,13 +304,46 @@ const MonitorCard: React.FC<{
           <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.color}`}>
             {cfg.label}
           </span>
-          <button onClick={() => setShowLogs(v => !v)} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-secondary hover:border-black/[0.1] transition">📋 日志</button>
           <button onClick={() => window.open(`/portfolio/${signal.code}/simple`, '_blank')} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-sky-400 hover:border-sky-500/20 transition">📊 详情</button>
           <button onClick={() => navigate(`/analysis?stock=${signal.code}`)} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-cyan hover:border-cyan/20 transition">🔍 分析</button>
-          <button onClick={() => { setShowTradeForm(v => !v); setShowLogs(false); }} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-amber-400 hover:border-amber-500/20 transition">✏️ 记录</button>
-          <button onClick={() => {
-            if (confirm(`确认从持仓中移除 ${signal.name || signal.code}？`)) onRemove(signal.code);
-          }} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-red-600 hover:border-red-500/20 transition" title="移除持仓">× 移除</button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen(v => !v)}
+              onBlur={closeMenu}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-secondary hover:border-black/[0.1] transition"
+            >
+              …
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-10 min-w-[88px] py-1 rounded border border-black/[0.08] bg-base shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { setShowLogs(v => !v); closeMenu(); }}
+                  className="w-full text-left text-[10px] px-2 py-1.5 text-muted hover:text-secondary hover:bg-black/[0.04] transition"
+                >
+                  📋 日志
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowTradeForm(v => !v); setShowLogs(false); closeMenu(); }}
+                  className="w-full text-left text-[10px] px-2 py-1.5 text-muted hover:text-amber-400 hover:bg-black/[0.04] transition"
+                >
+                  ✏️ 记录
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`确认从持仓中移除 ${signal.name || signal.code}？`)) onRemove(signal.code);
+                    closeMenu();
+                  }}
+                  className="w-full text-left text-[10px] px-2 py-1.5 text-red-600 hover:bg-red-500/10 transition"
+                >
+                  × 移除
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

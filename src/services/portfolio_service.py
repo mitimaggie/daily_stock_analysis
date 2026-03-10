@@ -381,12 +381,26 @@ def remove_watchlist(code: str) -> bool:
 
 
 def list_watchlist(sort_by: str = 'score') -> List[Dict[str, Any]]:
-    """获取所有关注股（支持按评分排序）"""
+    """获取所有关注股（支持按评分排序）。
+
+    返回前检查每条记录的 name 是否为空，若为空则调用 _resolve_stock_name 回填并更新数据库。
+    回填失败的记录静默跳过，不影响返回。
+    """
     db = DatabaseManager.get_instance()
     with db.get_session() as session:
         records = session.execute(
             select(Watchlist).order_by(Watchlist.created_at)
         ).scalars().all()
+        for rec in records:
+            if not rec.name or not str(rec.name).strip():
+                try:
+                    resolved = _resolve_stock_name(rec.code)
+                    if resolved:
+                        rec.name = resolved
+                        session.commit()
+                        session.refresh(rec)
+                except Exception:
+                    pass
         items = [r.to_dict() for r in records]
 
     if sort_by == 'score':

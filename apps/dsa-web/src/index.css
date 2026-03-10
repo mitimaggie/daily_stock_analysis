@@ -2,7 +2,7 @@
 
 /* ============ CSS 变量 - 浅色主题 ============ */
 :root {
-  /* 主色调 - 青色系（加深以保持白底可读性） */
+  /* 主色调 - 青色系 */
   --color-cyan: #0891b2;
   --color-cyan-dim: #0e7490;
   --color-cyan-glow: rgba(8, 145, 178, 0.2);
@@ -17,22 +17,27 @@
   --color-warning: #d97706;
   --color-danger: #dc2626;
   
-  /* 背景色 - 浅色系 */
-  --bg-base: #f5f5f5;
+  /* 背景色 - 温暖白 */
+  --bg-base: #f8f9fb;
   --bg-card: #ffffff;
-  --bg-elevated: #f0f0f0;
-  --bg-hover: #e5e5e5;
+  --bg-elevated: #f1f3f6;
+  --bg-hover: #ebedf2;
   
-  /* 边框色 */
-  --border-dim: rgba(0, 0, 0, 0.06);
-  --border-default: rgba(0, 0, 0, 0.1);
-  --border-accent: rgba(8, 145, 178, 0.3);
+  /* 边框色 — 略加深让层次更分明 */
+  --border-dim: rgba(0, 0, 0, 0.05);
+  --border-default: rgba(0, 0, 0, 0.09);
+  --border-accent: rgba(8, 145, 178, 0.35);
   --border-purple: rgba(111, 97, 241, 0.3);
   
   /* 文字色 */
   --text-primary: #1a1a2e;
-  --text-secondary: #5f6368;
-  --text-muted: #9aa0a6;
+  --text-secondary: #4b5563;
+  --text-muted: #8b95a2;
+  
+  /* 卡片阴影 */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.04);
   
   /* 字体 */
   font-family: 'Inter', 'SF Pro Display', system-ui, -apple-system, sans-serif;
@@ -60,6 +65,8 @@ body {
   border-radius: 12px;
   position: relative;
   overflow: hidden;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .terminal-card::before {
@@ -70,9 +77,9 @@ body {
   padding: 1px;
   background: linear-gradient(
     135deg,
-    rgba(8, 145, 178, 0.15) 0%,
-    rgba(8, 145, 178, 0.08) 50%,
-    rgba(8, 145, 178, 0.15) 100%
+    rgba(8, 145, 178, 0.12) 0%,
+    rgba(8, 145, 178, 0.04) 50%,
+    rgba(8, 145, 178, 0.08) 100%
   );
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -82,12 +89,12 @@ body {
 }
 
 .terminal-card-hover {
-  transition: all 0.3s ease;
+  transition: all 0.25s ease;
 }
 
 .terminal-card-hover:hover {
   border-color: var(--border-accent);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-card-hover);
 }
 
 /* ============ 渐变边框卡片 ============ */
@@ -125,13 +132,14 @@ body {
 
 /* ============ 毛玻璃卡片 ============ */
 .glass-card {
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 0, 0, 0.07);
   border-radius: 12px;
   position: relative;
   overflow: hidden;
+  box-shadow: var(--shadow-card);
 }
 
 .glass-card::before {
@@ -142,8 +150,8 @@ body {
   padding: 1px;
   background: linear-gradient(
     135deg,
-    rgba(8, 145, 178, 0.2) 0%,
-    rgba(8, 145, 178, 0.1) 50%,
+    rgba(8, 145, 178, 0.15) 0%,
+    rgba(8, 145, 178, 0.06) 50%,
     rgba(8, 145, 178, 0.08) 100%
   );
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -164,7 +172,7 @@ body {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(0, 0, 0, 0.06) 50%,
+    rgba(0, 0, 0, 0.05) 50%,
     transparent 100%
   );
   pointer-events: none;
@@ -176,8 +184,8 @@ body {
   align-items: center;
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   transition: all 0.2s ease;
   cursor: pointer;
   position: relative;
@@ -231,11 +239,12 @@ body {
 
 /* ============ 顶部导航栏 ============ */
 .header-bar {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
   min-height: 56px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 /* Header 专用输入框 */
@@ -325,7 +334,7 @@ body {
 
 /* ============ 侧边栏面板 ============ */
 .sidebar-panel {
-  width: 280px;
+  width: 320px;
   flex-shrink: 0;
   border-right: 1px solid rgba(0, 0, 0, 0.04);
 }
@@ -615,11 +624,11 @@ body {
 
 /* 发光效果（浅色主题改为柔和阴影） */
 .glow-cyan {
-  box-shadow: 0 2px 12px rgba(8, 145, 178, 0.15);
+  box-shadow: 0 2px 12px rgba(8, 145, 178, 0.12), 0 0 0 1px rgba(8, 145, 178, 0.08);
 }
 
 .glow-purple {
-  box-shadow: 0 2px 12px rgba(111, 97, 241, 0.15);
+  box-shadow: 0 2px 12px rgba(111, 97, 241, 0.12), 0 0 0 1px rgba(111, 97, 241, 0.08);
 }
 
 /* ============ 底部安全区域 ============ */

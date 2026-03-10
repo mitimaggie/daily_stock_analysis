@@ -909,7 +909,7 @@ const HomePage: React.FC = () => {
               </div>
             ) : selectedReport ? (
               <>
-                <div className="max-w-4xl mx-auto animate-fade-in">
+                <div className="max-w-5xl mx-auto animate-fade-in">
                   <ReportSummary
                     data={selectedReport}
                     isHistory
