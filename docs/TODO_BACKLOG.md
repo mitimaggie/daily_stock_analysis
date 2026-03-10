@@ -19,12 +19,17 @@
 | I-11 | calc_dynamic_atr_multiplier() 的 Beta 来源是上次分析的 raw_result，间隔长时可能过时，考虑实时计算近 60 日 Beta | Inspector | P2 |
 | I-12 | monitor_portfolio() 的 detached session ORM 对象传入线程池，当前 SQLite 无问题，迁移 PostgreSQL 时会出错 | Inspector | P3 |
 | I-13 | _resolve_stock_name() 无内存缓存，重复查询效率低，建议加 lru_cache | Inspector | P3 |
-| S-5 | 止损两阶段切换阈值对低波蓝筹偏激进，浮盈 1×ATR 即切换保利润，低波股 ~1% 就触发。建议改为 max(1.0*ATR, cost*0.03) | Strategist | P2 |
-| S-6 | 高波成长股 ATR 倍数 clamp 下限 1.0，实际亏损可能 8-10%（T+1 跳空），需 Quant 回测评估 | Strategist | P2 |
 
 ---
 
 ## 已完成
+
+### ~~止损参数优化：低波蓝筹切换阈值 + 高波成长股 clamp 下限~~ ✅
+- **S-5 问题**：两阶段切换阈值 `浮盈 > 1×ATR` 对低波蓝筹偏激进（ATR%≈1% 时涨 1% 就切换保利润）
+- **S-5 解决**：切换阈值改为 `max(ATR, cost×3%)`，低波蓝筹至少浮盈 3% 才切换，高波股行为不变
+- **S-6 问题**：short 档 ATR 倍数 clamp 下限 1.0，高波成长股止损距离仅 1×ATR，T+1 跳空来不及
+- **S-6 解决**：short 档 clamp_lo 从 1.0 调为 1.2，提供 0.2×ATR 的跳空安全垫
+- **涉及文件**：src/stock_analyzer/risk_management.py、scripts/backtest_stoploss_strategy.py
 
 ### ~~添加持仓时自动拉取基础数据~~ ✅ (v2.5.0)
 - **问题**：用户添加持仓后如果从未执行过分析，stock_daily 表没有该股票的日线数据，导致 ATR 无法计算、止损为 0

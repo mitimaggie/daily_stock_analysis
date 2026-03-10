@@ -28,6 +28,7 @@ class RiskManager:
 
         回测验证：4-6% 止损距离胜率 88%，<2% 止损距离触发率 69%（大量误触）。
         根据 ATR% 分级确定目标止损距离，反算所需 ATR 倍数后限幅，再叠加 Beta 修正。
+        short 档限幅 [1.2, 4.0]，mid 档限幅 [1.2, 6.0]。
         不含 VWAP 修正——VWAP 修正仅在分析报告止损中使用，追踪止损不适用。
 
         Args:
@@ -63,7 +64,7 @@ class RiskManager:
                 target_pct = 0.025
             else:
                 target_pct = 0.020
-            clamp_lo, clamp_hi = 1.0, 4.0
+            clamp_lo, clamp_hi = 1.2, 4.0
 
         raw_mult = target_pct / atr_ratio if atr_ratio > 0 else (2.0 if level == "short" else 3.0)
         mult = max(clamp_lo, min(clamp_hi, raw_mult))
@@ -1577,8 +1578,10 @@ class RiskManager:
         计算 ATR 动态追踪止损线（两阶段模型，棘轮只上不下）
 
         两阶段模型（回测验证）：
-        - 保本阶段：highest - cost <= ATR 时，止损锚定成本价下方
-        - 保利润阶段：highest - cost > ATR 时，止损锚定最高价下方
+        - 切换阈值：phase_threshold = max(ATR, cost × 3%)
+          低波蓝筹 ATR%≈1% 时阈值提升至 3% 成本价，高波股行为不变
+        - 保本阶段：highest - cost <= phase_threshold 时，止损锚定成本价下方
+        - 保利润阶段：highest - cost > phase_threshold 时，止损锚定最高价下方
 
         Args:
             df: 历史日线K线（需要至少 atr_period+1 行）
@@ -1643,8 +1646,8 @@ class RiskManager:
         new_highest = max(current_price, prev_highest or cost_price)
         result['highest_price'] = round(new_highest, 2)
 
-        # 两阶段模型
-        if new_highest - cost_price <= atr:
+        phase_threshold = max(atr, cost_price * 0.03)
+        if new_highest - cost_price <= phase_threshold:
             candidate_stop = cost_price - dynamic_mult * atr
             result['phase'] = 'protect_cost'
         else:

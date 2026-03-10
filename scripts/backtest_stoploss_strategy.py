@@ -78,7 +78,7 @@ def calc_tech_stop(price: float, atr: float, ma20: float) -> float:
         TARGET_SHORT_PCT = 0.020
 
     raw_mult = TARGET_SHORT_PCT / atr_ratio if atr_ratio > 0 else 2.0
-    atr_mult = max(1.0, min(4.0, raw_mult))
+    atr_mult = max(1.2, min(4.0, raw_mult))
 
     limit_floor = round(price * (1 - LIMIT_PCT / 100), 2)
     stop = round(max(price - atr_mult * atr, limit_floor), 2)
