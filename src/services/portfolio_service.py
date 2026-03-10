@@ -546,6 +546,31 @@ def _analyze_intraday_for_monitor(code: str) -> Dict[str, Any]:
         return {'monitor_signal': '', 'vwap': 0, 'vwap_position': '', 'intraday_trend': '', 'volume_distribution': '', 'momentum': '', 'summary': ''}
 
 
+def _get_beta_from_analysis(code: str) -> float:
+    """从最近一次分析记录中提取 Beta 系数，找不到时降级为 1.0。"""
+    try:
+        import json
+        from src.storage import AnalysisHistory
+        db = DatabaseManager.get_instance()
+        with db.get_session() as session:
+            rec = session.execute(
+                select(AnalysisHistory)
+                .where(AnalysisHistory.code == code)
+                .order_by(desc(AnalysisHistory.created_at))
+                .limit(1)
+            ).scalar_one_or_none()
+        if not rec or not rec.raw_result:
+            logger.debug("[beta] %s 无分析记录，使用默认 beta=1.0", code)
+            return 1.0
+        raw = json.loads(rec.raw_result)
+        beta = (raw.get('dashboard', {}).get('quant_extras', {}).get('beta_vs_index')
+                or 1.0)
+        return float(beta)
+    except Exception:
+        logger.debug("[beta] %s 获取 beta 失败，使用默认 1.0", code)
+        return 1.0
+
+
 def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
     """处理单只持仓的实时监控：拉取价格、计算ATR止损、生成操作信号、写回数据库。"""
     from src.stock_analyzer.risk_management import RiskManager
@@ -567,6 +592,7 @@ def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
             'pnl_pct': None,
         }
 
+    beta = _get_beta_from_analysis(code)
     df = _get_kline_df(code)
     atr_result = RiskManager.calc_atr_trailing_stop(
         df=df,
@@ -574,11 +600,13 @@ def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
         current_price=current_price,
         prev_atr_stop=holding.atr_stop_loss,
         prev_highest=holding.highest_price,
+        beta=beta,
     ) if df is not None else {
         'atr': 0, 'atr_stop': holding.atr_stop_loss or 0,
         'highest_price': current_price, 'stop_triggered': False,
         'pnl_pct': (current_price - cost_price) / cost_price * 100 if cost_price > 0 else 0,
         'stop_pnl_pct': 0,
+        'phase': 'protect_cost',
     }
 
     _now = datetime.now()

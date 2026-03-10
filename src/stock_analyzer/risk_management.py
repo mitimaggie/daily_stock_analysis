@@ -15,7 +15,68 @@ logger = logging.getLogger(__name__)
 
 class RiskManager:
     """风险管理器：止损止盈、仓位管理"""
-    
+
+    @staticmethod
+    def calc_dynamic_atr_multiplier(
+        atr: float,
+        price: float,
+        beta: float = 1.0,
+        level: str = "short",
+    ) -> float:
+        """
+        动态计算 ATR 止损倍数（目标止损距离法）
+
+        回测验证：4-6% 止损距离胜率 88%，<2% 止损距离触发率 69%（大量误触）。
+        根据 ATR% 分级确定目标止损距离，反算所需 ATR 倍数后限幅，再叠加 Beta 修正。
+        不含 VWAP 修正——VWAP 修正仅在分析报告止损中使用，追踪止损不适用。
+
+        Args:
+            atr: ATR(14) 值
+            price: 当前价格
+            beta: 个股相对大盘的 Beta 系数
+            level: "short"（短线）或 "mid"（中线）
+
+        Returns:
+            动态 ATR 倍数
+        """
+        if atr <= 0 or price <= 0:
+            return 2.0 if level == "short" else 3.0
+
+        atr_ratio = atr / price
+
+        if level == "mid":
+            if atr_ratio < 0.02:
+                target_pct = 0.055
+            elif atr_ratio < 0.04:
+                target_pct = 0.050
+            elif atr_ratio < 0.05:
+                target_pct = 0.040
+            else:
+                target_pct = 0.035
+            clamp_lo, clamp_hi = 1.2, 6.0
+        else:
+            if atr_ratio < 0.02:
+                target_pct = 0.035
+            elif atr_ratio < 0.04:
+                target_pct = 0.030
+            elif atr_ratio < 0.05:
+                target_pct = 0.025
+            else:
+                target_pct = 0.020
+            clamp_lo, clamp_hi = 1.0, 4.0
+
+        raw_mult = target_pct / atr_ratio if atr_ratio > 0 else (2.0 if level == "short" else 3.0)
+        mult = max(clamp_lo, min(clamp_hi, raw_mult))
+
+        # Beta 修正——高 Beta 放宽，低 Beta 收紧
+        beta = beta or 1.0
+        if beta > 1.5:
+            mult *= 1.2
+        elif beta < 0.6:
+            mult *= 0.9
+
+        return mult
+
     @staticmethod
     def calculate_stop_loss_and_take_profit(result: TrendAnalysisResult, df: pd.DataFrame):
         """
@@ -34,46 +95,14 @@ class RiskManager:
         from .indicators import TechnicalIndicators
         atr_percentile = TechnicalIndicators.calc_atr_percentile(df)
         
-        # 回测验证：4-6%止损距离胜率88%，<2%止损距离触发率69%（大量误触）
-        # 目标止损距离法：根据ATR%动态调整目标，高波动股止损更紧
-        # ATR%<2%（低波动蓝筹）→目标3.5%；ATR%2-4%→目标3.0%；ATR%>4%（高波动成长）→目标2.5%
-        atr_ratio = atr / price if price > 0 else 0.02
-        if atr_ratio < 0.02:      # ATR < 2%，低波动蓝筹
-            TARGET_SHORT_PCT = 0.035
-            TARGET_MID_PCT   = 0.055
-        elif atr_ratio < 0.04:    # ATR 2-4%，中等波动
-            TARGET_SHORT_PCT = 0.030
-            TARGET_MID_PCT   = 0.050
-        elif atr_ratio < 0.05:    # ATR 4-5%，高波动
-            TARGET_SHORT_PCT = 0.025
-            TARGET_MID_PCT   = 0.040
-        else:                      # ATR > 5%，超高波动（如涨停板概念股）
-            TARGET_SHORT_PCT = 0.020
-            TARGET_MID_PCT   = 0.035
-        if atr_ratio > 0:
-            raw_mult_short = TARGET_SHORT_PCT / atr_ratio
-            raw_mult_mid   = TARGET_MID_PCT   / atr_ratio
-        else:
-            raw_mult_short = 2.0
-            raw_mult_mid   = 3.0
-        # 限制倍数范围：短线[1.0, 4.0]，中线[1.2, 6.0]
-        atr_multiplier_short = max(1.0, min(4.0, raw_mult_short))
-        atr_multiplier_mid   = max(1.2, min(6.0, raw_mult_mid))
-
-        # P5-A: Beta 叠加修正 — 高 Beta 股波动更大，止损空间需相应放宽
         beta = getattr(result, 'beta_vs_index', 1.0) or 1.0
-        if beta > 1.5:
-            atr_multiplier_short *= 1.2
-            atr_multiplier_mid *= 1.2
-        elif beta < 0.6:
-            atr_multiplier_short *= 0.9
-            atr_multiplier_mid *= 0.9
+        atr_multiplier_short = RiskManager.calc_dynamic_atr_multiplier(atr, price, beta, level="short")
+        atr_multiplier_mid = RiskManager.calc_dynamic_atr_multiplier(atr, price, beta, level="mid")
 
-        # P5-A: VWAP 位置修正 — 价格在机构成本下方时，止损空间收紧（已跌破成本，止损更严格）
+        # VWAP 位置修正——仅用于分析报告止损（追踪止损不适用）
         vwap_pos = getattr(result, 'vwap_position', '')
         vwap_trend = getattr(result, 'vwap_trend', '')
         if vwap_pos == "价格在VWAP下方" and vwap_trend == "机构成本下移":
-            # 跌破下行VWAP，空头格局明确，收紧止损避免越扛越深
             atr_multiplier_short *= 0.85
             atr_multiplier_mid *= 0.85
         
@@ -1540,17 +1569,16 @@ class RiskManager:
         current_price: float,
         prev_atr_stop: Optional[float] = None,
         prev_highest: Optional[float] = None,
-        atr_multiplier: float = 2.0,
+        atr_multiplier: Optional[float] = None,
         atr_period: int = 14,
+        beta: float = 1.0,
     ) -> Dict[str, Any]:
         """
-        计算 ATR 动态追踪止损线（只上移不下移）
+        计算 ATR 动态追踪止损线（两阶段模型，棘轮只上不下）
 
-        逻辑：
-        1. 计算 ATR(14)
-        2. 新止损候选 = 当前最高价 - atr_multiplier × ATR
-        3. 取 max(prev_atr_stop, 新止损候选)：只上移
-        4. 若 current_price <= atr_stop → 触发止损信号
+        两阶段模型（回测验证）：
+        - 保本阶段：highest - cost <= ATR 时，止损锚定成本价下方
+        - 保利润阶段：highest - cost > ATR 时，止损锚定最高价下方
 
         Args:
             df: 历史日线K线（需要至少 atr_period+1 行）
@@ -1558,17 +1586,19 @@ class RiskManager:
             current_price: 当前价
             prev_atr_stop: 上次记录的ATR止损价（None表示首次计算）
             prev_highest: 上次记录的最高价（None表示首次计算）
-            atr_multiplier: ATR倍数，默认2.0
+            atr_multiplier: ATR倍数，None 则由 calc_dynamic_atr_multiplier 动态计算
             atr_period: ATR计算周期，默认14
+            beta: 个股 Beta 系数，用于动态倍数计算
 
         Returns:
             {
-                'atr': float,                 # 当前ATR值
-                'atr_stop': float,            # 新的ATR追踪止损价
-                'highest_price': float,       # 更新后的最高价
-                'stop_triggered': bool,       # 是否触发止损
-                'pnl_pct': float,             # 当前浮盈%
-                'stop_pnl_pct': float,        # 止损位对应浮盈%（可能为负）
+                'atr': float,
+                'atr_stop': float,
+                'highest_price': float,
+                'stop_triggered': bool,
+                'pnl_pct': float,
+                'stop_pnl_pct': float,
+                'phase': str,           # 'protect_cost' | 'protect_profit'
             }
         """
         result: Dict[str, Any] = {
@@ -1578,12 +1608,12 @@ class RiskManager:
             'stop_triggered': False,
             'pnl_pct': 0.0,
             'stop_pnl_pct': 0.0,
+            'phase': 'protect_cost',
         }
 
         if df is None or len(df) < atr_period + 1 or current_price <= 0:
             return result
 
-        # 计算 ATR
         try:
             high = df['high'].values
             low = df['low'].values
@@ -1594,7 +1624,7 @@ class RiskManager:
                 tr_list.append(tr)
             if len(tr_list) < atr_period:
                 return result
-            # Wilder平滑（与indicators.py _calc_atr保持一致）
+            # Wilder 平滑（与 indicators.py _calc_atr 保持一致）
             atr = tr_list[0]
             for tr_val in tr_list[1:]:
                 atr = (atr * (atr_period - 1) + tr_val) / atr_period
@@ -1604,27 +1634,33 @@ class RiskManager:
 
         result['atr'] = round(atr, 4)
 
-        # 更新最高价
+        dynamic_mult = (
+            atr_multiplier
+            if atr_multiplier is not None
+            else RiskManager.calc_dynamic_atr_multiplier(atr, current_price, beta, level="short")
+        )
+
         new_highest = max(current_price, prev_highest or cost_price)
         result['highest_price'] = round(new_highest, 2)
 
-        # 计算新止损候选（基于最高价）
-        candidate_stop = new_highest - atr_multiplier * atr
+        # 两阶段模型
+        if new_highest - cost_price <= atr:
+            candidate_stop = cost_price - dynamic_mult * atr
+            result['phase'] = 'protect_cost'
+        else:
+            candidate_stop = new_highest - dynamic_mult * atr
+            result['phase'] = 'protect_profit'
 
-        # 只上移：取 max(上次止损, 新候选)
+        # 棘轮：只上不下
         if prev_atr_stop and prev_atr_stop > 0:
             atr_stop = max(prev_atr_stop, candidate_stop)
         else:
-            # 首次计算：从成本价下方开始（不高于当前候选）
-            initial_stop = cost_price - atr_multiplier * atr
-            atr_stop = max(initial_stop, candidate_stop)
+            atr_stop = candidate_stop
 
         result['atr_stop'] = round(atr_stop, 2)
 
-        # 触发判断
         result['stop_triggered'] = current_price <= atr_stop
 
-        # 浮盈计算
         if cost_price > 0:
             result['pnl_pct'] = round((current_price - cost_price) / cost_price * 100, 2)
             result['stop_pnl_pct'] = round((atr_stop - cost_price) / cost_price * 100, 2)

@@ -138,12 +138,16 @@ async def get_todo_list() -> Dict[str, Any]:
 
 def _check_stop_loss(holding: Any, session: Any,
                      todos: List[Dict[str, Any]]) -> None:
-    """检查单只持仓的止损预警，有触发则追加到 todos 列表"""
+    """检查单只持仓的止损预警（三级信号：P0 分析回溯 / P1 ATR追踪 / P2 黄灯预警）
+
+    止损价统一使用 portfolio.atr_stop_loss（持仓表实时追踪止损）。
+    """
     from sqlalchemy import select, desc
     from src.storage import AnalysisHistory
 
     code = holding.code
     name = holding.name or code
+    atr_stop = holding.atr_stop_loss
 
     try:
         latest = session.execute(
@@ -153,50 +157,74 @@ def _check_stop_loss(holding: Any, session: Any,
             .limit(1)
         ).scalar_one_or_none()
     except Exception:
-        return
+        latest = None
 
-    if not latest or not latest.raw_result:
-        return
+    analyzed_at = (latest.created_at.isoformat()
+                   if latest and latest.created_at else None)
 
-    try:
-        result_data = json.loads(latest.raw_result)
-    except (json.JSONDecodeError, TypeError):
-        return
-
-    dashboard = result_data.get("dashboard", {})
-    quant = dashboard.get("quant_extras", {})
-
-    analyzed_at = latest.created_at.isoformat() if latest.created_at else None
-
-    if quant.get("stop_loss_breached"):
-        todos.append({
-            "type": "stop_loss",
-            "priority": "high",
-            "code": code,
-            "name": name,
-            "message": f"{name} 已触发止损位",
-            "detail": quant.get("stop_loss_breach_detail", ""),
-            "analyzed_at": analyzed_at,
-        })
-        return
-
-    if holding.atr_stop_loss and latest.stop_loss:
+    # P0: 分析报告回溯检测（盘中已击穿）
+    if latest and latest.raw_result:
         try:
-            ctx = json.loads(latest.context_snapshot) if latest.context_snapshot else {}
-            today_data = ctx.get("today", {})
-            current_close = today_data.get("close")
-            if current_close and current_close <= holding.atr_stop_loss:
+            result_data = json.loads(latest.raw_result)
+            quant = result_data.get("dashboard", {}).get("quant_extras", {})
+            if quant.get("stop_loss_breached"):
                 todos.append({
                     "type": "stop_loss",
                     "priority": "high",
                     "code": code,
                     "name": name,
-                    "message": f"{name} 接近ATR止损位 {holding.atr_stop_loss:.2f}",
-                    "detail": f"当前收盘 {current_close:.2f}，ATR止损 {holding.atr_stop_loss:.2f}",
+                    "message": f"{name} 已触发止损位",
+                    "detail": quant.get("stop_loss_breach_detail", ""),
+                    "stop_price": atr_stop,
                     "analyzed_at": analyzed_at,
                 })
-        except (json.JSONDecodeError, TypeError, ValueError):
+                return
+        except (json.JSONDecodeError, TypeError):
             pass
+
+    if not atr_stop or atr_stop <= 0:
+        return
+
+    # 获取最新收盘价
+    current_close: Optional[float] = None
+    if latest and latest.context_snapshot:
+        try:
+            ctx = json.loads(latest.context_snapshot)
+            current_close = ctx.get("today", {}).get("close")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if current_close is None or current_close <= 0:
+        return
+
+    # P1: ATR 追踪止损触发（收盘价 <= atr_stop）
+    if current_close <= atr_stop:
+        todos.append({
+            "type": "stop_loss",
+            "priority": "high",
+            "code": code,
+            "name": name,
+            "message": f"{name} 收盘价已跌破ATR止损线",
+            "detail": f"收盘 {current_close:.2f} ≤ ATR止损 {atr_stop:.2f}",
+            "stop_price": atr_stop,
+            "analyzed_at": analyzed_at,
+        })
+        return
+
+    # P2: 黄灯预警（收盘价距 atr_stop 在 1% 以内）
+    distance_pct = (current_close - atr_stop) / current_close
+    if distance_pct <= 0.01:
+        todos.append({
+            "type": "stop_loss",
+            "priority": "medium",
+            "code": code,
+            "name": name,
+            "message": f"{name} 逼近ATR止损线（预警）",
+            "detail": (f"收盘 {current_close:.2f}，ATR止损 {atr_stop:.2f}，"
+                       f"距离仅 {distance_pct*100:.1f}%"),
+            "stop_price": atr_stop,
+            "analyzed_at": analyzed_at,
+        })
 
 
 def _check_score_change(holding: Any, session: Any,
