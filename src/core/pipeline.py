@@ -1097,7 +1097,7 @@ class StockAnalysisPipeline:
                     _market_snap = snap if isinstance(snap, dict) and snap.get('success') else None
                 except NameError:
                     _market_snap = None
-                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_val_snap, capital_flow=_capital_flow, sector_context=sector_context, chip_data=chip_data, fundamental_data=fundamental_data, quote_extra=_quote_extra, time_horizon=_time_horizon, market_snapshot=_market_snap)
+                trend_result = self.trend_analyzer.analyze(daily_df, code, market_regime=regime, index_returns=idx_ret, valuation=_val_snap, capital_flow=_capital_flow, sector_context=sector_context, chip_data=chip_data, fundamental_data=fundamental_data, quote_extra=_quote_extra, time_horizon=_time_horizon, market_snapshot=_market_snap, is_intraday=is_market_intraday())
                 trend_result_obj = trend_result
                 if quote.price:
                     trend_result.current_price = quote.price

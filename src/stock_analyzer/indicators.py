@@ -86,13 +86,25 @@ class TechnicalIndicators:
     
     @staticmethod
     def _calc_kdj(df: pd.DataFrame) -> pd.DataFrame:
-        """计算 KDJ"""
+        """计算 KDJ（SMA递推，与通达信/同花顺一致）"""
         low_min = df['low'].rolling(window=9).min()
         high_max = df['high'].rolling(window=9).max()
         denom = (high_max - low_min).replace(0, np.nan)
         rsv = ((df['close'] - low_min) / denom * 100).fillna(50)
-        df['K'] = rsv.ewm(com=2, adjust=False).mean()
-        df['D'] = df['K'].ewm(com=2, adjust=False).mean()
+
+        rsv_values = rsv.values
+        k_values = np.full(len(rsv_values), 50.0)
+        d_values = np.full(len(rsv_values), 50.0)
+        for i in range(1, len(rsv_values)):
+            r = rsv_values[i]
+            if np.isnan(r):
+                k_values[i] = k_values[i - 1]
+            else:
+                k_values[i] = (2 / 3) * k_values[i - 1] + (1 / 3) * r
+            d_values[i] = (2 / 3) * d_values[i - 1] + (1 / 3) * k_values[i]
+
+        df['K'] = k_values
+        df['D'] = d_values
         df['J'] = 3 * df['K'] - 2 * df['D']
         return df
     
@@ -131,7 +143,7 @@ class TechnicalIndicators:
     def _calc_bollinger_bands(df: pd.DataFrame) -> pd.DataFrame:
         """计算布林带 (20, 2)"""
         bb_mid = df['MA20']
-        bb_std = df['close'].rolling(window=20).std()
+        bb_std = df['close'].rolling(window=20).std(ddof=0)
         df['BB_UPPER'] = bb_mid + 2 * bb_std
         df['BB_LOWER'] = bb_mid - 2 * bb_std
         df['BB_WIDTH'] = ((df['BB_UPPER'] - df['BB_LOWER']) / bb_mid).replace([np.inf, -np.inf], 0)
@@ -266,12 +278,7 @@ class TechnicalIndicators:
 
     @staticmethod
     def detect_obv_divergence(df: pd.DataFrame, lookback: int = 20) -> str:
-        """
-        OBV 背离检测：价格新高但 OBV 未新高 / 价格新低但 OBV 未新低
-        
-        Returns:
-            "OBV顶背离" / "OBV底背离" / ""
-        """
+        """OBV 背离检测：价格新高但 OBV 动能减弱 / 价格新低但 OBV 动能增强"""
         if df is None or len(df) < lookback or 'OBV' not in df.columns:
             return ""
         try:
@@ -279,20 +286,28 @@ class TechnicalIndicators:
             half = lookback // 2
             first_half = recent.head(half)
             second_half = recent.tail(half)
-            
+
             price_high_1 = first_half['high'].max()
             price_high_2 = second_half['high'].max()
-            obv_high_1 = first_half['OBV'].max()
-            obv_high_2 = second_half['OBV'].max()
-            
             price_low_1 = first_half['low'].min()
             price_low_2 = second_half['low'].min()
-            obv_low_1 = first_half['OBV'].min()
-            obv_low_2 = second_half['OBV'].min()
-            
-            if price_high_2 > price_high_1 * 1.01 and obv_high_2 < obv_high_1 * 0.95:
+
+            def _obv_slope(series: pd.Series) -> float:
+                x = np.arange(len(series), dtype=float)
+                y = series.values.astype(float)
+                mask = ~np.isnan(y)
+                if mask.sum() < 3:
+                    return 0.0
+                x, y = x[mask], y[mask]
+                slope = (np.mean(x * y) - np.mean(x) * np.mean(y)) / max(np.var(x), 1e-10)
+                return slope
+
+            obv_slope_1 = _obv_slope(first_half['OBV'])
+            obv_slope_2 = _obv_slope(second_half['OBV'])
+
+            if price_high_2 > price_high_1 * 1.01 and obv_slope_2 < obv_slope_1 * 0.5:
                 return "OBV顶背离"
-            if price_low_2 < price_low_1 * 0.99 and obv_low_2 > obv_low_1 * 1.05:
+            if price_low_2 < price_low_1 * 0.99 and obv_slope_2 > obv_slope_1 * 0.5 and obv_slope_2 > 0:
                 return "OBV底背离"
             return ""
         except Exception:

@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,8 @@ class PatternRecognition:
 
     @classmethod
     def detect_all(cls, df: pd.DataFrame,
-                   allow_intraday: bool = False) -> List[CandlePattern]:
+                   allow_intraday: bool = False,
+                   is_intraday_override: Optional[bool] = None) -> List[CandlePattern]:
         """
         检测所有 K 线形态，返回按强度降序排列的形态列表。
         需要至少 5 根 K 线。
@@ -55,11 +56,18 @@ class PatternRecognition:
         盘中时自动去掉最后一行未收盘 K 线，基于已收盘数据检测，
         结果标记 confirmed=False 且 description 追加盘中标注。
         设置 allow_intraday=True 可强制使用全量数据（含未收盘 K 线）。
+
+        Args:
+            is_intraday_override: 由 Pipeline 统一传入的盘中状态，
+                                  避免分析过程中时间判断不一致。
         """
         if df is None or len(df) < 5:
             return []
 
-        is_intraday = (not allow_intraday) and cls._is_a_share_intraday()
+        if is_intraday_override is not None:
+            is_intraday = (not allow_intraday) and is_intraday_override
+        else:
+            is_intraday = (not allow_intraday) and cls._is_a_share_intraday()
 
         if is_intraday:
             detect_df = df.iloc[:-1].copy()
@@ -93,7 +101,8 @@ class PatternRecognition:
 
     @classmethod
     def detect_and_summarize(cls, df: pd.DataFrame,
-                             allow_intraday: bool = False) -> Dict[str, Any]:
+                             allow_intraday: bool = False,
+                             is_intraday_override: Optional[bool] = None) -> Dict[str, Any]:
         """
         检测形态并返回结构化摘要，供 TrendAnalysisResult 使用。
 
@@ -108,7 +117,8 @@ class PatternRecognition:
                 'summary': str,              # 一句话摘要
             }
         """
-        patterns = cls.detect_all(df, allow_intraday=allow_intraday)
+        patterns = cls.detect_all(df, allow_intraday=allow_intraday,
+                                  is_intraday_override=is_intraday_override)
 
         bullish = [p for p in patterns if p.direction == "bullish"]
         bearish = [p for p in patterns if p.direction == "bearish"]

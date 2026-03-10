@@ -88,22 +88,26 @@ def _build_reason(sentiment: MarketSentiment) -> str:
 
 
 def _smooth_signal(today_signal: str, db: Any, today_str: str) -> str:
-    """平滑：防止信号跳变超过 1 级"""
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    try:
-        yesterday_cached = db.get_data_cache("traffic_light", yesterday_str, ttl_hours=48)
-    except Exception:
+    """平滑：防止信号跳变超过 1 级（自动跳过非交易日查找上一交易日缓存）"""
+    prev_cached = None
+    for offset in range(1, 8):
+        prev_str = (datetime.now() - timedelta(days=offset)).strftime('%Y-%m-%d')
+        try:
+            prev_cached = db.get_data_cache("traffic_light", prev_str, ttl_hours=48 + offset * 24)
+        except Exception:
+            continue
+        if prev_cached:
+            break
+
+    if not prev_cached:
         return today_signal
 
-    if not yesterday_cached:
-        return today_signal
-
     try:
-        yesterday_data = json.loads(yesterday_cached)
+        prev_data = json.loads(prev_cached)
     except (json.JSONDecodeError, TypeError):
         return today_signal
 
-    yesterday_signal = yesterday_data.get("signal", "")
+    yesterday_signal = prev_data.get("signal", "")
     today_level = SIGNAL_LEVELS.get(today_signal, 3)
     yesterday_level = SIGNAL_LEVELS.get(yesterday_signal, 3)
 

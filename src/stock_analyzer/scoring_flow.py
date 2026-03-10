@@ -20,6 +20,9 @@ from data_provider.realtime_types import ChipDistribution
 logger = logging.getLogger(__name__)
 
 _P4_GLOBAL_FAIL_TS: float = 0.0
+_P4_CONSECUTIVE_FAILS: int = 0
+_P4_FUSE_THRESHOLD: int = 3
+_P4_FUSE_DURATION: int = 600
 
 class ScoringFlow:
     """ScoringFlow Mixin"""
@@ -112,13 +115,13 @@ class ScoringFlow:
         5. 加速/减速信号
         6. 聪明钱（超大单）持续行为
         """
-        global _P4_GLOBAL_FAIL_TS
+        global _P4_GLOBAL_FAIL_TS, _P4_CONSECUTIVE_FAILS
         try:
             import akshare as ak
             import time
             import random
 
-            if (time.time() - _P4_GLOBAL_FAIL_TS) < 1800:
+            if _P4_CONSECUTIVE_FAILS >= _P4_FUSE_THRESHOLD and (time.time() - _P4_GLOBAL_FAIL_TS) < _P4_FUSE_DURATION:
                 return
 
             market = "sh" if stock_code.startswith(('6', '5', '9')) else "sz"
@@ -130,11 +133,16 @@ class ScoringFlow:
                     ak.stock_individual_fund_flow, stock=stock_code, market=market
                 ).result(timeout=10)
             except _FuturesTimeout:
-                logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(10s)，全局熔断30min")
-                _P4_GLOBAL_FAIL_TS = time.time()
+                _P4_CONSECUTIVE_FAILS += 1
+                if _P4_CONSECUTIVE_FAILS >= _P4_FUSE_THRESHOLD:
+                    logging.getLogger(__name__).warning(f"[P4] {stock_code} 连续{_P4_CONSECUTIVE_FAILS}次超时，熔断{_P4_FUSE_DURATION//60}min")
+                    _P4_GLOBAL_FAIL_TS = time.time()
+                else:
+                    logging.getLogger(__name__).debug(f"[P4] {stock_code} 主力资金超时(10s)，累计{_P4_CONSECUTIVE_FAILS}次")
                 return
             finally:
                 _p4_ex.shutdown(wait=False)
+            _P4_CONSECUTIVE_FAILS = 0
             if df_flow is None or len(df_flow) < 5:
                 return
 

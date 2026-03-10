@@ -201,6 +201,7 @@ class StockTrendAnalyzer:
         quote_extra: Union[QuoteExtra, dict, None] = None,
         time_horizon: str = "",
         market_snapshot: dict = None,
+        is_intraday: Optional[bool] = None,
     ) -> TrendAnalysisResult:
         """
         股票趋势分析主入口
@@ -352,7 +353,8 @@ class StockTrendAnalyzer:
             result.gap_type = TechnicalIndicators.detect_gap(df)
 
             # K线形态识别
-            pattern_summary = PatternRecognition.detect_and_summarize(df)
+            pattern_summary = PatternRecognition.detect_and_summarize(
+                df, is_intraday_override=is_intraday)
             result.candle_patterns = pattern_summary['patterns']
             result.candle_pattern_summary = pattern_summary['summary']
             result.candle_net_signal = pattern_summary['net_signal']

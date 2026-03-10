@@ -489,47 +489,59 @@ class BacktestRunner:
 
         return "\n".join(lines)
 
-    def _calc_sharpe_ratio(self, returns: List[float], rf_rate: float = 0.03) -> float:
-        """计算夏普比率
-        
-        Args:
-            returns: 收益率列表(%)
-            rf_rate: 无风险利率(年化)，默认3%
-        
-        Returns:
-            夏普比率
+    def _calc_sharpe_ratio(self, returns: List[float], rf_rate: float = 0.03,
+                           analysis_dates: Optional[List[str]] = None) -> float:
+        """计算夏普比率（截面数据修正版）
+
+        当提供 analysis_dates 时，先按日聚合为日均收益再年化，
+        避免截面数据误用时间序列年化因子的统计偏差。
         """
         if not returns or len(returns) < 2:
             return 0.0
-        
-        returns_array = np.array(returns) / 100  # 转为小数
-        avg_return = np.mean(returns_array)
-        std_return = np.std(returns_array, ddof=1)
-        
-        if std_return == 0:
-            return 0.0
-        
-        # 5日收益率年化：假设1年250个交易日，5日为1/50年
-        # 年化收益 = 5日平均收益 * (250/5) = 平均收益 * 50
-        # 年化波动 = 5日波动 * sqrt(250/5) = 波动 * sqrt(50)
-        rf_5d = rf_rate / 50  # 无风险利率转为5日
-        sharpe = (avg_return - rf_5d) / std_return * np.sqrt(50)
-        
+
+        returns_array = np.array(returns) / 100
+
+        if analysis_dates and len(analysis_dates) == len(returns):
+            from collections import defaultdict
+            daily_returns: Dict[str, List[float]] = defaultdict(list)
+            for d, r in zip(analysis_dates, returns_array):
+                daily_returns[d].append(r)
+            daily_avg = np.array([np.mean(v) for v in daily_returns.values()])
+            if len(daily_avg) < 2:
+                return 0.0
+            avg_return = np.mean(daily_avg)
+            std_return = np.std(daily_avg, ddof=1)
+            if std_return == 0:
+                return 0.0
+            rf_daily = rf_rate / 250
+            sharpe = (avg_return - rf_daily) / std_return * np.sqrt(250 / 5)
+        else:
+            avg_return = np.mean(returns_array)
+            std_return = np.std(returns_array, ddof=1)
+            if std_return == 0:
+                return 0.0
+            sharpe = (avg_return - rf_rate / 50) / std_return
+
         return round(sharpe, 2)
 
     def _calc_performance_metrics(self, records: List[AnalysisHistory]) -> Tuple[float, float, float, float]:
         """计算整体业绩指标：夏普、信息比率、最大回撤、卡玛比率
-        
+
         Returns:
             (sharpe_ratio, information_ratio, max_drawdown, calmar_ratio)
         """
         returns = [r.actual_pct_5d for r in records if r.actual_pct_5d is not None]
         if not returns:
             return 0.0, 0.0, 0.0, 0.0
-        
-        # 1. 夏普比率
-        sharpe = self._calc_sharpe_ratio(returns)
-        
+
+        # 1. 夏普比率（按分析日期聚合）
+        analysis_dates = [
+            r.analysis_date.strftime('%Y-%m-%d') if hasattr(r.analysis_date, 'strftime')
+            else str(r.analysis_date)
+            for r in records if r.actual_pct_5d is not None
+        ]
+        sharpe = self._calc_sharpe_ratio(returns, analysis_dates=analysis_dates)
+
         # 2. 信息比率 = (策略平均收益 - 基准平均收益) / 跟踪误差
         alphas = []
         for r in records:
@@ -542,25 +554,26 @@ class BacktestRunner:
                         alphas.append(alpha_5d)
                 except Exception:
                     pass
-        
+
         if alphas and len(alphas) >= 2:
             avg_alpha = np.mean(alphas)
             tracking_error = np.std(alphas, ddof=1)
             info_ratio = (avg_alpha / tracking_error * np.sqrt(50)) if tracking_error > 0 else 0.0
         else:
             info_ratio = 0.0
-        
-        # 3. 最大回撤（累计收益曲线的峰谷差）
-        cumulative = np.cumsum([r / 100 for r in returns])  # 累计收益率（小数）
-        running_max = np.maximum.accumulate(cumulative)
-        drawdown = (cumulative - running_max) * 100  # 转回百分比
+
+        # 3. 最大回撤（几何累乘净值曲线）
+        nav = np.cumprod([1 + r / 100 for r in returns])
+        running_max = np.maximum.accumulate(nav)
+        drawdown = (nav - running_max) / running_max * 100
         max_drawdown = abs(np.min(drawdown)) if len(drawdown) > 0 else 0.0
-        
+
         # 4. 卡玛比率 = 年化收益 / 最大回撤
-        avg_return = np.mean(returns)
-        annual_return = avg_return * 50  # 5日收益年化
+        total_return = nav[-1] - 1 if len(nav) > 0 else 0
+        n_periods = len(returns)
+        annual_return = ((1 + total_return) ** (50 / max(n_periods, 1)) - 1) * 100 if total_return > -1 else -100
         calmar = (annual_return / max_drawdown) if max_drawdown > 0 else 0.0
-        
+
         return (
             round(sharpe, 2),
             round(info_ratio, 2),

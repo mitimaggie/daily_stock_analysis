@@ -18,6 +18,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 # 内存缓存（L1 层）
@@ -152,48 +154,41 @@ def _get_limit_threshold(code: str, name: str) -> Tuple[float, float]:
 
 
 def _derive_limit_from_spot() -> Optional[MarketSentiment]:
-    """Level 2: 从全市场行情数据推算涨跌停家数"""
+    """Level 2: 从全市场行情数据推算涨跌停家数（向量化）"""
     import akshare as ak
 
     df = ak.stock_zh_a_spot_em()
     if df is None or df.empty:
         return None
 
-    limit_up = 0
-    limit_down = 0
-    up_count = 0
-    down_count = 0
-    flat_count = 0
+    code_col = df['代码'].astype(str)
+    name_col = df['名称'].astype(str)
+    pct_col = pd.to_numeric(df.get('涨跌幅', pd.Series(dtype=float)), errors='coerce').fillna(0.0)
 
-    for _, row in df.iterrows():
-        code = str(row.get('代码', ''))
-        name = str(row.get('名称', ''))
-        try:
-            pct = float(row.get('涨跌幅', 0))
-        except (ValueError, TypeError):
-            continue
+    is_st = name_col.str.upper().str.contains('ST', na=False)
+    is_cy_kc = code_col.str.startswith(('30', '68'))
+    is_bj = code_col.str.startswith(('8', '4'))
+    is_main_st = ~is_cy_kc & ~is_bj & is_st
+    is_main_normal = ~is_cy_kc & ~is_bj & ~is_st
 
-        up_thresh, down_thresh = _get_limit_threshold(code, name)
+    up_thresh = pd.Series(9.9, index=df.index)
+    down_thresh = pd.Series(-9.9, index=df.index)
+    up_thresh[is_cy_kc] = 19.8
+    down_thresh[is_cy_kc] = -19.8
+    up_thresh[is_bj] = 29.5
+    down_thresh[is_bj] = -29.5
+    up_thresh[is_main_st] = 4.9
+    down_thresh[is_main_st] = -4.9
 
-        if pct >= up_thresh:
-            limit_up += 1
-        elif pct <= down_thresh:
-            limit_down += 1
-
-        if pct > 0:
-            up_count += 1
-        elif pct < 0:
-            down_count += 1
-        else:
-            flat_count += 1
+    limit_up = int((pct_col >= up_thresh).sum())
+    limit_down = int((pct_col <= down_thresh).sum())
+    up_count = int((pct_col > 0).sum())
+    down_count = int((pct_col < 0).sum())
+    flat_count = int((pct_col == 0).sum())
 
     total = up_count + down_count + flat_count
-    up_gt5_pct = 0.0
-    down_gt5_pct = 0.0
-    if total > 0 and '涨跌幅' in df.columns:
-        pct_col = df['涨跌幅'].apply(lambda x: float(x) if x is not None else 0.0)
-        up_gt5_pct = (pct_col > 5).sum() / total * 100
-        down_gt5_pct = (pct_col < -5).sum() / total * 100
+    up_gt5_pct = round((pct_col > 5).sum() / total * 100, 2) if total > 0 else 0.0
+    down_gt5_pct = round((pct_col < -5).sum() / total * 100, 2) if total > 0 else 0.0
 
     sentiment = MarketSentiment(
         limit_up_count=limit_up,
@@ -201,8 +196,8 @@ def _derive_limit_from_spot() -> Optional[MarketSentiment]:
         up_count=up_count,
         down_count=down_count,
         flat_count=flat_count,
-        up_gt5_pct=round(up_gt5_pct, 2),
-        down_gt5_pct=round(down_gt5_pct, 2),
+        up_gt5_pct=up_gt5_pct,
+        down_gt5_pct=down_gt5_pct,
     )
     sentiment.temperature = calc_sentiment_temperature(
         limit_up=limit_up, limit_down=limit_down,

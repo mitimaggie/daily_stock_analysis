@@ -346,7 +346,6 @@ class ScoringBase:
             if '多头' in _weekly and '弱多头' not in _weekly:
                 _kdj_bonus = 3
         if _kdj_bonus > 0:
-            result.signal_score = min(100, result.signal_score + _kdj_bonus)
             result.score_breakdown['kdj_weekly_bonus'] = _kdj_bonus
 
 

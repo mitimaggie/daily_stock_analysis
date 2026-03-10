@@ -52,7 +52,7 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
   const [days, setDays] = useState(120);
   const [expanded, setExpanded] = useState(true);
 
-  const fetchAndRender = useCallback(async () => {
+  const fetchAndRender = useCallback(async (signal?: AbortSignal) => {
     if (!stockCode || !chartContainerRef.current) return;
 
     setIsLoading(true);
@@ -61,7 +61,9 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
     try {
       const res = await apiClient.get(`/api/v1/stocks/${stockCode}/history`, {
         params: { period: 'daily', days },
+        signal,
       });
+      if (signal?.aborted) return;
       const items: KLineDataItem[] = res.data?.data ?? [];
 
       if (items.length === 0) {
@@ -175,17 +177,21 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
       (container as any).__chartCleanup = cleanup;
 
     } catch (err) {
+      if (signal?.aborted) return;
       setError(err instanceof Error ? err.message : '加载K线数据失败');
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   }, [stockCode, days]);
 
   useEffect(() => {
-    if (expanded) {
-      fetchAndRender();
-    }
+    if (!expanded) return;
+    const controller = new AbortController();
+    fetchAndRender(controller.signal);
     return () => {
+      controller.abort();
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
