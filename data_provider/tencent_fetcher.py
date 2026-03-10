@@ -147,6 +147,7 @@ class TencentFetcher(BaseFetcher):
         # 计算 pct_chg
         df = df.sort_values('date').reset_index(drop=True)
         df['pct_chg'] = df['close'].pct_change() * 100
+        df['_pct_chg_source'] = 'calculated'
 
         # 填充 amount（腾讯无成交额，用 close * volume 近似）
         if 'amount' not in df.columns:

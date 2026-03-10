@@ -359,6 +359,7 @@ class TechnicalIndicators:
             pct = df['pct_chg']
         else:
             pct = df['close'].pct_change() * 100
+            logger.debug("涨跌停检测: pct_chg 不可靠，回退使用 close.pct_change()")
 
         suspected_ex_right = pct.abs() > limit_pct * 1.5
 
@@ -829,7 +830,7 @@ class TechnicalIndicators:
                 else:
                     return None
             
-            weekly = df_weekly.resample('W').agg({
+            weekly = df_weekly.resample('W-FRI').agg({
                 'open': 'first',
                 'high': 'max',
                 'low': 'min',

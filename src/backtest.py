@@ -74,7 +74,19 @@ class BacktestRunner:
         for record in records:
             try:
                 code = record.code
-                analysis_date = record.created_at.date() if record.created_at else None
+                analysis_date = None
+                if record.raw_result:
+                    try:
+                        import json as _json_bt
+                        _raw = _json_bt.loads(record.raw_result)
+                        _kline_date = _raw.get('kline_last_date')
+                        if _kline_date:
+                            from datetime import datetime as _dt_bt
+                            analysis_date = _dt_bt.strptime(_kline_date, '%Y-%m-%d').date()
+                    except Exception:
+                        pass
+                if not analysis_date:
+                    analysis_date = record.created_at.date() if record.created_at else None
                 if not analysis_date:
                     continue
 
@@ -168,7 +180,7 @@ class BacktestRunner:
             return None
 
     def _get_benchmark_return(self, start_date: date, holding_days: int) -> Optional[float]:
-        """获取基准（沪深300）收益率
+        """获取基准收益率（沪深300优先，上证指数 Fallback）
         
         Args:
             start_date: 起始日期
@@ -177,32 +189,33 @@ class BacktestRunner:
         Returns:
             基准收益率(%)，失败返回None
         """
-        try:
-            # 从 index_daily 表获取沪深300数据
-            _limit = holding_days + 2
-            sql = text("""
-                SELECT date, close
-                FROM index_daily
-                WHERE code = '沪深300' AND date >= :start_date
-                ORDER BY date ASC
-                LIMIT :limit
-            """).bindparams(start_date=str(start_date), limit=_limit)
-            with self.db._engine.connect() as conn:
-                df = pd.read_sql(sql, conn)
-            
-            if df.empty or len(df) < holding_days:
-                return None
-            
-            price_start = float(df.iloc[0]['close'])
-            price_end = float(df.iloc[min(holding_days - 1, len(df) - 1)]['close'])
-            
-            if price_start <= 0:
-                return None
-            
-            return round((price_end - price_start) / price_start * 100, 2)
-        except Exception as e:
-            logger.debug(f"获取基准收益率失败: {e}")
-            return None
+        for benchmark_code in ['沪深300', '上证指数']:
+            try:
+                _limit = holding_days + 2
+                sql = text("""
+                    SELECT date, close
+                    FROM index_daily
+                    WHERE code = :code AND date >= :start_date
+                    ORDER BY date ASC
+                    LIMIT :limit
+                """).bindparams(code=benchmark_code, start_date=str(start_date), limit=_limit)
+                with self.db._engine.connect() as conn:
+                    df = pd.read_sql(sql, conn)
+
+                if df.empty or len(df) < holding_days:
+                    continue
+
+                price_start = float(df.iloc[0]['close'])
+                price_end = float(df.iloc[min(holding_days - 1, len(df) - 1)]['close'])
+
+                if price_start <= 0:
+                    continue
+
+                return round((price_end - price_start) / price_start * 100, 2)
+            except Exception as e:
+                logger.debug(f"获取基准收益率失败({benchmark_code}): {e}")
+                continue
+        return None
 
     def _update_record(self, record_id: int, actual_pct: float, hit_sl: int, hit_tp: int,
                       actual_pct_1d: Optional[float] = None,
@@ -536,9 +549,10 @@ class BacktestRunner:
             return 0.0, 0.0, 0.0, 0.0
 
         # 1. 夏普比率（按分析日期聚合）
+        # 注：AnalysisHistory 无 analysis_date 字段，使用 created_at 作为分析日
         analysis_dates = [
-            r.analysis_date.strftime('%Y-%m-%d') if hasattr(r.analysis_date, 'strftime')
-            else str(r.analysis_date)
+            r.created_at.strftime('%Y-%m-%d') if hasattr(r.created_at, 'strftime')
+            else str(r.created_at)
             for r in records if r.actual_pct_5d is not None
         ]
         sharpe = self._calc_sharpe_ratio(returns, analysis_dates=analysis_dates)

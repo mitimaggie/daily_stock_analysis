@@ -42,7 +42,18 @@ def _is_us_code(code): return bool(re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code.stri
 class AkshareFetcher(BaseFetcher):
     name = "AkshareFetcher"
     priority = 1
-    
+
+    _AK_COLUMN_MAP = {
+        '日期': 'date', 'date': 'date', '时间': 'date',
+        '开盘': 'open', '开盘价': 'open', 'open': 'open',
+        '收盘': 'close', '收盘价': 'close', 'close': 'close',
+        '最高': 'high', '最高价': 'high', 'high': 'high',
+        '最低': 'low', '最低价': 'low', 'low': 'low',
+        '成交量': 'volume', 'volume': 'volume', 'vol': 'volume',
+        '成交额': 'amount', 'amount': 'amount',
+        '涨跌幅': 'pct_chg', 'pct_chg': 'pct_chg', '涨跌百分比': 'pct_chg',
+    }
+
     def __init__(self):
         # 🔥 从配置中读取休眠参数，而不是硬编码
         config = get_config()
@@ -132,9 +143,10 @@ class AkshareFetcher(BaseFetcher):
     def _normalize_data(self, df, code):
         if df is None or df.empty: return df
         df = df.copy()
-        mapping = {'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount', '涨跌幅': 'pct_chg'}
-        df = df.rename(columns=mapping)
+        df = df.rename(columns=self._AK_COLUMN_MAP)
         df['code'] = code
+        if 'pct_chg' in df.columns and df['pct_chg'].notna().any():
+            df['_pct_chg_source'] = 'api'
         for c in STANDARD_COLUMNS:
             if c not in df.columns: df[c] = 0
         return df[STANDARD_COLUMNS + ['code']]

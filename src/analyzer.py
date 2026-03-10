@@ -210,13 +210,13 @@ class GeminiAnalyzer:
         "properties": {
             "stock_name": {"type": "string"},
             "sentiment_score": {"type": "integer"},
-            "operation_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待"]},
+            "operation_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待", "分批建仓", "观望等待回调", "逢低吸纳", "高抛低吸", "等待确认"]},
             "trend_prediction": {"type": "string"},
             "analysis_summary": {"type": "string"},
             "risk_warning": {"type": "string"},
             "confidence_level": {"type": "string"},
             "llm_score": {"type": "integer"},
-            "llm_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待"]},
+            "llm_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待", "分批建仓", "观望等待回调", "逢低吸纳", "高抛低吸", "等待确认"]},
             "llm_reasoning": {"type": "string"},
             "time_horizon": {"type": "string"},
             "confidence_reasoning": {"type": "string"},
@@ -749,7 +749,7 @@ class GeminiAnalyzer:
             df = df.sort_values('date').reset_index(drop=True)
 
             # 按 ISO 周分组构建周线
-            df['week'] = df['date'].dt.to_period('W')
+            df['week'] = df['date'].dt.to_period('W-FRI')
             weekly = df.groupby('week').agg(
                 open=('open', 'first'),
                 high=('high', 'max'),
@@ -934,6 +934,44 @@ class GeminiAnalyzer:
             return llm_resp.text
         raise RuntimeError(llm_resp.error or "LLM 调用失败")
 
+    def _extract_key_signals(self, context: Dict[str, Any]) -> str:
+        """从 trend_result 中提取 Flash 摘要可能遗漏的关键信号"""
+        trend = context.get('trend_result')
+        if not trend:
+            return ''
+
+        signals = []
+
+        if getattr(trend, 'volume_price_divergence', None):
+            signals.append(f"量价背离: {trend.volume_price_divergence}")
+
+        rsi_div = getattr(trend, 'rsi_divergence', None)
+        if rsi_div and rsi_div != '无':
+            signals.append(f"RSI背离: {rsi_div}")
+
+        kdj_div = getattr(trend, 'kdj_divergence', None)
+        if kdj_div and kdj_div != '无':
+            signals.append(f"KDJ背离: {kdj_div}")
+
+        if getattr(trend, 'kdj_passivation', False):
+            signals.append("KDJ钝化")
+
+        obv_div = getattr(trend, 'obv_divergence', None)
+        if obv_div and obv_div != '无':
+            signals.append(f"OBV背离: {obv_div}")
+
+        warnings = getattr(trend, '_conflict_warnings', None) or []
+        for w in warnings[:3]:
+            signals.append(f"⚠ {w}")
+
+        if getattr(trend, 'stop_loss_breached', False):
+            signals.append("⚠ 已触发止损位")
+
+        if getattr(trend, 'no_trade', False):
+            signals.append("⚠ 建议空仓")
+
+        return ' | '.join(signals) if signals else ''
+
     def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default", ab_variant: str = "standard", flash_summary: Optional[str] = None) -> str:
         code = context.get('code', 'Unknown')
 
@@ -942,6 +980,9 @@ class GeminiAnalyzer:
         # 单阶段模式（Flash失败/ab_variant=llm_only）：注入完整技术报告
         if flash_summary and ab_variant != 'llm_only':
             tech_report = f"【技术面分析师结论】{flash_summary}"
+            key_signals = self._extract_key_signals(context)
+            if key_signals:
+                tech_report += f"\n\n【关键信号补充（量化锚点）】\n{key_signals}"
         else:
             tech_report_llm = context.get('technical_analysis_report_llm') or ''
             kline_narrative = context.get('kline_narrative', '')
@@ -1119,13 +1160,16 @@ class GeminiAnalyzer:
 
         # I5: 历史预测准确率段落——让 LLM 知道该股历史建议得失
         _acc = context.get('prediction_accuracy')
-        if _acc and isinstance(_acc, dict) and _acc.get('total_records', 0) >= 3:
+        _total_records = _acc.get('total_records', 0) if _acc and isinstance(_acc, dict) else 0
+        if _total_records >= 3:
             _acc_parts = [f"共测评{_acc['total_records']}次，近90日平均5日回报{_acc.get('avg_5d_return', 0):+.1f}%"]
             if 'bullish_win_rate' in _acc:
                 _acc_parts.append(f"看多建议胜率: {_acc['bullish_win_rate']}% ({_acc.get('bullish_count',0)}次，平均{_acc.get('bullish_avg_return', 0):+.1f}%)")
             if 'bearish_win_rate' in _acc:
                 _acc_parts.append(f"看空建议胜率: {_acc['bearish_win_rate']}% ({_acc.get('bearish_count',0)}次)")
             prediction_accuracy_section = "\n## 📊 此股历史预测准确率（请作为置信度参考）\n" + "\n".join(f"- {p}" for p in _acc_parts) + "\n"
+        elif 1 <= _total_records <= 2:
+            prediction_accuracy_section = f"\n## 📊 此股历史预测准确率\n- 历史记录仅{_total_records}条，样本不足，请降低对该维度的依赖\n"
         else:
             prediction_accuracy_section = ""
 
@@ -1588,7 +1632,7 @@ Step 4（{_has_pos_label}） - 结论：
 stock_name, trend_prediction,
 analysis_summary(3句话: ①方向结论+核心数字 ②最关键基本面/舆情因素 ③操作建议+触发条件，禁止重复技术指标词汇),
 risk_warning,
-sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望") — 持仓者视角' if has_position else 'operation_advice("买入"/"观望"/"等待") — 空仓者视角，禁止输出减仓/清仓/持有'},
+sentiment_score(0-100), {'operation_advice("买入"/"持有"/"加仓"/"减仓"/"清仓"/"观望"/"分批建仓"/"高抛低吸") — 持仓者视角' if has_position else 'operation_advice("买入"/"观望"/"等待"/"分批建仓"/"观望等待回调"/"逢低吸纳"/"等待确认") — 空仓者视角，禁止输出减仓/清仓/持有'},
 llm_score(同sentiment_score), llm_advice(同operation_advice),
 llm_reasoning(2-3个关键证据，必须含具体数字/事件，禁止"综合以上分析"等空洞表述),
 dashboard: {{

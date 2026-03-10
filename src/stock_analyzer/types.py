@@ -333,6 +333,10 @@ class TrendAnalysisResult:
     margin_balance_latest: float = 0.0     # 最新一日融资余额（元）
     margin_change_pct: Optional[float] = None  # N日融资余额变化百分比
     
+    # === 数据质量标记 ===
+    data_insufficient: bool = False          # P1-2: 最新K线仍在指标预热期，技术指标可能不可靠
+    turnover_is_intraday: bool = False       # P1-5: 换手率为盘中折算值（已降权0.6）
+
     # === 信号详情 ===
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)

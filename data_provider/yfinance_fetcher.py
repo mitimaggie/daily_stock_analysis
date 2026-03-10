@@ -93,6 +93,9 @@ class YfinanceFetcher(BaseFetcher):
         if 'pct_chg' not in df.columns:
             df['pct_chg'] = df['close'].pct_change() * 100
             df['pct_chg'] = df['pct_chg'].fillna(0).round(2)
+            df['_pct_chg_source'] = 'calculated'
+        else:
+            df['_pct_chg_source'] = 'api'
             
         if 'amount' not in df.columns:
             df['amount'] = df['close'] * df['volume']

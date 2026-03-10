@@ -106,6 +106,14 @@ class BaseFetcher(ABC):
         
         df = df.dropna(subset=['close'])
         df = df.sort_values('date', ascending=True).reset_index(drop=True)
+
+        if 'pct_chg' not in df.columns or df['pct_chg'].isna().all():
+            df['pct_chg'] = df['close'].pct_change() * 100
+            df['pct_chg'] = df['pct_chg'].fillna(0).round(2)
+            if '_pct_chg_source' not in df.columns:
+                df['_pct_chg_source'] = 'calculated_in_clean'
+            logger.debug("_clean_data: pct_chg 缺失，已用 close.pct_change() 补全")
+
         return df
     
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -257,6 +265,7 @@ class DataFetcherManager:
     # 盘中成交量折算的最低可靠权重（约对应 10:00，已交易约 30 分钟）
     # 低于此阈值的折算会将实际成交量放大过多倍，导致量能指标严重失真
     MIN_RELIABLE_WEIGHT = 0.25
+    _EARLY_THRESHOLD = 0.05
 
     # A 股日内成交量分布权重 (U 型曲线，每 30 分钟一段，共 8 段)
     # 数据来源：万得统计 A 股典型交易日分钟级成交量分布
@@ -291,14 +300,14 @@ class DataFetcherManager:
         """
         三段式盘中成交量折算：
         - elapsed_w >= MIN_RELIABLE_WEIGHT: 正常折算
-        - 0.03 < elapsed_w < MIN_RELIABLE_WEIGHT: 过渡区，与昨日成交量线性混合
-        - elapsed_w <= 0.03: 不折算，返回原始 volume
+        - _EARLY_THRESHOLD < elapsed_w < MIN_RELIABLE_WEIGHT: 过渡区，U型曲线折算与昨量线性混合
+        - elapsed_w <= _EARLY_THRESHOLD: 不折算，返回原始 volume
         """
         if elapsed_w >= self.MIN_RELIABLE_WEIGHT:
             return current_volume / elapsed_w
 
-        if elapsed_w > 0.03:
-            alpha = (elapsed_w - 0.03) / (self.MIN_RELIABLE_WEIGHT - 0.03)
+        if elapsed_w > self._EARLY_THRESHOLD:
+            alpha = (elapsed_w - self._EARLY_THRESHOLD) / (self.MIN_RELIABLE_WEIGHT - self._EARLY_THRESHOLD)
             projected = current_volume / elapsed_w
             if yesterday_vol is not None and yesterday_vol > 0:
                 return alpha * projected + (1 - alpha) * yesterday_vol
@@ -755,22 +764,22 @@ class DataFetcherManager:
                         _sector_pct = None
                         _sector_5d_pct = None
                         if _peer_codes:
-                            _placeholders = ','.join([f'"{c}"' for c in _peer_codes[:30]])
-                            # 最近一日涨跌幅均值
+                            _peer_list = _peer_codes[:30]
+                            _ph = ','.join([f':p{i}' for i in range(len(_peer_list))])
+                            _params = {f'p{i}': c for i, c in enumerate(_peer_list)}
                             _pct_rows = _s.execute(_text(
-                                f"SELECT AVG(pct_chg) FROM stock_daily WHERE code IN ({_placeholders}) AND date=(SELECT MAX(date) FROM stock_daily WHERE code IN ({_placeholders}))"
-                            )).fetchone()
+                                f"SELECT AVG(pct_chg) FROM stock_daily WHERE code IN ({_ph}) AND date=(SELECT MAX(date) FROM stock_daily WHERE code IN ({_ph}))"
+                            ), _params).fetchone()
                             if _pct_rows and _pct_rows[0] is not None:
                                 _sector_pct = round(float(_pct_rows[0]), 2)
-                            # 近5日累计涨跌幅：用 SQLite ROW_NUMBER 取每只股票最新5条
                             try:
                                 _5d_rows = _s.execute(_text(
                                     f"""SELECT code, close FROM (
                                         SELECT code, close, date,
                                                ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) as rn
-                                        FROM stock_daily WHERE code IN ({_placeholders})
+                                        FROM stock_daily WHERE code IN ({_ph})
                                     ) t WHERE rn <= 5 ORDER BY code, date DESC"""
-                                )).fetchall()
+                                ), _params).fetchall()
                                 if _5d_rows:
                                     import pandas as _pd
                                     _df5 = _pd.DataFrame(_5d_rows, columns=['code', 'close'])

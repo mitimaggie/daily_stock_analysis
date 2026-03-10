@@ -232,7 +232,12 @@ class StockTrendAnalyzer:
             df = TechnicalIndicators.calculate_all(df)
             latest = df.iloc[-1]
             prev = df.iloc[-2]
-            
+
+            _in_warmup = bool(latest.get('_warmup', False))
+            if _in_warmup:
+                result.data_insufficient = True
+                logger.info(f"[{code}] 最新K线仍在指标预热期，技术指标可能不可靠")
+
             result.current_price = float(latest['close'])
             result.ma5 = float(latest['MA5']) if pd.notna(latest.get('MA5')) else None
             result.ma10 = float(latest['MA10']) if pd.notna(latest.get('MA10')) else None
@@ -403,14 +408,16 @@ class StockTrendAnalyzer:
             elif result.ma_spread_rate < -1.0:
                 result.ma_spread_signal = "收敛"
 
-            # 换手率分位数：仅收盘后（15:00后）才计算历史百分位
-            # 盘中换手率是当日累计值，任何折算都不准确，可能导致"异常活跃"误报
-            # 盘中改用量比×价格联动检测主力行为（见 score_intraday_volume_signal）
             turnover = getattr(quote_extra, 'turnover_rate', 0) or 0 if quote_extra else 0
             from datetime import datetime as _dt_tr
             _is_after_close = _dt_tr.now().hour >= 15
-            if turnover > 0 and _is_after_close:
-                result.turnover_percentile = TechnicalIndicators.calc_turnover_percentile(df, turnover)
+            if turnover > 0:
+                tp = TechnicalIndicators.calc_turnover_percentile(df, turnover)
+                if _is_after_close:
+                    result.turnover_percentile = tp
+                else:
+                    result.turnover_percentile = tp * 0.6
+                    result.turnover_is_intraday = True
 
             self._analyze_volume(result, df, latest, prev)
             self._analyze_macd(result, prev)
@@ -427,6 +434,8 @@ class StockTrendAnalyzer:
             # - 在 base_score 之后：避免 RSI 背离分重复计入 base_score
             # - 在共振之前：rsi_status 需反映背离状态，共振模块才能检测 MACD+RSI 共振
             score = ScoringSystem.calculate_base_score(result, market_regime, time_horizon=time_horizon)
+            if _in_warmup:
+                score = min(score, 55)
             result.signal_score = score
             ScoringSystem.update_buy_signal(result)
             ScoringSystem.detect_rsi_macd_divergence(result, df)
@@ -496,6 +505,13 @@ class StockTrendAnalyzer:
             _deadline_score = _t_score.time() + 6
             for _t in _score_threads:
                 _t.join(timeout=max(0, _deadline_score - _t_score.time()))
+            _timed_out_modules = []
+            for _t in _score_threads:
+                if _t.is_alive():
+                    _timed_out_modules.append(_t.name if hasattr(_t, 'name') else 'unknown')
+            if _timed_out_modules:
+                result.score_breakdown['_data_timeout'] = _timed_out_modules
+                logger.warning(f"[{code}] 外部数据模块超时: {_timed_out_modules}")
             ScoringSystem.score_vwap_trend(result)
             ScoringSystem.score_intraday_volume_signal(result)
             ScoringSystem.score_market_sentiment_adj(result)

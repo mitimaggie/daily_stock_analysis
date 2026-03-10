@@ -2129,6 +2129,19 @@ class StockAnalysisPipeline:
 
             # 标注分析时间戳（盘中多次分析时可区分）
             result.analysis_time = datetime.now().strftime('%H:%M')
+
+            # P1-4: 写入 kline_last_date 到 dashboard，供回测日期口径修正
+            try:
+                _df_for_kld = context.get('daily_df')
+                if _df_for_kld is not None and not _df_for_kld.empty:
+                    _kld_raw = _df_for_kld.iloc[-1]['date']
+                    _kld_str = _kld_raw.strftime('%Y-%m-%d') if hasattr(_kld_raw, 'strftime') else str(_kld_raw)[:10]
+                    if not hasattr(result, 'dashboard') or result.dashboard is None:
+                        result.dashboard = {}
+                    result.dashboard['kline_last_date'] = _kld_str
+            except Exception:
+                pass
+
             self._log(f"[分析完成] {stock_name}: 建议-{result.operation_advice}, 评分-{result.sentiment_score} (时间={result.analysis_time})")
             
             try:

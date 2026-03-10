@@ -327,6 +327,9 @@ class ScoringExternal:
         result.chip_signal = "；".join(signals) if signals else "筹码分布正常"
         
         chip_adj = c_score - 5
+        _chip_source = chip_data.get('source') if isinstance(chip_data, dict) else getattr(chip_data, 'source', None)
+        if _chip_source in ('estimated', 'local_estimate'):
+            chip_adj = int(chip_adj * 0.5)
         if chip_adj != 0:
             result.score_breakdown['chip_adj'] = chip_adj
     
