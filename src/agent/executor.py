@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable
 
 from src.agent.tools import TOOL_DEFINITIONS, TOOL_FUNCTIONS, TOOL_DISPLAY_NAMES
+from src.llm import GeminiClient, MODEL_PRO
 
 logger = logging.getLogger(__name__)
 
@@ -52,43 +53,33 @@ class AgentExecutor:
 
     def __init__(self, config):
         self._config = config
-        self._model = None
+        self._llm = GeminiClient(config)
         self._openai_client = None
         self._use_openai = False
         self._initialized = False
 
-    def _ensure_init(self):
+    def _ensure_init(self) -> None:
         if self._initialized:
             return
         self._initialized = True
-        config = self._config
 
-        api_key = config.gemini_api_key
-        if api_key and "your_" not in api_key:
-            try:
-                from google import genai
-                self._genai_client = genai.Client(api_key=api_key)
-                self._gemini_model_name = config.gemini_model
-                self._model = True  # 标记已初始化
-                logger.info("Agent: Gemini function calling 初始化成功 (google.genai)")
-            except Exception as e:
-                logger.warning(f"Agent: Gemini 初始化失败: {e}")
+        self._llm._ensure_init()
 
-        if not self._model and config.openai_api_key:
+        if not self._llm._genai_client and self._config.openai_api_key:
             try:
                 from openai import OpenAI
                 self._openai_client = OpenAI(
-                    api_key=config.openai_api_key,
-                    base_url=config.openai_base_url,
+                    api_key=self._config.openai_api_key,
+                    base_url=self._config.openai_base_url,
                 )
                 self._use_openai = True
                 logger.info("Agent: OpenAI function calling 初始化成功")
             except Exception as e:
-                logger.warning(f"Agent: OpenAI 初始化失败: {e}")
+                logger.warning("Agent: OpenAI 初始化失败: %s", e)
 
     def is_available(self) -> bool:
         self._ensure_init()
-        return (self._model is not None and hasattr(self, '_genai_client')) or self._openai_client is not None
+        return self._llm.is_available() or self._openai_client is not None
 
     def _build_genai_tools(self):
         """将工具定义转换为 google.genai Tool 格式"""
@@ -164,7 +155,7 @@ class AgentExecutor:
             except Exception as e:
                 logger.warning(f"[Agent] 策略加载失败({strategy_id}): {e}")
 
-        if self._use_openai:
+        if self._use_openai and not self._llm._genai_client:
             return self._chat_openai(user_message, history or [], progress_callback, system_prompt)
         return self._chat_gemini(user_message, history or [], progress_callback, system_prompt)
 
@@ -175,18 +166,11 @@ class AgentExecutor:
         progress_callback: Optional[Callable],
         system_prompt: str = SYSTEM_PROMPT,
     ) -> AgentResult:
-        """Gemini function calling 循环 (google.genai SDK)"""
+        """Gemini function calling 循环（通过 GeminiClient.generate_with_tools）"""
         from google.genai import types as genai_types
-        from concurrent.futures import ThreadPoolExecutor
 
-        config = self._config
-        temperature = getattr(config, "gemini_temperature", 0.3)
-        timeout = getattr(config, "gemini_request_timeout", 120)
-        client = self._genai_client
-        model_name = self._gemini_model_name
         tools = self._build_genai_tools()
 
-        # 构建对话历史（google.genai Content 格式）
         contents = []
         for msg in history:
             role = "model" if msg.get("role") == "assistant" else "user"
@@ -199,13 +183,7 @@ class AgentExecutor:
             parts=[genai_types.Part.from_text(text=message)]
         ))
 
-        gen_config = genai_types.GenerateContentConfig(
-            temperature=temperature,
-            system_instruction=system_prompt,
-            tools=tools,
-        )
-
-        tool_calls_log = []
+        tool_calls_log: List[Dict] = []
         total_steps = 0
 
         for round_num in range(MAX_TOOL_ROUNDS + 1):
@@ -214,25 +192,22 @@ class AgentExecutor:
                 if progress_callback and round_num == 0:
                     progress_callback({"type": "thinking"})
 
-                with ThreadPoolExecutor(max_workers=1) as tp:
-                    future = tp.submit(
-                        client.models.generate_content,
-                        model=model_name,
-                        contents=contents,
-                        config=gen_config,
-                    )
-                    resp = future.result(timeout=timeout)
+                resp = self._llm.generate_with_tools(
+                    contents,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                    model=MODEL_PRO,
+                    scene="agent_chat",
+                )
 
             except Exception as e:
-                logger.error(f"Gemini generate_content failed: {e}")
+                logger.error("Gemini generate_with_tools failed: %s", e)
                 return AgentResult(success=False, content="", error=str(e), total_steps=total_steps)
 
-            # 检查是否有 function call
             candidate = resp.candidates[0] if resp.candidates else None
             if not candidate:
                 break
 
-            # 收集所有 function calls 和文本
             function_calls = []
             text_parts = []
             for part in candidate.content.parts:
@@ -259,10 +234,8 @@ class AgentExecutor:
                     total_steps=total_steps,
                 )
 
-            # 将模型回复（含 function calls）加入历史
             contents.append(candidate.content)
 
-            # 执行所有工具调用，收集结果
             tool_response_parts = []
             for fc in function_calls:
                 tool_name = fc.name
@@ -285,7 +258,6 @@ class AgentExecutor:
                     )
                 )
 
-            # 将工具结果加入历史
             contents.append(genai_types.Content(
                 role="user",
                 parts=tool_response_parts,

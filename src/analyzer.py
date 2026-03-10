@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from src.config import get_config
+from src.llm import GeminiClient, LLMResponse, MODEL_PRO, MODEL_FLASH
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -205,6 +204,93 @@ class GeminiAnalyzer:
 - 输出风格：客观、数据驱动、有一说一，不做过度的行情预测。
 """
 
+    # JSON Mode 结构化输出 Schema（移除 minimum/maximum/default 等 JSON Mode 不支持的关键词）
+    _ANALYSIS_SCHEMA: Dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "stock_name": {"type": "string"},
+            "sentiment_score": {"type": "integer"},
+            "operation_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待"]},
+            "trend_prediction": {"type": "string"},
+            "analysis_summary": {"type": "string"},
+            "risk_warning": {"type": "string"},
+            "confidence_level": {"type": "string"},
+            "llm_score": {"type": "integer"},
+            "llm_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待"]},
+            "llm_reasoning": {"type": "string"},
+            "time_horizon": {"type": "string"},
+            "confidence_reasoning": {"type": "string"},
+            "dashboard": {
+                "type": "object",
+                "properties": {
+                    "core_conclusion": {
+                        "type": "object",
+                        "properties": {
+                            "one_sentence": {"type": "string"},
+                            "position_advice": {
+                                "type": "object",
+                                "properties": {
+                                    "no_position": {"type": "string"},
+                                    "has_position": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                    "intelligence": {
+                        "type": "object",
+                        "properties": {
+                            "risk_alerts": {"type": "array", "items": {"type": "string"}},
+                            "positive_catalysts": {"type": "array", "items": {"type": "string"}},
+                            "sentiment_summary": {"type": "string"},
+                            "earnings_outlook": {"type": "string"},
+                        },
+                    },
+                    "battle_plan": {
+                        "type": "object",
+                        "properties": {
+                            "sniper_points": {
+                                "type": "object",
+                                "properties": {
+                                    "ideal_buy": {"type": "number"},
+                                    "stop_loss": {"type": "number"},
+                                    "target": {"type": "number"},
+                                },
+                            },
+                            "position_sizing": {
+                                "type": "object",
+                                "properties": {
+                                    "method": {"type": "string"},
+                                    "suggested_pct": {"type": "number"},
+                                    "rationale": {"type": "string"},
+                                },
+                            },
+                            "holding_horizon": {"type": "string"},
+                            "risk_reward_ratio": {"type": "string"},
+                        },
+                    },
+                    "counter_arguments": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "反面论证（至少2条），当前判断可能错误的理由",
+                    },
+                    "override_intel": {
+                        "type": "object",
+                        "properties": {
+                            "triggered": {"type": "boolean"},
+                            "tier": {"type": "string"},
+                            "reason": {"type": "string"},
+                            "downgrade_to": {"type": "string"},
+                        },
+                    },
+                    "action_now": {"type": "string"},
+                    "execution_difficulty": {"type": "string", "enum": ["低", "中", "高"]},
+                    "execution_note": {"type": "string"},
+                },
+            },
+        },
+        "required": ["stock_name", "sentiment_score", "operation_advice", "trend_prediction", "analysis_summary"],
+    }
+
     # A股 ETF 代码前缀（沪市 51/52/56/58，深市 15/16/18）
     _A_ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
     # 美股/港股 ETF 名称关键词
@@ -277,40 +363,15 @@ class GeminiAnalyzer:
 
     def __init__(self, api_key: Optional[str] = None):
         config = get_config()
-        self._api_key = api_key or config.gemini_api_key
-        self._model = None
-        self._model_light = None  # 命中舆情缓存时可选用的轻量模型（如 2.5 Flash），省成本
-        self._openai_client = None
-        self._use_openai = False
-        self._genai_module = None  # 保存genai模块引用，供Function Calling使用
-
-        # 初始化 Gemini（主模型 + 备选模型 + 可选「缓存时轻量模型」）
-        self._model_fallback = None
-        if self._api_key and "your_" not in self._api_key:
-            try:
-                import google.generativeai as genai
-                self._genai_module = genai
-                genai.configure(api_key=self._api_key)
-                self._model = genai.GenerativeModel(model_name=config.gemini_model)
-                fb = getattr(config, "gemini_model_fallback", None)
-                if fb and str(fb).strip() and str(fb).strip() != config.gemini_model:
-                    self._model_fallback = genai.GenerativeModel(model_name=str(fb).strip())
-                when_cached = getattr(config, "gemini_model_when_cached", None)
-                if when_cached and when_cached.strip() and when_cached != config.gemini_model:
-                    self._model_light = genai.GenerativeModel(model_name=when_cached.strip())
-            except Exception:
-                pass
-
-        # 初始化 OpenAI
-        if (not self._model) and config.openai_api_key:
-            try:
-                from openai import OpenAI
-                self._openai_client = OpenAI(api_key=config.openai_api_key, base_url=config.openai_base_url)
-                self._use_openai = True
-            except Exception: pass
+        if api_key:
+            config = type(config).__new__(type(config))
+            config.__dict__.update(get_config().__dict__)
+            config.gemini_api_key = api_key
+        self._llm = GeminiClient(config)
+        self._config = config
 
     def is_available(self) -> bool:
-        return self._model is not None or self._openai_client is not None
+        return self._llm.is_available()
 
     def analyze(
         self,
@@ -375,37 +436,25 @@ class GeminiAnalyzer:
             # 2b. 构建 User Prompt（若有 Flash 摘要则用其替换技术报告段）
             prompt = self._format_prompt(context, name, news_context, market_overview, position_info, role=role, skill=skill, ab_variant=ab_variant, flash_summary=flash_summary)
             
-            response_text = ""
-            
-            # 3. 调用 Pro API（Gemini 优先，失败时尝试备选模型和 OpenAI）
-            # 优先尝试Function Calling（强制JSON输出，减少解析错误）
-            enable_function_calling = getattr(cfg, 'enable_function_calling', True)  # 默认开启
-            
-            if enable_function_calling and self._genai_module and not self._use_openai:
-                try:
-                    result_dict = self._call_with_function_calling(system_prompt, prompt, use_light_model, cfg)
-                    if result_dict:
-                        # Function Calling成功，直接构造AnalysisResult
-                        result = self._build_result_from_dict(result_dict, code, name)
-                        result.raw_response = json.dumps(result_dict, ensure_ascii=False)
-                        result.search_performed = bool(news_context)
-                        result.current_price = context.get('price', 0)
-                        result.market_snapshot = self._build_market_snapshot(context)
-                        result.skill_used = skill
-                        result.flash_used = _flash_was_used
-                        result.flash_summary = _flash_summary_text
-                        return result
-                except Exception as e:
-                    logger.debug(f"Function Calling失败，降级为文本解析: {e}")
-            
-            # Function Calling失败或未启用，使用原始文本解析
-            response_text = self._call_api_with_fallback(
-                system_prompt, prompt, use_light_model, cfg
+            # 3. 调用 Pro API（JSON Mode 优先，失败时降级文本解析）
+            llm_resp: LLMResponse = self._llm.generate_json(
+                prompt,
+                system_prompt=system_prompt,
+                response_schema=self._ANALYSIS_SCHEMA,
+                model=MODEL_PRO,
+                scene="stock_analysis",
             )
 
             # 4. 解析结果
-            result = self._parse_response(response_text, code, name)
-            result.raw_response = response_text
+            if llm_resp.success and llm_resp.json_data:
+                result = self._dict_to_result(llm_resp.json_data, code, name)
+                result.raw_response = json.dumps(llm_resp.json_data, ensure_ascii=False)
+            elif llm_resp.success and llm_resp.text:
+                result = self._parse_response(llm_resp.text, code, name)
+                result.raw_response = llm_resp.text
+            else:
+                raise RuntimeError(llm_resp.error or "LLM 调用失败")
+            result.raw_response = llm_resp.text
             result.search_performed = bool(news_context)
             result.current_price = context.get('price', 0)
             result.market_snapshot = self._build_market_snapshot(context)
@@ -538,15 +587,19 @@ class GeminiAnalyzer:
         # Call 2 - Primary Skill
         primary_analysis = ''
         try:
-            primary_analysis = self._call_api_with_fallback(
+            primary_sys = (
                 f"你是一位专业的A股基金经理，正在用{_skill_name_cn.get(primary, primary)}框架做投资决策。"
                 f"你已经看过了助理分析师的主分析结论，现在用你的专业框架深化分析。"
-                f"输出简洁准确，每一步必须有具体数据支撑，不允许写空话。",
-                primary_prompt,
-                False,  # 主框架用重量级模型
-                cfg,
+                f"输出简洁准确，每一步必须有具体数据支撑，不允许写空话。"
             )
-            primary_analysis = primary_analysis.strip()[:800] if primary_analysis else ''
+            resp = self._llm.generate(
+                primary_prompt,
+                system_prompt=primary_sys,
+                model=MODEL_PRO,
+                scene="skill_primary",
+            )
+            if resp.success:
+                primary_analysis = resp.text.strip()[:800]
         except Exception as _e:
             logger.debug(f"[Skills/Primary] {name} 主框架调用失败: {_e}")
 
@@ -588,10 +641,14 @@ class GeminiAnalyzer:
                     f"你是专业A股分析师，{'正在提供补充佐证' if convergent else '正在做魔鬼代言人压力测试'}。"
                     f"{'补充视角简洁有力，不重复主框架。' if convergent else '只找主框架的弱点，不给综合操作建议。'}"
                 )
-                secondary_analysis = self._call_api_with_fallback(
-                    secondary_sys, secondary_prompt, True, cfg  # 副框架用轻量模型
+                resp = self._llm.generate(
+                    secondary_prompt,
+                    system_prompt=secondary_sys,
+                    model=MODEL_FLASH,
+                    scene="skill_secondary",
                 )
-                secondary_analysis = secondary_analysis.strip()[:500] if secondary_analysis else ''
+                if resp.success:
+                    secondary_analysis = resp.text.strip()[:500]
             except Exception as _e:
                 logger.debug(f"[Skills/Secondary] {name} 副框架调用失败: {_e}")
 
@@ -763,26 +820,15 @@ class GeminiAnalyzer:
     def _flash_pre_analyze(self, flash_ctx: str, name: str, cfg: Any, scene: str = 'holding') -> Optional[str]:
         """调用 Flash 模型对技术面做场景化预判断，供 Pro 模型作为输入锚点。
 
-        优先使用 gemini_model_when_cached（Flash主模型），失败后尝试 gemini_model_flash_fallback。
-        两者均失败时静默返回 None，analyze() 降级为单阶段模式。
+        重试和 fallback 由 GeminiClient 内部处理。
+        失败时静默返回 None，analyze() 降级为单阶段模式。
 
         Args:
             scene: 当前分析场景 (entry/holding/crisis/profit_take/post_mortem)
         """
-        primary = getattr(cfg, 'gemini_model_when_cached', None)
-        fallback = getattr(cfg, 'gemini_model_flash_fallback', None)
-        models_to_try = [m for m in [primary, fallback] if m and m != primary or m == primary]
-        # 去重保持顺序
-        seen, models_to_try = set(), []
-        for m in [primary, fallback]:
-            if m and m not in seen:
-                seen.add(m)
-                models_to_try.append(m)
-
-        if not models_to_try or not self._genai_module:
+        if not self._llm.is_available():
             return None
 
-        # ── 场景化 Flash 角色 & Prompt ─────────────────────────
         _scene_system = {
             'entry': (
                 "你是A股入场验证官，专注于技术面入场时机判断。"
@@ -856,87 +902,37 @@ class GeminiAnalyzer:
         flash_system = _scene_system.get(scene, _scene_system['holding'])
         prompt_suffix = _scene_prompt_suffix.get(scene, _scene_prompt_suffix['holding'])
         flash_prompt = f"{prompt_suffix}\n\n原始技术数据（含日线、周线、盘中）：\n{flash_ctx}"
-        api_timeout = getattr(cfg, 'gemini_request_timeout', 120)
 
-        for model_name in models_to_try:
-            try:
-                model = self._genai_module.GenerativeModel(
-                    model_name, system_instruction=flash_system
-                )
-                with ThreadPoolExecutor(max_workers=1) as _tp:
-                    fut = _tp.submit(model.generate_content, flash_prompt)
-                    resp = fut.result(timeout=min(api_timeout, 15))
-                text = (resp.text or "").strip()
-                if text:
-                    if model_name != primary:
-                        logger.debug(f"[Flash] {name} 使用备选模型 {model_name}")
-                    return text[:600]
-            except Exception as e:
-                logger.debug(f"[Flash] {name} 模型 {model_name} 失败: {e}")
+        try:
+            llm_resp = self._llm.generate(
+                flash_prompt,
+                system_prompt=flash_system,
+                model=MODEL_FLASH,
+                timeout=15,
+                scene=f"flash_pre_analyze_{scene}",
+            )
+            if llm_resp.success and llm_resp.text.strip():
+                return llm_resp.text.strip()[:600]
+        except Exception as e:
+            logger.debug(f"[Flash] {name} 预判失败: {e}")
 
-        logger.debug(f"[Flash] {name} 所有Flash模型失败，降级为单阶段")
+        logger.debug(f"[Flash] {name} Flash模型失败，降级为单阶段")
         return None
 
     def _call_api_with_fallback(
         self, system_prompt: str, prompt: str, use_light_model: bool, cfg: Any
     ) -> str:
-        """优先 Gemini，失败时依次尝试备选模型、OpenAI"""
-        full_prompt = f"{system_prompt}\n\n{prompt}"
-        max_retries = max(1, getattr(cfg, "gemini_max_retries", 5))
-        retry_delay = getattr(cfg, "gemini_retry_delay", 5.0)
-        gemini_temp = getattr(cfg, "gemini_temperature", 0.7)
-        gen_cfg = {"temperature": gemini_temp}
-        api_timeout = getattr(cfg, "gemini_request_timeout", 120)  # 单次请求超时(秒)
-
-        def _is_retryable(e: Exception) -> bool:
-            s = str(e).lower()
-            return "499" in s or "timeout" in s or "deadline" in s or "closed" in s or "429" in s or "rate" in s or "resource" in s
-
-        models_to_try = []
-        if self._model and not self._use_openai:
-            m = self._model_light if (use_light_model and self._model_light) else self._model
-            models_to_try.append(("gemini", m, "主模型"))
-            if self._model_fallback and m != self._model_fallback:
-                models_to_try.append(("gemini", self._model_fallback, "备选模型"))
-        if self._openai_client:
-            models_to_try.append(("openai", None, "OpenAI"))
-
-        last_err = None
-        for i, (api_type, model, label) in enumerate(models_to_try):
-            for attempt in range(max_retries):
-                try:
-                    if api_type == "openai":
-                        r = self._openai_client.chat.completions.create(
-                            model=cfg.openai_model,
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=getattr(cfg, "openai_temperature", 0.7),
-                            timeout=api_timeout,
-                        )
-                        return r.choices[0].message.content
-                    else:
-                        # 用线程池包裹 generate_content，防止无限挂起
-                        with ThreadPoolExecutor(max_workers=1) as _tp:
-                            future = _tp.submit(model.generate_content, full_prompt, generation_config=gen_cfg)
-                            try:
-                                resp = future.result(timeout=api_timeout)
-                                return resp.text
-                            except FuturesTimeoutError:
-                                raise TimeoutError(f"Gemini API 请求超时 ({api_timeout}s)")
-                except Exception as e:
-                    last_err = e
-                    if attempt < max_retries - 1 and _is_retryable(e):
-                        wait = retry_delay * (attempt + 1)
-                        logger.warning(f"Gemini {label} 异常，{wait:.0f}s 后重试 ({attempt + 1}/{max_retries}): {e}")
-                        time.sleep(wait)
-                    else:
-                        logger.warning(f"{label} 失败，尝试下一可用模型: {e}")
-                        break
-        if last_err:
-            raise last_err
-        raise RuntimeError("无可用 AI 模型")
+        """文本生成（非结构化场景），重试和 fallback 由 GeminiClient 内部处理"""
+        model = MODEL_FLASH if use_light_model else MODEL_PRO
+        llm_resp = self._llm.generate(
+            prompt,
+            system_prompt=system_prompt,
+            model=model,
+            scene="text_generate",
+        )
+        if llm_resp.success:
+            return llm_resp.text
+        raise RuntimeError(llm_resp.error or "LLM 调用失败")
 
     def _format_prompt(self, context: Dict[str, Any], name: str, news_context: Optional[str] = None, market_overview: Optional[str] = None, position_info: Optional[Dict[str, Any]] = None, role: str = "trader", skill: str = "default", ab_variant: str = "standard", flash_summary: Optional[str] = None) -> str:
         code = context.get('code', 'Unknown')
@@ -1073,7 +1069,10 @@ class GeminiAnalyzer:
         # 舆情预分类标注 (P2)
         news_section = "暂无重大新闻"
         if news_context and news_context.strip():
-            news_section = f"""请从以下新闻中提取：[利好]催化剂、[利空]风险、[中性]信息。逐条标注后给出舆情总结。
+            if news_context.lstrip().startswith("【高危事件】") or news_context.lstrip().startswith("【利空"):
+                news_section = f"以下是经预分类的舆情情报，请基于这些要点完成你的舆情解读：\n\n{news_context}"
+            else:
+                news_section = f"""请从以下新闻中提取：[利好]催化剂、[利空]风险、[中性]信息。逐条标注后给出舆情总结。
 
 {news_context}"""
 
@@ -1579,7 +1578,9 @@ Step 4（{_has_pos_label}） - 结论：
 {f10_str}{sector_line}{concept_line}{chip_line}{regime_str}{position_section}{shareholder_section}
 ## 舆情
 {news_section}
-{data_availability_section}{concept_rules_section}{prediction_accuracy_section}{constraints_section}{_risk_guard_section}{_margin_interpret_section}{portfolio_beta_section}{peer_ranking_section}{northbound_section}{holding_horizon_section}{profit_take_plan_section}
+{data_availability_section}{peer_ranking_section}{northbound_section}{portfolio_beta_section}
+## ⚠️ 约束与规则（输出前必读，违反将导致分析无效）
+{constraints_section}{_risk_guard_section}{_margin_interpret_section}{concept_rules_section}{prediction_accuracy_section}{holding_horizon_section}{profit_take_plan_section}
 ## JSON 输出协议
 {_json_constraint}
 只输出 JSON，不要 markdown 代码块包裹。字段：
@@ -1614,178 +1615,6 @@ dashboard: {{
 
 开始分析：
 """
-
-    def _convert_schema(self, schema: dict) -> dict:
-        """将 JSON Schema dict 中的 type 字符串转换为 protos.Type 枚举（SDK 0.8+ 要求）
-        同时过滤掉 SDK 不支持的字段（minimum/maximum/default 等）"""
-        _TYPE_MAP = {
-            "string": self._genai_module.protos.Type.STRING,
-            "integer": self._genai_module.protos.Type.INTEGER,
-            "number": self._genai_module.protos.Type.NUMBER,
-            "boolean": self._genai_module.protos.Type.BOOLEAN,
-            "array": self._genai_module.protos.Type.ARRAY,
-            "object": self._genai_module.protos.Type.OBJECT,
-        }
-        _SUPPORTED_KEYS = {"type", "properties", "items", "required", "description", "enum", "nullable"}
-        out = {}
-        for k, v in schema.items():
-            if k == "type":
-                out["type_"] = _TYPE_MAP.get(v, v)
-            elif k == "properties" and isinstance(v, dict):
-                out["properties"] = {pk: self._convert_schema(pv) for pk, pv in v.items()}
-            elif k == "items" and isinstance(v, dict):
-                out["items"] = self._convert_schema(v)
-            elif k in _SUPPORTED_KEYS:
-                out[k] = v
-        return out
-
-    def _call_with_function_calling(self, system_prompt: str, user_prompt: str, use_light_model: bool, cfg: Any) -> Optional[Dict[str, Any]]:
-        """使用Function Calling调用Gemini（强制JSON输出，避免格式错误）
-        
-        Returns:
-            解析好的dict，失败返回None
-        """
-        if not self._genai_module:
-            return None
-        
-        try:
-            # 定义输出Schema（Function Declaration）
-            analysis_schema = self._convert_schema({
-                "type": "object",
-                "properties": {
-                    "stock_name": {"type": "string"},
-                    "sentiment_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "operation_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待"]},
-                    "trend_prediction": {"type": "string"},
-                    "analysis_summary": {"type": "string"},
-                    "risk_warning": {"type": "string"},
-                    "confidence_level": {"type": "string"},
-                    "llm_score": {"type": "integer"},
-                    "llm_advice": {"type": "string", "enum": ["买入", "持有", "加仓", "减仓", "清仓", "观望", "等待"]},
-                    "llm_reasoning": {"type": "string"},
-                    "time_horizon": {"type": "string"},
-                    "confidence_reasoning": {"type": "string"},
-                    "dashboard": {
-                        "type": "object",
-                        "properties": {
-                            "core_conclusion": {
-                                "type": "object",
-                                "properties": {
-                                    "one_sentence": {"type": "string"},
-                                    "position_advice": {
-                                        "type": "object",
-                                        "properties": {
-                                            "no_position": {"type": "string"},
-                                            "has_position": {"type": "string"}
-                                        }
-                                    }
-                                }
-                            },
-                            "intelligence": {
-                                "type": "object",
-                                "properties": {
-                                    "risk_alerts": {"type": "array", "items": {"type": "string"}},
-                                    "positive_catalysts": {"type": "array", "items": {"type": "string"}},
-                                    "sentiment_summary": {"type": "string"},
-                                    "earnings_outlook": {"type": "string"}
-                                }
-                            },
-                            "battle_plan": {
-                                "type": "object",
-                                "properties": {
-                                    "sniper_points": {
-                                        "type": "object",
-                                        "properties": {
-                                            "ideal_buy": {"type": "number"},
-                                            "stop_loss": {"type": "number"},
-                                            "target": {"type": "number"}
-                                        }
-                                    },
-                                    "position_sizing": {
-                                        "type": "object",
-                                        "properties": {
-                                            "method": {"type": "string"},
-                                            "suggested_pct": {"type": "number"},
-                                            "rationale": {"type": "string"}
-                                        }
-                                    },
-                                    "holding_horizon": {"type": "string"},
-                                    "risk_reward_ratio": {"type": "string"}
-                                }
-                            },
-                            "counter_arguments": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "反面论证（至少2条，禁止为空数组），必须列出2-3条当前判断可能错误的理由，每条含具体数字或事件"
-                            },
-                            "override_intel": {
-                                "type": "object",
-                                "properties": {
-                                    "triggered": {"type": "boolean", "description": "是否触发Tier-0/Tier-1风险事件降级"},
-                                    "tier": {"type": "string", "description": "风险等级：Tier-0(监管/退市) 或 Tier-1(实控人减持/业绩暴雷)"},
-                                    "reason": {"type": "string", "description": "降级原因"},
-                                    "downgrade_to": {"type": "string", "description": "降级后的操作建议"}
-                                },
-                                "description": "Tier-0/Tier-1重大风险事件降级覆写，无风险时triggered=false"
-                            },
-                            "action_now": {"type": "string", "description": "≤30字一句话行动指令"},
-                            "execution_difficulty": {"type": "string", "enum": ["低", "中", "高"]},
-                            "execution_note": {"type": "string"}
-                        }
-                    }
-                },
-                "required": ["stock_name", "sentiment_score", "operation_advice", "trend_prediction", "analysis_summary"]
-            })
-            
-            # 创建Function Declaration
-            analyze_stock_function = self._genai_module.protos.FunctionDeclaration(
-                name="analyze_stock",
-                description="分析股票并返回结构化分析结果",
-                parameters=analysis_schema
-            )
-            
-            # 创建Tool
-            stock_analysis_tool = self._genai_module.protos.Tool(
-                function_declarations=[analyze_stock_function]
-            )
-            
-            # 选择模型
-            model = self._model_light if (use_light_model and self._model_light) else self._model
-            
-            # 调用API
-            full_prompt = f"{system_prompt}\n\n{user_prompt}"
-            response = model.generate_content(
-                full_prompt,
-                tools=[stock_analysis_tool],
-                tool_config={'function_calling_config': {'mode': 'any'}}
-            )
-            
-            # 提取Function Call结果
-            if response.candidates and len(response.candidates) > 0:
-                candidate = response.candidates[0]
-                if candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        if hasattr(part, 'function_call'):
-                            fc = part.function_call
-                            if fc.name == "analyze_stock":
-                                # fc.args 是 MapComposite（SDK 0.8+），需递归转为纯 Python 类型
-                                def _deep_convert(obj):
-                                    if isinstance(obj, dict):
-                                        return {k: _deep_convert(v) for k, v in obj.items()}
-                                    elif isinstance(obj, (list, tuple)):
-                                        return [_deep_convert(v) for v in obj]
-                                    elif hasattr(obj, 'items'):  # MapComposite
-                                        return {k: _deep_convert(v) for k, v in obj.items()}
-                                    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):  # RepeatedComposite
-                                        return [_deep_convert(v) for v in obj]
-                                    return obj
-                                result_dict = _deep_convert(fc.args)
-                                return result_dict
-            
-            return None
-        except Exception as e:
-            logger.debug(f"Function Calling执行失败: {e}")
-            return None
 
     @staticmethod
     def _dict_to_result(data: Dict[str, Any], code: str, name: str) -> AnalysisResult:
@@ -1859,10 +1688,6 @@ dashboard: {{
         result.execution_note = _s(data.get('execution_note') or _db.get('execution_note'))
 
         return result
-
-    def _build_result_from_dict(self, data: Dict[str, Any], code: str, name: str) -> AnalysisResult:
-        """从dict构造AnalysisResult（Function Calling专用）"""
-        return self._dict_to_result(data, code, name)
 
     def _parse_response(self, response_text: str, code: str, name: str) -> AnalysisResult:
         try:
@@ -1993,30 +1818,29 @@ dashboard: {{
 
     def chat(self, prompt: str) -> str:
         """通用对话接口 (大盘复盘用)"""
-        if not self.is_available(): return "AI未配置"
+        if not self.is_available():
+            return "AI未配置"
         macro_prompt = self.PROMPT_MACRO.rstrip() + f"\n今天是{datetime.now().strftime('%Y年%m月%d日')}。"
         try:
-            if self._use_openai:
-                return self._openai_client.chat.completions.create(
-                    model=get_config().openai_model,
-                    messages=[
-                        {"role": "system", "content": macro_prompt},
-                        {"role": "user", "content": prompt}
-                    ]
-                ).choices[0].message.content
-            
-            # Gemini
-            return self._model.generate_content(f"{macro_prompt}\n\n{prompt}").text
-        except Exception as e:
-            err_str = str(e)
-            # 识别常见错误并给出友好提示
-            if '额度已用尽' in err_str or 'quota' in err_str.lower():
-                logger.error(f"[大盘] AI API 额度不足: {e}")
+            llm_resp = self._llm.generate(
+                prompt,
+                system_prompt=macro_prompt,
+                model=MODEL_PRO,
+                scene="market_review",
+            )
+            if llm_resp.success:
+                return llm_resp.text
+            err_str = llm_resp.error or "未知错误"
+            if 'quota' in err_str.lower() or '额度' in err_str:
+                logger.error(f"[大盘] AI API 额度不足: {err_str}")
                 return "生成错误: API 额度不足，请检查 API Key 余额或更换 Key"
-            elif '401' in err_str or 'unauthorized' in err_str.lower() or 'invalid' in err_str.lower():
-                logger.error(f"[大盘] AI API 认证失败: {e}")
+            if '401' in err_str or 'unauthorized' in err_str.lower() or 'invalid' in err_str.lower():
+                logger.error(f"[大盘] AI API 认证失败: {err_str}")
                 return "生成错误: API Key 无效或已过期，请检查配置"
-            logger.error(f"[大盘] AI 生成失败: {e}")
+            logger.error(f"[大盘] AI 生成失败: {err_str}")
+            return f"生成错误: {err_str}"
+        except Exception as e:
+            logger.error(f"[大盘] AI 生成异常: {e}")
             return f"生成错误: {e}"
 
 def get_analyzer() -> GeminiAnalyzer:

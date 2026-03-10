@@ -14,7 +14,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 from fastapi import APIRouter
 
@@ -82,7 +84,15 @@ async def get_market_overview() -> Dict[str, Any]:
 
 
 class ConceptHoldingsRequest(BaseModel):
-    codes: List[str]
+    codes: List[str] = Field(max_length=50)
+
+    @field_validator('codes')
+    @classmethod
+    def validate_codes(cls, v):
+        for code in v:
+            if not re.match(r'^\d{6}$', code):
+                raise ValueError(f"非法股票代码: {code}")
+        return v
 
 @router.post("/concept-holdings", summary="持仓股概念关联查询")
 async def api_concept_holdings(req: ConceptHoldingsRequest) -> Dict[str, Any]:

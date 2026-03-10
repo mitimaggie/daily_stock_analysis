@@ -10,11 +10,11 @@ AI 对话服务
 3. 支持流式响应（SSE）
 """
 
-import json
 import logging
 from typing import Optional, Dict, Any, List, Iterator
 
 from src.config import get_config
+from src.llm import GeminiClient, LLMResponse, MODEL_PRO
 
 logger = logging.getLogger(__name__)
 
@@ -42,44 +42,30 @@ class ChatService:
 """
 
     def __init__(self):
-        self._model = None
-        self._model_fallback = None
-        self._openai_client = None
-        self._use_openai = False
+        self._llm: Optional[GeminiClient] = None
+        self._openai_client: Any = None
         self._initialized = False
         self._agent_executor = None
         self._agent_initialized = False
 
-    def _ensure_init(self):
-        """延迟初始化 AI 模型"""
+    def _ensure_init(self) -> None:
+        """延迟初始化：创建 GeminiClient + OpenAI 流式 fallback 客户端"""
         if self._initialized:
             return
         self._initialized = True
 
         config = get_config()
-        api_key = config.gemini_api_key
+        self._llm = GeminiClient(config)
 
-        if api_key and "your_" not in api_key:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                self._model = genai.GenerativeModel(model_name=config.gemini_model)
-                fb = getattr(config, "gemini_model_fallback", None)
-                if fb and str(fb).strip() and str(fb).strip() != config.gemini_model:
-                    self._model_fallback = genai.GenerativeModel(model_name=str(fb).strip())
-            except Exception as e:
-                logger.warning(f"Chat: Gemini 初始化失败: {e}")
-
-        if not self._model and config.openai_api_key:
+        if config.openai_api_key:
             try:
                 from openai import OpenAI
                 self._openai_client = OpenAI(
                     api_key=config.openai_api_key,
-                    base_url=config.openai_base_url,
+                    base_url=getattr(config, "openai_base_url", None),
                 )
-                self._use_openai = True
             except Exception as e:
-                logger.warning(f"Chat: OpenAI 初始化失败: {e}")
+                logger.warning("Chat: OpenAI 流式 fallback 初始化失败: %s", e)
 
     def _ensure_agent_init(self):
         """延迟初始化 Agent 执行引擎"""
@@ -95,7 +81,7 @@ class ChatService:
 
     def is_available(self) -> bool:
         self._ensure_init()
-        return self._model is not None or self._openai_client is not None
+        return self._llm is not None and self._llm.is_available()
 
     def is_agent_available(self) -> bool:
         """检查 Agent 模式是否可用"""
@@ -556,87 +542,32 @@ class ChatService:
             except Exception as e:
                 logger.warning(f"Agent chat exception: {e}, falling back to plain prompt")
 
-        # 回退：纯 prompt 模式
+        # 回退：纯 prompt 模式（通过 GeminiClient 自动处理重试和 fallback）
         self._ensure_init()
         if not self.is_available():
             return "AI 服务未配置，请检查 GEMINI_API_KEY 或 OPENAI_API_KEY 环境变量。"
 
-        config = get_config()
-        temperature = getattr(config, "gemini_temperature", 0.3)
-        timeout = getattr(config, "gemini_request_timeout", 60)
-
         full_system = f"{self.SYSTEM_PROMPT}\n\n## 当前报告数据\n{report_context}"
+        prompt = self._build_conversation_prompt(messages)
 
-        if self._use_openai and self._openai_client:
-            return self._chat_openai(full_system, messages, config, timeout)
+        resp: LLMResponse = self._llm.generate(
+            prompt,
+            system_prompt=full_system,
+            model=MODEL_PRO,
+            scene="chat",
+        )
+        if resp.success:
+            return resp.text
+        return f"AI 回复失败: {resp.error}"
 
-        return self._chat_gemini(full_system, messages, temperature, timeout)
-
-    def _build_gemini_contents(
-        self, system: str, messages: List[Dict[str, str]],
-    ) -> List[Dict]:
-        """构建 Gemini 格式的对话内容"""
-        contents = []
-        for i, msg in enumerate(messages):
-            role = "model" if msg["role"] == "assistant" else "user"
-            text = msg["content"]
-            if i == 0 and role == "user":
-                text = f"[系统指令]\n{system}\n\n[用户问题]\n{text}"
-            contents.append({"role": role, "parts": [{"text": text}]})
-        return contents
-
-    def _chat_gemini(
-        self, system: str, messages: List[Dict[str, str]],
-        temperature: float, timeout: int,
-    ) -> str:
-        """Gemini 对话"""
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-
-        contents = self._build_gemini_contents(system, messages)
-        gen_cfg = {"temperature": temperature}
-        models = [self._model]
-        if self._model_fallback:
-            models.append(self._model_fallback)
-
-        last_err = None
-        for model in models:
-            try:
-                with ThreadPoolExecutor(max_workers=1) as tp:
-                    future = tp.submit(
-                        model.generate_content,
-                        contents,
-                        generation_config=gen_cfg,
-                    )
-                    resp = future.result(timeout=timeout)
-                    return resp.text
-            except FuturesTimeout:
-                last_err = TimeoutError(f"Gemini 请求超时 ({timeout}s)")
-            except Exception as e:
-                last_err = e
-                logger.warning(f"Chat Gemini 失败: {e}")
-
-        return f"AI 回复失败: {last_err}"
-
-    def _chat_openai(
-        self, system: str, messages: List[Dict[str, str]],
-        config: Any, timeout: int,
-    ) -> str:
-        """OpenAI 对话"""
-        oai_messages = [{"role": "system", "content": system}]
+    @staticmethod
+    def _build_conversation_prompt(messages: List[Dict[str, str]]) -> str:
+        """将多轮对话历史拼接为单个 prompt 文本"""
+        parts: List[str] = []
         for msg in messages:
-            oai_messages.append({"role": msg["role"], "content": msg["content"]})
-
-        try:
-            r = self._openai_client.chat.completions.create(
-                model=config.openai_model,
-                messages=oai_messages,
-                temperature=getattr(config, "openai_temperature", 0.3),
-                timeout=timeout,
-            )
-            return r.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Chat OpenAI 失败: {e}")
-            return f"AI 回复失败: {e}"
+            role_label = "用户" if msg["role"] == "user" else "助手"
+            parts.append(f"[{role_label}]\n{msg['content']}")
+        return "\n\n".join(parts)
 
     # ============ 流式对话 ============
 
@@ -721,63 +652,51 @@ class ChatService:
             yield {"type": "error", "message": "AI 服务未配置，请检查 GEMINI_API_KEY 或 OPENAI_API_KEY 环境变量。"}
             return
 
-        config = get_config()
-        temperature = getattr(config, "gemini_temperature", 0.3)
         full_system = f"{self.SYSTEM_PROMPT}\n\n## 当前报告数据\n{report_context}"
+        prompt = self._build_conversation_prompt(messages)
 
         try:
-            if self._use_openai and self._openai_client:
-                for text in self._stream_openai(full_system, messages, config):
-                    yield {"type": "chunk", "text": text}
-            else:
-                for text in self._stream_gemini(full_system, messages, temperature):
-                    yield {"type": "chunk", "text": text}
+            for text in self._stream_via_llm(prompt, full_system):
+                yield {"type": "chunk", "text": text}
         except Exception as e:
             yield {"type": "error", "message": str(e)}
             return
         yield {"type": "done"}
 
-    def _stream_gemini(
-        self, system: str, messages: List[Dict[str, str]],
-        temperature: float,
-    ) -> Iterator[str]:
-        """Gemini 流式对话"""
-        contents = self._build_gemini_contents(system, messages)
-        gen_cfg = {"temperature": temperature}
-        models = [self._model]
-        if self._model_fallback:
-            models.append(self._model_fallback)
+    def _stream_via_llm(self, prompt: str, system_prompt: str) -> Iterator[str]:
+        """流式生成：优先 GeminiClient，Gemini 不可用时降级 OpenAI"""
+        try:
+            for chunk in self._llm.generate_stream(
+                prompt,
+                system_prompt=system_prompt,
+                model=MODEL_PRO,
+                scene="chat_stream",
+            ):
+                yield chunk
+            return
+        except RuntimeError:
+            # GeminiClient.generate_stream 在 Gemini 客户端未初始化时抛 RuntimeError
+            if not self._openai_client:
+                raise
+            logger.info("Gemini 流式不可用，降级 OpenAI 流式")
+        except Exception as e:
+            logger.warning("Gemini 流式失败: %s，尝试 OpenAI 流式 fallback", e)
+            if not self._openai_client:
+                raise
 
-        last_err = None
-        for model in models:
-            try:
-                resp = model.generate_content(
-                    contents,
-                    generation_config=gen_cfg,
-                    stream=True,
-                )
-                for chunk in resp:
-                    if chunk.text:
-                        yield chunk.text
-                return
-            except Exception as e:
-                last_err = e
-                logger.warning(f"Chat stream Gemini 失败: {e}")
+        yield from self._stream_openai(prompt, system_prompt)
 
-        yield f"AI 回复失败: {last_err}"
-
-    def _stream_openai(
-        self, system: str, messages: List[Dict[str, str]],
-        config: Any,
-    ) -> Iterator[str]:
-        """OpenAI 流式对话"""
-        oai_messages = [{"role": "system", "content": system}]
-        for msg in messages:
-            oai_messages.append({"role": msg["role"], "content": msg["content"]})
+    def _stream_openai(self, prompt: str, system_prompt: str) -> Iterator[str]:
+        """OpenAI 流式对话（仅作为 GeminiClient 流式的 fallback）"""
+        config = get_config()
+        oai_messages: List[Dict[str, str]] = []
+        if system_prompt:
+            oai_messages.append({"role": "system", "content": system_prompt})
+        oai_messages.append({"role": "user", "content": prompt})
 
         try:
             stream = self._openai_client.chat.completions.create(
-                model=config.openai_model,
+                model=getattr(config, "openai_model", "gpt-4o-mini"),
                 messages=oai_messages,
                 temperature=getattr(config, "openai_temperature", 0.3),
                 stream=True,
@@ -787,7 +706,7 @@ class ChatService:
                 if delta and delta.content:
                     yield delta.content
         except Exception as e:
-            logger.error(f"Chat stream OpenAI 失败: {e}")
+            logger.error("Chat stream OpenAI 失败: %s", e)
             yield f"AI 回复失败: {e}"
 
 

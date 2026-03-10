@@ -88,6 +88,7 @@ from src.stock_analyzer import StockTrendAnalyzer
 from src.stock_analyzer.types import MarketRegime
 from src.stock_analyzer.scoring import ScoringSystem
 from src.analyzer import GeminiAnalyzer, AnalysisResult
+from src.llm import MODEL_FLASH
 from src.notification import NotificationService
 from src.storage import DatabaseManager  
 from src.search_service import SearchService
@@ -1307,6 +1308,52 @@ class StockAnalysisPipeline:
         prefix = f"[query_id={self.query_id}] " if self.query_id else ""
         logger.info(prefix + msg, *args, **kwargs)
 
+    def _digest_news_with_flash(self, search_content: str, stock_name: str) -> Optional[str]:
+        """用 Flash 将 Perplexity 原始新闻预消化为结构化舆情要点。
+
+        输入 Perplexity 的原始搜索结果长文，由 Flash 提取为六大维度结构化情报，
+        直接可嵌入 analyzer prompt，大幅降低 Pro 在舆情段的注意力消耗。
+
+        失败时返回 None（fallback 到原始文本），不影响主流程。
+        """
+        try:
+            llm = self.analyzer._llm
+            if not llm.is_available():
+                return None
+
+            digest_prompt = (
+                "你是 A 股舆情分类员，将以下搜索结果提取为结构化情报。\n"
+                "只提取事实，不评价，不给操作建议。\n\n"
+                f"搜索结果：\n{search_content}\n\n"
+                "请按以下格式提取（只输出结果，无需 markdown 格式）：\n\n"
+                '【高危事件】（监管立案/退市风险/财务造假等，无则写"无"）\n\n'
+                "【利空风险】（最多3条，每条一行，含具体数字/日期）\n\n"
+                "【利好催化】（最多3条，每条一行，含具体数字/日期）\n\n"
+                '【政策信号】（相关政策利好或利空，无则写"无"）\n\n'
+                "【资金动向】（北向/增减持/回购/机构调研，一句话总结）\n\n"
+                "【信息时效】（最新消息日期）"
+            )
+
+            resp = llm.generate(
+                digest_prompt,
+                system_prompt="你是专业的 A 股舆情分类员，只做事实提取，不做任何投资建议。",
+                model=MODEL_FLASH,
+                timeout=15,
+                scene="sentiment_digest",
+            )
+
+            if resp.success and resp.text and resp.text.strip():
+                digested = resp.text.strip()
+                if "【" in digested:
+                    return digested
+
+            logger.debug(f"[{stock_name}] Flash 舆情预消化返回内容不符合预期格式")
+            return None
+
+        except Exception as e:
+            logger.debug(f"[{stock_name}] Flash 舆情预消化失败(降级到原始文本): {e}")
+            return None
+
     def process_single_stock(
         self,
         code: str,
@@ -1479,6 +1526,14 @@ class StockAnalysisPipeline:
 
             if not search_content and not fast_mode:
                 logger.info(f"📭 [{stock_name}] 无舆情数据，将仅基于技术面+基本面分析")
+
+            # 舆情 Flash 预消化：将 Perplexity 长文转为结构化要点
+            if search_content and search_content.strip() and not fast_mode:
+                original_len = len(search_content)
+                digested = self._digest_news_with_flash(search_content, stock_name)
+                if digested:
+                    search_content = digested
+                    logger.info(f"🧠 [{stock_name}] 舆情预消化完成，从 {original_len} 字压缩到 {len(search_content)} 字")
 
             # === 2. 获取大盘环境（前置滤网：大盘定仓位上限，个股逻辑定买卖方向）===
             # 盘中模式：若大盘快照由上层传入但市场仍在交易，刷新一次以获取最新数据

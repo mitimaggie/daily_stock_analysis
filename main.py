@@ -58,6 +58,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--backtest', action='store_true', help='回测模式：回填历史分析的实际收益率并输出胜率统计')
     parser.add_argument('--compare-weights', action='store_true', help='权重对比模式：用历史 score_breakdown 重算两套权重的胜率差异')
     parser.add_argument('--daemon', action='store_true', help='守护进程模式：启动 FastAPI + 定时调度，不立即分析')
+    parser.add_argument('--update-concepts', action='store_true', help='手动触发概念热度拉取 + 成分股映射更新')
     return parser.parse_args()
 
 def start_api_server(host: str, port: int, config: Config) -> None:
@@ -473,6 +474,21 @@ def main() -> int:
         return 0
 
     try:
+        # 模式: 概念数据更新
+        if getattr(args, 'update_concepts', False):
+            logger.info("模式: 概念热度拉取 + 成分股映射更新")
+            from data_provider.concept_fetcher import fetch_concept_daily, update_concept_mappings
+            from src.storage import DatabaseManager
+            db = DatabaseManager.get_instance()
+            concepts = fetch_concept_daily(db, config)
+            if not concepts:
+                logger.warning("概念热度获取为空，跳过映射更新")
+                return 0
+            logger.info(f"概念热度获取成功: Top {len(concepts)}")
+            saved = update_concept_mappings(db, concepts, config)
+            logger.info(f"概念成分股映射更新完成: 共写入 {saved} 条映射")
+            return 0
+
         # 模式-1: 回测
         if getattr(args, 'backtest', False):
             logger.info("模式: 回测分析")

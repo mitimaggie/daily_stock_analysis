@@ -13,6 +13,8 @@ on:
       - 'setup.cfg'
       - 'Dockerfile'
       - 'docker-compose.yml'
+      - 'apps/**'
+      - 'api/**'
   # 支持手动触发（用于重新审查）
   workflow_dispatch:
 

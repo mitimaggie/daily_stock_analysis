@@ -513,131 +513,144 @@ def _analyze_intraday_for_monitor(code: str) -> Dict[str, Any]:
         return {'monitor_signal': '', 'vwap': 0, 'vwap_position': '', 'intraday_trend': '', 'volume_distribution': '', 'momentum': '', 'summary': ''}
 
 
+def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
+    """处理单只持仓的实时监控：拉取价格、计算ATR止损、生成操作信号、写回数据库。"""
+    from src.stock_analyzer.risk_management import RiskManager
+
+    code = holding.code
+    cost_price = holding.cost_price
+    current_price = _get_realtime_price(code)
+
+    if current_price is None:
+        return {
+            'code': code,
+            'name': holding.name,
+            'cost_price': cost_price,
+            'current_price': None,
+            'signal': 'unknown',
+            'signal_text': '数据获取失败',
+            'reasons': ['⚪ 无法获取实时价格'],
+            'atr_stop': holding.atr_stop_loss,
+            'pnl_pct': None,
+        }
+
+    df = _get_kline_df(code)
+    atr_result = RiskManager.calc_atr_trailing_stop(
+        df=df,
+        cost_price=cost_price,
+        current_price=current_price,
+        prev_atr_stop=holding.atr_stop_loss,
+        prev_highest=holding.highest_price,
+    ) if df is not None else {
+        'atr': 0, 'atr_stop': holding.atr_stop_loss or 0,
+        'highest_price': current_price, 'stop_triggered': False,
+        'pnl_pct': (current_price - cost_price) / cost_price * 100 if cost_price > 0 else 0,
+        'stop_pnl_pct': 0,
+    }
+
+    _now = datetime.now()
+    _h, _m = _now.hour, _now.minute
+    is_intraday = (
+        (_h == 9 and _m >= 30) or
+        (_h == 10) or
+        (_h == 11 and _m < 30) or
+        (13 <= _h < 15)
+    )
+    intraday_info = _analyze_intraday_for_monitor(code) if is_intraday else {}
+
+    signal_info = _generate_monitor_signal(
+        code=code,
+        cost_price=cost_price,
+        current_price=current_price,
+        atr_stop=atr_result['atr_stop'],
+        pnl_pct=atr_result['pnl_pct'],
+        stop_pnl_pct=atr_result['stop_pnl_pct'],
+        intraday_info=intraday_info,
+    )
+
+    prev_signal = holding.last_signal or ''
+    new_signal = signal_info['signal']
+    if new_signal == 'stop_loss' and prev_signal != 'stop_loss':
+        _push_stop_loss_alert(
+            code=code,
+            name=holding.name,
+            current_price=current_price,
+            atr_stop=atr_result['atr_stop'],
+            pnl_pct=atr_result['pnl_pct'],
+            reasons=signal_info['reasons'],
+        )
+        try:
+            add_portfolio_log(
+                code=code,
+                action='stop_exit',
+                price=current_price,
+                reason=f"ATR止损触发 止损线:{atr_result['atr_stop']:.2f}",
+                triggered_by='stop_loss',
+            )
+        except Exception:
+            pass
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        record = session.execute(
+            select(Portfolio).where(Portfolio.code == code)
+        ).scalar_one_or_none()
+        if record:
+            record.atr_stop_loss = atr_result['atr_stop']
+            record.highest_price = atr_result['highest_price']
+            record.last_signal = signal_info['signal']
+            record.last_signal_reason = '\n'.join(signal_info['reasons'])
+            record.last_monitored_at = datetime.now()
+            session.commit()
+
+    return {
+        'code': code,
+        'name': holding.name,
+        'cost_price': cost_price,
+        'shares': holding.shares,
+        'entry_date': holding.entry_date.isoformat() if holding.entry_date else None,
+        'current_price': current_price,
+        'pnl_pct': atr_result['pnl_pct'],
+        'atr': atr_result['atr'],
+        'atr_stop': atr_result['atr_stop'],
+        'highest_price': atr_result['highest_price'],
+        'stop_pnl_pct': atr_result['stop_pnl_pct'],
+        'signal': signal_info['signal'],
+        'signal_text': signal_info['signal_text'],
+        'reasons': signal_info['reasons'],
+        'intraday': intraday_info,
+        'last_monitored_at': datetime.now().isoformat(),
+    }
+
+
 def monitor_portfolio() -> List[Dict[str, Any]]:
     """
-    遍历所有持仓，获取实时价格、更新ATR止损、生成信号
+    遍历所有持仓，获取实时价格、更新ATR止损、生成信号。
 
+    使用 ThreadPoolExecutor 并行处理，max_workers=3 避免触发数据源限流。
     每次调用后将最新止损价和信号写回数据库。
     """
-    from src.stock_analyzer.risk_management import RiskManager
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     db = DatabaseManager.get_instance()
     with db.get_session() as session:
         holdings = session.execute(select(Portfolio)).scalars().all()
         holdings_list = [h for h in holdings]
 
+    if not holdings_list:
+        return []
+
     results = []
-
-    for holding in holdings_list:
-        code = holding.code
-        cost_price = holding.cost_price
-        current_price = _get_realtime_price(code)
-
-        if current_price is None:
-            results.append({
-                'code': code,
-                'name': holding.name,
-                'cost_price': cost_price,
-                'current_price': None,
-                'signal': 'unknown',
-                'signal_text': '数据获取失败',
-                'reasons': ['⚪ 无法获取实时价格'],
-                'atr_stop': holding.atr_stop_loss,
-                'pnl_pct': None,
-            })
-            continue
-
-        # 获取K线计算ATR追踪止损
-        df = _get_kline_df(code)
-        atr_result = RiskManager.calc_atr_trailing_stop(
-            df=df,
-            cost_price=cost_price,
-            current_price=current_price,
-            prev_atr_stop=holding.atr_stop_loss,
-            prev_highest=holding.highest_price,
-        ) if df is not None else {
-            'atr': 0, 'atr_stop': holding.atr_stop_loss or 0,
-            'highest_price': current_price, 'stop_triggered': False,
-            'pnl_pct': (current_price - cost_price) / cost_price * 100 if cost_price > 0 else 0,
-            'stop_pnl_pct': 0,
-        }
-
-        # 盘中获取分时信号
-        _now = datetime.now()
-        _h, _m = _now.hour, _now.minute
-        is_intraday = (
-            (_h == 9 and _m >= 30) or
-            (_h == 10) or
-            (_h == 11 and _m < 30) or
-            (13 <= _h < 15)
-        )
-        intraday_info = _analyze_intraday_for_monitor(code) if is_intraday else {}
-
-        # 生成操作信号
-        signal_info = _generate_monitor_signal(
-            code=code,
-            cost_price=cost_price,
-            current_price=current_price,
-            atr_stop=atr_result['atr_stop'],
-            pnl_pct=atr_result['pnl_pct'],
-            stop_pnl_pct=atr_result['stop_pnl_pct'],
-            intraday_info=intraday_info,
-        )
-
-        # 止损首次触发：推送通知 + 写日志
-        prev_signal = holding.last_signal or ''
-        new_signal = signal_info['signal']
-        if new_signal == 'stop_loss' and prev_signal != 'stop_loss':
-            _push_stop_loss_alert(
-                code=code,
-                name=holding.name,
-                current_price=current_price,
-                atr_stop=atr_result['atr_stop'],
-                pnl_pct=atr_result['pnl_pct'],
-                reasons=signal_info['reasons'],
-            )
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(_process_single_holding, item): item for item in holdings_list}
+        for future in as_completed(futures):
+            item = futures[future]
             try:
-                add_portfolio_log(
-                    code=code,
-                    action='stop_exit',
-                    price=current_price,
-                    reason=f"ATR止损触发 止损线:{atr_result['atr_stop']:.2f}",
-                    triggered_by='stop_loss',
-                )
-            except Exception:
-                pass
-
-        # 写回数据库
-        with db.get_session() as session:
-            record = session.execute(
-                select(Portfolio).where(Portfolio.code == code)
-            ).scalar_one_or_none()
-            if record:
-                record.atr_stop_loss = atr_result['atr_stop']
-                record.highest_price = atr_result['highest_price']
-                record.last_signal = signal_info['signal']
-                record.last_signal_reason = '\n'.join(signal_info['reasons'])
-                record.last_monitored_at = datetime.now()
-                session.commit()
-
-        results.append({
-            'code': code,
-            'name': holding.name,
-            'cost_price': cost_price,
-            'shares': holding.shares,
-            'entry_date': holding.entry_date.isoformat() if holding.entry_date else None,
-            'current_price': current_price,
-            'pnl_pct': atr_result['pnl_pct'],
-            'atr': atr_result['atr'],
-            'atr_stop': atr_result['atr_stop'],
-            'highest_price': atr_result['highest_price'],
-            'stop_pnl_pct': atr_result['stop_pnl_pct'],
-            'signal': signal_info['signal'],
-            'signal_text': signal_info['signal_text'],
-            'reasons': signal_info['reasons'],
-            'intraday': intraday_info,
-            'last_monitored_at': datetime.now().isoformat(),
-        })
+                result = future.result(timeout=25)
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.warning("监控处理失败 %s: %s", item.code, e)
 
     return results
 

@@ -8,7 +8,7 @@ from datetime import date
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from src.config import Config
 from src.services.portfolio_service import (
@@ -44,15 +44,22 @@ class PortfolioLogRequest(BaseModel):
 
 
 class TradeRequest(BaseModel):
-    action: str       # "buy" | "sell"
-    shares: int       # 本次操作股数（正数）
-    price: float      # 本次操作价格
-    reason: str = ""  # 操作原因（可选）
+    action: str
+    shares: int = Field(ge=1, le=10_000_000, description="操作股数，必须为正整数")
+    price: float = Field(gt=0, le=99999.99, description="操作价格")
+    reason: str = Field(default="", max_length=500)
+
+    @field_validator('action')
+    @classmethod
+    def validate_action(cls, v):
+        if v not in ('buy', 'sell'):
+            raise ValueError("action 必须是 'buy' 或 'sell'")
+        return v
 
 
 class CostUpdateRequest(BaseModel):
-    cost_price: float
-    shares: Optional[int] = None
+    cost_price: float = Field(gt=0, le=99999.99, description="成本价")
+    shares: Optional[int] = Field(default=None, ge=0, le=10_000_000, description="持仓股数")
 
 
 class HorizonUpdateRequest(BaseModel):
@@ -142,11 +149,11 @@ async def api_record_trade(code: str, req: TradeRequest):
             record.cost_price = round(new_cost, 4)
             log_action = "add" if old_shares > 0 else "buy"
         elif req.action == "sell":
-            new_shares = max(0, old_shares - req.shares)
+            if req.shares > old_shares:
+                raise HTTPException(status_code=400, detail=f"卖出数量({req.shares})超过持有数量({old_shares})")
+            new_shares = old_shares - req.shares
             record.shares = new_shares
             log_action = "reduce" if new_shares > 0 else "stop_exit"
-        else:
-            raise HTTPException(status_code=400, detail=f"不支持的操作: {req.action}")
 
         log = PortfolioLog(
             code=code,
@@ -157,6 +164,8 @@ async def api_record_trade(code: str, req: TradeRequest):
             triggered_by='manual',
         )
         session.add(log)
+        logger.info("交易记录: code=%s action=%s shares=%d price=%.2f old_shares=%d new_shares=%d new_cost=%.4f",
+                    code, req.action, req.shares, req.price, old_shares, new_shares, record.cost_price)
         session.commit()
 
         return {
@@ -182,6 +191,7 @@ async def api_update_cost(code: str, req: CostUpdateRequest):
         record.cost_price = req.cost_price
         if req.shares is not None:
             record.shares = req.shares
+        logger.info("成本更新: code=%s cost_price=%.4f shares=%s", code, req.cost_price, req.shares)
         session.commit()
         return {"success": True, "portfolio": record.to_dict()}
 
