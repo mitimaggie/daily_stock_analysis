@@ -1392,7 +1392,7 @@ class DatabaseManager:
 
                 entry = {
                     'date': day_key,
-                    'score': r.sentiment_score or 50,
+                    'score': (r.llm_score if r.llm_score is not None else r.sentiment_score) or 50,
                     'advice': r.operation_advice or '',
                     'trend': r.trend_prediction or '',
                 }
