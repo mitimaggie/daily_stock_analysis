@@ -116,8 +116,8 @@ export const KeyInsights: React.FC<KeyInsightsProps> = ({
   items.sort((a, b) => order[a.category] - order[b.category]);
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-      <h3 className="text-sm font-semibold text-white/60 flex items-center gap-1.5 mb-3">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4">
+      <h3 className="text-sm font-semibold text-secondary flex items-center gap-1.5 mb-3">
         <span>📋</span> 重要信息
       </h3>
 

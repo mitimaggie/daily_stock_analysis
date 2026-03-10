@@ -52,7 +52,7 @@ export const Card: React.FC<CardProps> = ({
                 <span className="label-uppercase">{subtitle}</span>
               )}
               {title && (
-                <h3 className="text-lg font-semibold text-white mt-1">
+                <h3 className="text-lg font-semibold text-primary mt-1">
                   {title}
                 </h3>
               )}
@@ -80,7 +80,7 @@ export const Card: React.FC<CardProps> = ({
             <span className="label-uppercase">{subtitle}</span>
           )}
           {title && (
-            <h3 className="text-lg font-semibold text-white mt-1">
+            <h3 className="text-lg font-semibold text-primary mt-1">
               {title}
             </h3>
           )}

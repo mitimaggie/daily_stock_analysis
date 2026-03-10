@@ -95,7 +95,7 @@ export const Watchlist: React.FC<WatchlistProps> = ({
       >
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-medium text-cyan">⭐</span>
-          <span className="text-xs font-medium text-white">自选股</span>
+          <span className="text-xs font-medium text-primary">自选股</span>
           <span className="text-[10px] text-muted">({items.length})</span>
         </div>
         <span className="text-[10px] text-muted">{expanded ? '▲' : '▼'}</span>
@@ -136,7 +136,7 @@ export const Watchlist: React.FC<WatchlistProps> = ({
                 const mapEntry = scoreMap[item.code];
                 const sc = apiScore ?? mapEntry?.score ?? null;
                 const adv = apiAdvice ?? mapEntry?.advice ?? null;
-                const scoreColor = sc == null ? '' : sc >= 70 ? 'text-emerald-400' : sc >= 50 ? 'text-amber-400' : 'text-red-400/70';
+                const scoreColor = sc == null ? '' : sc >= 70 ? 'text-emerald-600' : sc >= 50 ? 'text-amber-400' : 'text-red-600/70';
                 return (
                   <div
                     key={item.code}
@@ -149,13 +149,13 @@ export const Watchlist: React.FC<WatchlistProps> = ({
                       className="flex-1 text-left min-w-0"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-mono text-white hover:text-cyan transition-colors disabled:opacity-50 flex-shrink-0">{item.code}</span>
+                        <span className="text-xs font-mono text-primary hover:text-cyan transition-colors disabled:opacity-50 flex-shrink-0">{item.code}</span>
                         {item.name && <span className="text-muted text-[10px] truncate">{item.name}</span>}
                       </div>
                       {(sc != null || adv) && (
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {sc != null && <span className={`text-[10px] font-mono font-bold ${scoreColor}`}>{sc}</span>}
-                          {adv && <span className="text-[9px] text-white/25 truncate max-w-[80px]">{adv}</span>}
+                          {adv && <span className="text-[9px] text-muted truncate max-w-[80px]">{adv}</span>}
                         </div>
                       )}
                     </button>

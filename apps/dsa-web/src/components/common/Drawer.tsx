@@ -54,17 +54,17 @@ export const Drawer: React.FC<DrawerProps> = ({
       <div className={`absolute inset-y-0 right-0 w-full ${width} flex`}>
         <div
           className="relative w-full flex flex-col
-            bg-card border-l border-white/10
+            bg-card border-l border-black/[0.08]
             shadow-2xl
             transform transition-transform duration-300 ease-out
             animate-slide-in-right"
         >
           {/* 头部 */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.05]">
             {title && (
               <div>
                 <span className="label-uppercase">DETAIL VIEW</span>
-                <h2 className="text-lg font-semibold text-white mt-1">
+                <h2 className="text-lg font-semibold text-primary mt-1">
                   {title}
                 </h2>
               </div>

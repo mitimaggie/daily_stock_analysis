@@ -22,10 +22,10 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex flex-col items-center justify-center h-screen bg-[#0a0f1a] text-white gap-4 px-6">
+        <div className="flex flex-col items-center justify-center h-screen bg-base text-primary gap-4 px-6">
           <div className="text-5xl">⚠️</div>
           <h2 className="text-lg font-semibold">页面遇到了问题</h2>
-          <p className="text-sm text-white/50 text-center max-w-md">
+          <p className="text-sm text-secondary text-center max-w-md">
             您的持仓数据不受影响，请刷新页面重试
           </p>
           <button

@@ -16,24 +16,24 @@ export const ValuationBar: React.FC<ValuationBarProps> = ({ quantExtras }) => {
 
   const pctValue = pePercentile != null ? Math.min(100, Math.max(0, pePercentile)) : null;
   const barColor = pctValue == null
-    ? 'bg-white/20'
+    ? 'bg-black/[0.12]'
     : pctValue <= 30
-      ? 'bg-emerald-400'
+      ? 'bg-emerald-600'
       : pctValue <= 70
         ? 'bg-yellow-400'
-        : 'bg-red-400';
+        : 'bg-red-600';
   const textColor = pctValue == null
-    ? 'text-white/40'
+    ? 'text-muted'
     : pctValue <= 30
-      ? 'text-emerald-400'
+      ? 'text-emerald-600'
       : pctValue <= 70
         ? 'text-yellow-400'
-        : 'text-red-400';
+        : 'text-red-600';
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-card border border-black/[0.04] p-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold text-white/70 flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-primary/70 flex items-center gap-1.5">
           <span>📊</span> 估值定位
         </h3>
         {verdict && (
@@ -44,10 +44,10 @@ export const ValuationBar: React.FC<ValuationBarProps> = ({ quantExtras }) => {
       {pctValue != null && (
         <div className="mb-2">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-white/30">低估</span>
-            <span className="text-[10px] text-white/30">高估</span>
+            <span className="text-[10px] text-muted">低估</span>
+            <span className="text-[10px] text-muted">高估</span>
           </div>
-          <div className="h-2 rounded-full bg-white/[0.06] overflow-hidden relative">
+          <div className="h-2 rounded-full bg-black/[0.04] overflow-hidden relative">
             <div
               className={`h-full rounded-full transition-all duration-500 ${barColor}`}
               style={{ width: `${pctValue}%` }}
@@ -65,12 +65,12 @@ export const ValuationBar: React.FC<ValuationBarProps> = ({ quantExtras }) => {
         </div>
       )}
 
-      <div className="flex items-center gap-4 text-[11px] text-white/40">
+      <div className="flex items-center gap-4 text-[11px] text-muted">
         {peRatio != null && (
-          <span>PE <span className="font-mono text-white/60">{Number(peRatio).toFixed(1)}</span></span>
+          <span>PE <span className="font-mono text-secondary">{Number(peRatio).toFixed(1)}</span></span>
         )}
         {pbRatio != null && (
-          <span>PB <span className="font-mono text-white/60">{Number(pbRatio).toFixed(1)}</span></span>
+          <span>PB <span className="font-mono text-secondary">{Number(pbRatio).toFixed(1)}</span></span>
         )}
       </div>
     </div>

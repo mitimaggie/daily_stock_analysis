@@ -84,20 +84,20 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
         height: 400,
         layout: {
           background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: 'rgba(255,255,255,0.5)',
+          textColor: 'rgba(0,0,0,0.5)',
           fontSize: 11,
         },
         grid: {
-          vertLines: { color: 'rgba(255,255,255,0.04)' },
-          horzLines: { color: 'rgba(255,255,255,0.04)' },
+          vertLines: { color: 'rgba(0,0,0,0.06)' },
+          horzLines: { color: 'rgba(0,0,0,0.06)' },
         },
         crosshair: { mode: CrosshairMode.Normal },
         rightPriceScale: {
-          borderColor: 'rgba(255,255,255,0.1)',
+          borderColor: 'rgba(0,0,0,0.1)',
           scaleMargins: { top: 0.05, bottom: 0.25 },
         },
         timeScale: {
-          borderColor: 'rgba(255,255,255,0.1)',
+          borderColor: 'rgba(0,0,0,0.1)',
           timeVisible: false,
         },
       });
@@ -212,7 +212,7 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
       >
         <div className="flex items-baseline gap-2">
           <span className="label-uppercase">K-LINE CHART</span>
-          <h3 className="text-base font-semibold text-white">
+          <h3 className="text-base font-semibold text-primary">
             {stockName || stockCode} K线图
           </h3>
         </div>
@@ -236,7 +236,7 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
                 className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
                   days === opt.value
                     ? 'bg-cyan/20 text-cyan border border-cyan/30'
-                    : 'bg-surface-2 text-muted hover:text-white border border-transparent'
+                    : 'bg-elevated text-muted hover:text-primary border border-transparent'
                 }`}
               >
                 {opt.label}
@@ -266,7 +266,7 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
               <button
                 type="button"
                 onClick={() => fetchAndRender()}
-                className="ml-2 text-cyan hover:text-white"
+                className="ml-2 text-cyan hover:text-primary"
               >
                 重试
               </button>

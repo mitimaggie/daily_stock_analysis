@@ -72,7 +72,7 @@ export const ConceptBadge: React.FC<ConceptBadgeProps> = ({ conceptContext }) =>
       {concepts.filter(c => !hotNames.has(c)).map(c => (
         <span
           key={c}
-          className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-white/[0.06] border border-white/[0.08] text-white/40 whitespace-nowrap"
+          className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-black/[0.04] border border-black/[0.06] text-muted whitespace-nowrap"
         >
           {c}
         </span>

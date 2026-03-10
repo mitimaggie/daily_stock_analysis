@@ -25,7 +25,7 @@ export const Button: React.FC<ButtonProps> = ({
     inline-flex items-center justify-center
     font-medium rounded-lg
     transition-all duration-200
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900
+    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white
     disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
   `;
 
@@ -40,30 +40,30 @@ export const Button: React.FC<ButtonProps> = ({
       bg-cyan-600 text-white
       hover:bg-cyan-500
       focus:ring-cyan-500
-      shadow-lg shadow-cyan-500/25
+      shadow-lg shadow-glow-cyan
     `,
     secondary: `
-      bg-slate-700 text-gray-200
-      hover:bg-slate-600
+      bg-elevated text-secondary
+      hover:bg-hover
       focus:ring-slate-500
-      border border-slate-600
+      border border-default
     `,
     outline: `
-      bg-transparent text-cyan-400
-      border border-cyan-500/30
+      bg-transparent text-cyan
+      border border-accent
       hover:bg-cyan-500/10 hover:border-cyan-500/50
       focus:ring-cyan-500
     `,
     ghost: `
-      bg-transparent text-gray-300
-      hover:bg-white/5 hover:text-white
+      bg-transparent text-secondary
+      hover:bg-hover hover:text-primary
       focus:ring-gray-500
     `,
     gradient: `
       bg-gradient-to-r from-cyan-500 to-blue-500 text-white
       hover:from-cyan-400 hover:to-blue-400
       focus:ring-cyan-500
-      shadow-lg shadow-cyan-500/25
+      shadow-lg shadow-glow-cyan
     `,
     danger: `
       bg-red-600 text-white

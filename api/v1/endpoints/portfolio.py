@@ -3,12 +3,14 @@
 持仓管理 & 监控 API
 """
 
+import logging
 from datetime import date
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from src.config import Config
 from src.services.portfolio_service import (
     add_portfolio, remove_portfolio, list_portfolio, get_portfolio,
     add_watchlist, remove_watchlist, list_watchlist, update_watchlist_analysis,
@@ -17,6 +19,7 @@ from src.services.portfolio_service import (
     get_ai_horizon_suggestion, update_next_review_date,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -106,6 +109,17 @@ def api_remove_portfolio(code: str):
     if not ok:
         raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
     return {"success": True}
+
+
+@router.get("/portfolio/{code}/logs", summary="获取单只股票的持仓操作日志")
+def api_get_portfolio_logs(code: str, limit: int = Query(20, ge=1, le=200)):
+    """获取单只股票的持仓操作日志（按时间倒序）"""
+    try:
+        logs = list_portfolio_logs(code, limit)
+        return {"logs": logs, "count": len(logs)}
+    except Exception as e:
+        logger.error(f"获取操作日志失败 {code}: {e}")
+        return {"logs": [], "count": 0}
 
 
 @router.get("/portfolio/{code}", summary="获取单只持仓详情")
@@ -215,7 +229,20 @@ def api_monitor_portfolio():
             sector_exposure = calculate_sector_exposure(portfolio_items)
         except Exception:
             pass
-        return {"signals": signals, "count": len(signals), "concentration_warnings": concentration_warnings, "sector_exposure": sector_exposure}
+        config = Config()
+        portfolio_size = config.portfolio_size
+        total_market_value = sum(
+            (s.get('current_price') or 0) * (s.get('shares') or 0)
+            for s in signals
+        )
+        return {
+            "signals": signals,
+            "count": len(signals),
+            "concentration_warnings": concentration_warnings,
+            "sector_exposure": sector_exposure,
+            "portfolio_size": portfolio_size,
+            "total_market_value": round(total_market_value, 2),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -269,12 +296,20 @@ def _calc_concentration_warnings(signals: list) -> list:
                     raw = json.loads(rec.raw_result)
                     db_data = raw.get('dashboard', {})
                     qe = db_data.get('quant_extras', {}) or {}
-                    # 补充持仓市值用于仓位计算
                     current_price = sig.get('current_price') or 0
                     shares = sig.get('shares') or 0
                     if current_price > 0 and shares > 0:
-                        pos_pct = round(current_price * shares / 500000 * 100)  # 假设总资金50万
-                        qe['suggested_position_pct'] = max(pos_pct, qe.get('suggested_position_pct', 0))
+                        config = Config()
+                        total_capital = config.portfolio_size
+                        if total_capital <= 0:
+                            total_capital = sum(
+                                (s.get('current_price') or 0) * (s.get('shares') or 0)
+                                for s in signals
+                            )
+                            logger.warning("portfolio_size 未配置，fallback 到持仓总市值 %.0f 计算集中度", total_capital)
+                        if total_capital > 0:
+                            pos_pct = round(current_price * shares / total_capital * 100)
+                            qe['suggested_position_pct'] = max(pos_pct, qe.get('suggested_position_pct', 0))
                     r.dashboard = {'quant_extras': qe}
                 except Exception:
                     pass

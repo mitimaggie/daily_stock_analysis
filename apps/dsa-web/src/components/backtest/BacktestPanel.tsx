@@ -52,8 +52,8 @@ async function fetchRecords(days: number, code?: string): Promise<BacktestRecord
 // ============ 辅助组件 ============
 
 function PctBadge({ pct }: { pct: number | null }) {
-  if (pct === null || pct === undefined) return <span className="text-white/20">—</span>;
-  const color = pct > 0 ? 'text-green-400' : pct < 0 ? 'text-red-400' : 'text-white/40';
+  if (pct === null || pct === undefined) return <span className="text-muted/70">—</span>;
+  const color = pct > 0 ? 'text-green-400' : pct < 0 ? 'text-red-600' : 'text-muted';
   return <span className={`font-mono font-medium ${color}`}>{pct > 0 ? '+' : ''}{pct.toFixed(2)}%</span>;
 }
 
@@ -61,7 +61,7 @@ function ScoreBadge({ score }: { score: number }) {
   const color = score >= 85 ? 'bg-cyan/20 text-cyan border-cyan/30'
     : score >= 70 ? 'bg-green-500/15 text-green-400 border-green-500/25'
     : score >= 50 ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25'
-    : 'bg-red-500/15 text-red-400 border-red-500/25';
+    : 'bg-red-500/15 text-red-600 border-red-500/25';
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] border font-mono ${color}`}>
       {score}
@@ -143,15 +143,15 @@ export function BacktestPanel() {
       {/* 标题栏 */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-[15px] font-semibold text-white/90">回测统计</h2>
-          <p className="text-[11px] text-white/30 mt-0.5">验证分析系统的实际胜率与超额收益</p>
+          <h2 className="text-[15px] font-semibold text-primary">回测统计</h2>
+          <p className="text-[11px] text-muted mt-0.5">验证分析系统的实际胜率与超额收益</p>
         </div>
         <div className="flex items-center gap-2">
           {/* 回溯天数选择 */}
           <select
             value={lookbackDays}
             onChange={e => setLookbackDays(Number(e.target.value))}
-            className="bg-surface-2 border border-white/8 rounded-lg px-2.5 py-1.5 text-[12px] text-white/70 focus:outline-none focus:border-cyan/30"
+            className="bg-elevated border border-black/[0.06] rounded-lg px-2.5 py-1.5 text-[12px] text-primary/70 focus:outline-none focus:border-cyan/30"
           >
             <option value={30}>近30天</option>
             <option value={60}>近60天</option>
@@ -183,13 +183,13 @@ export function BacktestPanel() {
 
       {/* 错误提示 */}
       {error && (
-        <div className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
+        <div className="text-[12px] text-red-600 bg-red-600/10 border border-red-400/20 rounded-lg px-3 py-2">
           {error}
         </div>
       )}
 
       {/* 标签页切换 */}
-      <div className="flex gap-1 border-b border-white/5">
+      <div className="flex gap-1 border-b border-black/[0.05]">
         {(['stats', 'records'] as const).map(tab => (
           <button
             key={tab}
@@ -198,7 +198,7 @@ export function BacktestPanel() {
             className={`px-3 py-2 text-[12px] font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
                 ? 'border-cyan text-cyan'
-                : 'border-transparent text-white/40 hover:text-white/60'
+                : 'border-transparent text-muted hover:text-secondary'
             }`}
           >
             {tab === 'stats' ? '📊 统计报告' : '📋 明细记录'}
@@ -210,7 +210,7 @@ export function BacktestPanel() {
       {activeTab === 'stats' && (
         <div className="flex-1 overflow-y-auto">
           {loadingStats ? (
-            <div className="flex items-center justify-center h-40 gap-2 text-white/30 text-[13px]">
+            <div className="flex items-center justify-center h-40 gap-2 text-muted text-[13px]">
               <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -222,7 +222,7 @@ export function BacktestPanel() {
               <ReactMarkdown>{statsReport}</ReactMarkdown>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center h-40 gap-2 text-white/25 text-[13px]">
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-muted text-[13px]">
               <svg className="w-8 h-8 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
@@ -242,64 +242,64 @@ export function BacktestPanel() {
               value={filterCode}
               onChange={e => setFilterCode(e.target.value.toUpperCase())}
               placeholder="按股票代码过滤..."
-              className="bg-surface-2 border border-white/8 rounded-lg px-3 py-1.5 text-[12px] text-white/70 placeholder-white/20 focus:outline-none focus:border-cyan/30 w-40"
+              className="bg-elevated border border-black/[0.06] rounded-lg px-3 py-1.5 text-[12px] text-primary/70 placeholder-muted/70 focus:outline-none focus:border-cyan/30 w-40"
             />
-            <span className="text-[11px] text-white/25">共 {records.length} 条</span>
+            <span className="text-[11px] text-muted">共 {records.length} 条</span>
           </div>
 
           {/* 表格 */}
-          <div className="flex-1 overflow-auto rounded-xl border border-white/5">
+          <div className="flex-1 overflow-auto rounded-xl border border-black/[0.05]">
             {loadingRecords ? (
-              <div className="flex items-center justify-center h-32 text-white/30 text-[13px]">加载中...</div>
+              <div className="flex items-center justify-center h-32 text-muted text-[13px]">加载中...</div>
             ) : records.length === 0 ? (
-              <div className="flex items-center justify-center h-32 text-white/25 text-[13px]">暂无已回填记录</div>
+              <div className="flex items-center justify-center h-32 text-muted text-[13px]">暂无已回填记录</div>
             ) : (
               <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="border-b border-white/5 bg-white/[0.02]">
-                    <th className="text-left px-3 py-2.5 text-white/40 font-medium">股票</th>
-                    <th className="text-center px-3 py-2.5 text-white/40 font-medium">评分</th>
-                    <th className="text-left px-3 py-2.5 text-white/40 font-medium">建议</th>
-                    <th className="text-right px-3 py-2.5 text-white/40 font-medium">5日收益</th>
-                    <th className="text-center px-3 py-2.5 text-white/40 font-medium">止损</th>
-                    <th className="text-center px-3 py-2.5 text-white/40 font-medium">止盈</th>
-                    <th className="text-right px-3 py-2.5 text-white/40 font-medium">分析时间</th>
+                  <tr className="border-b border-black/[0.05] bg-black/[0.02]">
+                    <th className="text-left px-3 py-2.5 text-muted font-medium">股票</th>
+                    <th className="text-center px-3 py-2.5 text-muted font-medium">评分</th>
+                    <th className="text-left px-3 py-2.5 text-muted font-medium">建议</th>
+                    <th className="text-right px-3 py-2.5 text-muted font-medium">5日收益</th>
+                    <th className="text-center px-3 py-2.5 text-muted font-medium">止损</th>
+                    <th className="text-center px-3 py-2.5 text-muted font-medium">止盈</th>
+                    <th className="text-right px-3 py-2.5 text-muted font-medium">分析时间</th>
                   </tr>
                 </thead>
                 <tbody>
                   {records.map((r, i) => (
                     <tr
                       key={r.id}
-                      className={`border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors ${
-                        i % 2 === 0 ? '' : 'bg-white/[0.01]'
+                      className={`border-b border-black/[0.03] hover:bg-black/[0.02] transition-colors ${
+                        i % 2 === 0 ? '' : 'bg-black/[0.02]'
                       }`}
                     >
                       <td className="px-3 py-2">
-                        <div className="font-medium text-white/80">{r.name || r.code}</div>
-                        <div className="text-[10px] text-white/30 font-mono">{r.code}</div>
+                        <div className="font-medium text-primary/80">{r.name || r.code}</div>
+                        <div className="text-[10px] text-muted font-mono">{r.code}</div>
                       </td>
                       <td className="px-3 py-2 text-center">
                         <ScoreBadge score={r.score || 0} />
                       </td>
-                      <td className="px-3 py-2 text-white/50">{r.advice || '—'}</td>
+                      <td className="px-3 py-2 text-secondary">{r.advice || '—'}</td>
                       <td className="px-3 py-2 text-right">
                         <PctBadge pct={r.actual_pct_5d} />
                       </td>
                       <td className="px-3 py-2 text-center">
                         {r.hit_stop_loss ? (
-                          <span className="text-red-400 text-[11px]">触发</span>
+                          <span className="text-red-600 text-[11px]">触发</span>
                         ) : (
-                          <span className="text-white/20 text-[11px]">未触</span>
+                          <span className="text-muted/70 text-[11px]">未触</span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-center">
                         {r.hit_take_profit ? (
                           <span className="text-green-400 text-[11px]">触发</span>
                         ) : (
-                          <span className="text-white/20 text-[11px]">未触</span>
+                          <span className="text-muted/70 text-[11px]">未触</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right text-white/30 font-mono text-[10px]">
+                      <td className="px-3 py-2 text-right text-muted font-mono text-[10px]">
                         {r.created_at ? new Date(r.created_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                       </td>
                     </tr>

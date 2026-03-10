@@ -50,22 +50,22 @@ export const EntryConditionCard: React.FC<EntryConditionCardProps> = ({
   const hasRange = data.priceRangeLow != null || data.priceRangeHigh != null;
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-emerald-500/15 p-4">
-      <h3 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-1.5">
+    <div className="rounded-xl bg-card border border-emerald-500/15 p-4">
+      <h3 className="text-sm font-semibold text-primary/80 mb-3 flex items-center gap-1.5">
         <span>🎯</span> 建仓条件
       </h3>
 
       {hasRange && (
         <div className="mb-3">
-          <div className="text-[11px] text-white/35 mb-1">理想入场区间</div>
-          <div className="text-[22px] font-bold font-mono text-emerald-400 tracking-tight">
+          <div className="text-[11px] text-muted mb-1">理想入场区间</div>
+          <div className="text-[22px] font-bold font-mono text-emerald-600 tracking-tight">
             {data.priceRangeLow != null ? data.priceRangeLow.toFixed(2) : '—'}
-            <span className="text-white/20 mx-1.5 text-[16px]">–</span>
+            <span className="text-muted/70 mx-1.5 text-[16px]">–</span>
             {data.priceRangeHigh != null ? data.priceRangeHigh.toFixed(2) : '—'}
-            <span className="text-[13px] text-white/30 ml-1.5">元</span>
+            <span className="text-[13px] text-muted ml-1.5">元</span>
           </div>
           {data.priceRangeDesc && (
-            <div className="text-[11px] text-white/35 mt-1">{data.priceRangeDesc}</div>
+            <div className="text-[11px] text-muted mt-1">{data.priceRangeDesc}</div>
           )}
           {data.currentVsEntry && (
             <div className="text-[12px] text-amber-400/80 mt-1.5">{data.currentVsEntry}</div>
@@ -77,23 +77,23 @@ export const EntryConditionCard: React.FC<EntryConditionCardProps> = ({
         <div className="space-y-1.5 mb-3">
           {data.conditions.map((c, i) => (
             <div key={i} className="flex items-center gap-2 text-[12px]">
-              <span className={c.met ? 'text-emerald-400' : 'text-white/20'}>
+              <span className={c.met ? 'text-emerald-600' : 'text-muted/70'}>
                 {c.met ? '✅' : '⬜'}
               </span>
-              <span className={c.met ? 'text-white/70' : 'text-white/40'}>{c.label}</span>
+              <span className={c.met ? 'text-primary/70' : 'text-muted'}>{c.label}</span>
             </div>
           ))}
         </div>
       )}
 
       {data.suggestedPositionPct != null && (
-        <div className="text-[12px] text-white/50">
-          建议首次仓位：<span className="font-semibold text-white/70">{data.suggestedPositionPct}%</span>
+        <div className="text-[12px] text-secondary">
+          建议首次仓位：<span className="font-semibold text-primary/70">{data.suggestedPositionPct}%</span>
         </div>
       )}
 
       {data.summary && (
-        <div className="mt-2 pt-2 border-t border-white/[0.06] text-[11px] text-white/45 leading-relaxed">
+        <div className="mt-2 pt-2 border-t border-black/[0.04] text-[11px] text-secondary leading-relaxed">
           {data.summary}
         </div>
       )}

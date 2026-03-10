@@ -59,19 +59,19 @@ export const PriceRangeBar: React.FC<PriceRangeBarProps> = ({ range, currentPric
 
   const zoneCls =
     rawPct >= 100
-      ? 'text-red-400'
+      ? 'text-red-600'
       : rawPct <= 0
-        ? 'text-emerald-400'
+        ? 'text-emerald-600'
         : positionPct >= 85
-          ? 'text-red-400'
+          ? 'text-red-600'
           : positionPct <= 15
-            ? 'text-emerald-400'
+            ? 'text-emerald-600'
             : 'text-cyan-400/80';
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-card border border-black/[0.04] p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white/60 flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-secondary flex items-center gap-1.5">
           <span>📐</span> {label}价格区间
         </h3>
         <span className={`text-[11px] font-mono font-semibold ${zoneCls}`}>{zoneLabel}</span>
@@ -80,7 +80,7 @@ export const PriceRangeBar: React.FC<PriceRangeBarProps> = ({ range, currentPric
       {/* Range bar */}
       <div className="relative h-5 flex items-center mb-2">
         {/* Track */}
-        <div className="absolute inset-x-0 h-1.5 rounded-full bg-white/[0.07]" />
+        <div className="absolute inset-x-0 h-1.5 rounded-full bg-black/[0.04]" />
         {/* Filled portion from low to current */}
         <div
           className="absolute left-0 h-1.5 rounded-full"
@@ -103,22 +103,22 @@ export const PriceRangeBar: React.FC<PriceRangeBarProps> = ({ range, currentPric
       {/* Labels row */}
       <div className="flex items-center justify-between text-[10px] font-mono mt-1">
         <div className="text-left">
-          <div className="text-white/25">低 {low.toFixed(2)}</div>
+          <div className="text-muted">低 {low.toFixed(2)}</div>
           {distFromLow > 0 && distFromLow < 200 && (
-            <div className="text-emerald-400/60">+{distFromLow.toFixed(1)}%</div>
+            <div className="text-emerald-600/60">+{distFromLow.toFixed(1)}%</div>
           )}
         </div>
         <div className="text-center">
-          <div className="text-white/50 font-semibold text-[11px]">{currentPrice.toFixed(2)}</div>
-          <div className="text-white/25">{positionPct.toFixed(0)}%位</div>
+          <div className="text-secondary font-semibold text-[11px]">{currentPrice.toFixed(2)}</div>
+          <div className="text-muted">{positionPct.toFixed(0)}%位</div>
         </div>
         <div className="text-right">
-          <div className="text-white/25">高 {high.toFixed(2)}</div>
+          <div className="text-muted">高 {high.toFixed(2)}</div>
           {distFromHigh < 0 && (
-            <div className="text-red-400/60">{distFromHigh.toFixed(1)}%</div>
+            <div className="text-red-600/60">{distFromHigh.toFixed(1)}%</div>
           )}
           {distFromHigh >= 0 && (
-            <div className="text-red-400/80">+{distFromHigh.toFixed(1)}% ↑新高</div>
+            <div className="text-red-600/80">+{distFromHigh.toFixed(1)}% ↑新高</div>
           )}
         </div>
       </div>

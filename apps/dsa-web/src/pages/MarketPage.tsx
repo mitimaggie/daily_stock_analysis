@@ -9,10 +9,10 @@ import LimitPoolStats from '../components/market/LimitPoolStats';
 
 const SkeletonCard: React.FC<{ height?: string }> = ({ height = 'h-40' }) => (
   <div className={`terminal-card p-4 ${height} animate-pulse`}>
-    <div className="h-4 w-32 bg-white/5 rounded mb-4" />
+    <div className="h-4 w-32 bg-black/[0.03] rounded mb-4" />
     <div className="space-y-3">
-      <div className="h-3 bg-white/5 rounded w-3/4" />
-      <div className="h-3 bg-white/5 rounded w-1/2" />
+      <div className="h-3 bg-black/[0.03] rounded w-3/4" />
+      <div className="h-3 bg-black/[0.03] rounded w-1/2" />
     </div>
   </div>
 );
@@ -61,7 +61,7 @@ const MarketPage: React.FC = () => {
       <div className="max-w-lg lg:max-w-5xl mx-auto px-4 py-4 space-y-4">
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
-          <h1 className="text-[18px] font-bold text-white">市场概览</h1>
+          <h1 className="text-[18px] font-bold text-primary">市场概览</h1>
           <span className="text-[11px] text-muted font-mono">
             {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })}
           </span>

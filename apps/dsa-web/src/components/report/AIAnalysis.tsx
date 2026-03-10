@@ -21,23 +21,23 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
   const earningsOutlook = intelligence.earnings_outlook ?? intelligence.earningsOutlook ?? '';
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4">
       <button
         type="button"
         className="w-full flex items-center justify-between text-left mb-3"
         onClick={() => setExpanded(!expanded)}
       >
-        <h3 className="text-sm font-semibold text-white/70">AI 分析视角</h3>
-        <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
+        <h3 className="text-sm font-semibold text-primary/70">AI 分析视角</h3>
+        <span className="text-xs text-muted">{expanded ? '▲' : '▼'}</span>
       </button>
 
       {expanded && (
         <div className="space-y-4">
           {/* 情绪总结 */}
           {sentimentSummary && (
-            <div className="p-3 rounded-lg bg-elevated border border-white/5">
+            <div className="p-3 rounded-lg bg-elevated border border-black/[0.05]">
               <h4 className="text-[10px] text-cyan font-medium mb-1.5">📊 市场情绪</h4>
-              <p className="text-sm text-white/90 leading-relaxed">{sentimentSummary}</p>
+              <p className="text-sm text-primary/80 leading-relaxed">{sentimentSummary}</p>
             </div>
           )}
 
@@ -48,7 +48,7 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
                 <h4 className="text-[10px] text-success font-medium mb-2">🟢 正面催化剂</h4>
                 <div className="space-y-1.5">
                   {positiveCatalysts.map((item: string, i: number) => (
-                    <div key={i} className="text-[11px] text-white/80 flex items-start gap-1.5">
+                    <div key={i} className="text-[11px] text-primary/80 flex items-start gap-1.5">
                       <span className="text-success mt-0.5 flex-shrink-0">+</span>
                       <span>{item}</span>
                     </div>
@@ -63,7 +63,7 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
                 <h4 className="text-[10px] text-danger font-medium mb-2">🔴 风险提示</h4>
                 <div className="space-y-1.5">
                   {riskAlerts.map((item: string, i: number) => (
-                    <div key={i} className="text-[11px] text-white/80 flex items-start gap-1.5">
+                    <div key={i} className="text-[11px] text-primary/80 flex items-start gap-1.5">
                       <span className="text-danger mt-0.5 flex-shrink-0">−</span>
                       <span>{item}</span>
                     </div>
@@ -75,9 +75,9 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
 
           {/* 盈利展望 */}
           {earningsOutlook && (
-            <div className="p-3 rounded-lg bg-elevated border border-white/5">
+            <div className="p-3 rounded-lg bg-elevated border border-black/[0.05]">
               <h4 className="text-[10px] text-cyan font-medium mb-1.5">💰 盈利展望</h4>
-              <p className="text-sm text-white/90 leading-relaxed">{earningsOutlook}</p>
+              <p className="text-sm text-primary/80 leading-relaxed">{earningsOutlook}</p>
             </div>
           )}
 
@@ -87,7 +87,7 @@ export const AIAnalysis: React.FC<AIAnalysisProps> = ({ intelligence, counterArg
               <h4 className="text-[10px] text-warning font-medium mb-2">⚖️ 反面论证（当前判断的潜在漏洞）</h4>
               <div className="space-y-1.5">
                 {counterArguments.map((item: string, i: number) => (
-                  <div key={i} className="text-[11px] text-white/80 flex items-start gap-1.5">
+                  <div key={i} className="text-[11px] text-primary/80 flex items-start gap-1.5">
                     <span className="text-warning mt-0.5 flex-shrink-0">•</span>
                     <span>{item}</span>
                   </div>

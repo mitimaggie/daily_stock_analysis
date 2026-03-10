@@ -31,7 +31,7 @@ export const Select: React.FC<SelectProps> = ({
   return (
     <div className={`flex flex-col ${className}`}>
       {label && (
-        <label className="mb-2 text-sm font-medium text-gray-300">
+        <label className="mb-2 text-sm font-medium text-secondary">
           {label}
         </label>
       )}
@@ -42,10 +42,10 @@ export const Select: React.FC<SelectProps> = ({
           disabled={disabled}
           className={`
             w-full appearance-none px-4 py-2.5 pr-10 rounded-lg
-            bg-slate-800/50 border border-cyan-500/20
-            text-gray-200 placeholder-gray-500
-            focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40
-            hover:border-cyan-500/30
+            bg-elevated border border-default
+            text-primary placeholder-muted
+            focus:outline-none focus:ring-2 focus:ring-cyan/30 focus:border-cyan/30
+            hover:border-accent
             disabled:opacity-50 disabled:cursor-not-allowed
             transition-all duration-200
             cursor-pointer
@@ -57,7 +57,7 @@ export const Select: React.FC<SelectProps> = ({
             </option>
           )}
           {options.map((option) => (
-            <option key={option.value} value={option.value} className="bg-slate-800">
+            <option key={option.value} value={option.value} className="bg-card">
               {option.label}
             </option>
           ))}
@@ -66,7 +66,7 @@ export const Select: React.FC<SelectProps> = ({
         {/* 下拉箭头 */}
         <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
           <svg
-            className="w-4 h-4 text-cyan-400"
+            className="w-4 h-4 text-cyan"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"

@@ -16,12 +16,12 @@ const SimpleViewPage: React.FC = () => {
   }, [code]);
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center text-white/40 text-[16px]">
+    <div className="min-h-screen bg-base flex items-center justify-center text-muted text-[16px]">
       加载中…
     </div>
   );
   if (error || !data) return (
-    <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center text-red-400 text-[16px]">
+    <div className="min-h-screen bg-base flex items-center justify-center text-red-600 text-[16px]">
       {error || '数据不可用'}
     </div>
   );
@@ -32,25 +32,25 @@ const SimpleViewPage: React.FC = () => {
     stop_loss: 'bg-red-500/10 border-red-500/40',
     reduce: 'bg-amber-500/10 border-amber-500/40',
     add_watch: 'bg-emerald-500/10 border-emerald-500/40',
-    hold: 'bg-white/5 border-white/15',
-    unknown: 'bg-white/3 border-white/10',
+    hold: 'bg-black/[0.03] border-black/[0.08]',
+    unknown: 'bg-black/[0.02] border-black/[0.08]',
   };
   const textMap: Record<string, string> = {
-    stop_loss: 'text-red-400', reduce: 'text-amber-400',
-    add_watch: 'text-emerald-400', hold: 'text-white/70', unknown: 'text-white/30',
+    stop_loss: 'text-red-600', reduce: 'text-amber-400',
+    add_watch: 'text-emerald-600', hold: 'text-primary/70', unknown: 'text-muted',
   };
 
   const cardBg = bgMap[signal] || bgMap.unknown;
   const signalColor = textMap[signal] || textMap.unknown;
-  const pnlColor = pnlPct == null ? 'text-white/40' : pnlPct >= 0 ? 'text-red-400' : 'text-emerald-400';
+  const pnlColor = pnlPct == null ? 'text-muted' : pnlPct >= 0 ? 'text-red-600' : 'text-emerald-600';
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white flex flex-col items-center justify-center px-4 py-8">
+    <div className="min-h-screen bg-base text-primary flex flex-col items-center justify-center px-4 py-8">
       <div className={`w-full max-w-sm rounded-2xl border ${cardBg} p-6 space-y-5`}>
         {/* 代码 + 名称 */}
         <div className="text-center">
-          <div className="text-[13px] text-white/40">{data.name}</div>
-          <div className="text-[28px] font-bold font-mono text-white/90 mt-0.5">{data.code}</div>
+          <div className="text-[13px] text-muted">{data.name}</div>
+          <div className="text-[28px] font-bold font-mono text-primary/90 mt-0.5">{data.code}</div>
         </div>
 
         {/* 信号灯 */}
@@ -63,7 +63,7 @@ const SimpleViewPage: React.FC = () => {
 
         {/* P&L 大字 */}
         <div className="text-center">
-          <div className="text-[11px] text-white/30 mb-1">浮盈亏</div>
+          <div className="text-[11px] text-muted mb-1">浮盈亏</div>
           <div className={`text-[36px] font-bold font-mono ${pnlColor}`}>
             {pnlPct == null ? '--' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`}
           </div>
@@ -71,41 +71,41 @@ const SimpleViewPage: React.FC = () => {
 
         {/* 关键数字 */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-lg bg-white/5 p-3 text-center">
-            <div className="text-[10px] text-white/30 mb-0.5">成本价</div>
-            <div className="text-[18px] font-mono text-white/80">{data.cost_price?.toFixed(2) ?? '--'}</div>
+          <div className="rounded-lg bg-black/[0.03] p-3 text-center">
+            <div className="text-[10px] text-muted mb-0.5">成本价</div>
+            <div className="text-[18px] font-mono text-primary/80">{data.cost_price?.toFixed(2) ?? '--'}</div>
           </div>
-          <div className="rounded-lg bg-white/5 p-3 text-center">
-            <div className="text-[10px] text-white/30 mb-0.5">当前价</div>
-            <div className="text-[18px] font-mono text-white/80">{data.current_price?.toFixed(2) ?? '--'}</div>
+          <div className="rounded-lg bg-black/[0.03] p-3 text-center">
+            <div className="text-[10px] text-muted mb-0.5">当前价</div>
+            <div className="text-[18px] font-mono text-primary/80">{data.current_price?.toFixed(2) ?? '--'}</div>
           </div>
           <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-center">
             <div className="text-[10px] text-amber-400/60 mb-0.5">ATR止损</div>
             <div className="text-[18px] font-mono text-amber-400">{data.atr_stop?.toFixed(2) ?? '--'}</div>
           </div>
-          <div className="rounded-lg bg-white/5 p-3 text-center">
-            <div className="text-[10px] text-white/30 mb-0.5">AI评分</div>
-            <div className="text-[18px] font-mono text-white/80">{data.score ?? '--'}</div>
+          <div className="rounded-lg bg-black/[0.03] p-3 text-center">
+            <div className="text-[10px] text-muted mb-0.5">AI评分</div>
+            <div className="text-[18px] font-mono text-primary/80">{data.score ?? '--'}</div>
           </div>
         </div>
 
         {/* AI一句话建议 */}
         {data.advice_short && (
-          <div className="rounded-lg bg-white/5 p-3 text-center">
-            <div className="text-[10px] text-white/30 mb-1">AI建议</div>
-            <div className="text-[16px] font-bold text-white/90">{data.advice_short}</div>
+          <div className="rounded-lg bg-black/[0.03] p-3 text-center">
+            <div className="text-[10px] text-muted mb-1">AI建议</div>
+            <div className="text-[16px] font-bold text-primary/90">{data.advice_short}</div>
           </div>
         )}
 
         {/* 一句话摘要 */}
         {data.analysis_summary && (
-          <div className="text-[12px] text-white/50 text-center leading-relaxed">
+          <div className="text-[12px] text-secondary text-center leading-relaxed">
             {data.analysis_summary}
           </div>
         )}
 
         {/* 持仓周期 + 再分析日期 */}
-        <div className="flex items-center justify-between text-[11px] text-white/30">
+        <div className="flex items-center justify-between text-[11px] text-muted">
           {data.holding_horizon_label && (
             <span className="px-2 py-0.5 rounded border border-sky-500/20 text-sky-400/70">{data.holding_horizon_label}</span>
           )}
@@ -116,13 +116,13 @@ const SimpleViewPage: React.FC = () => {
 
         {/* 分析时间 */}
         {data.analyzed_at && (
-          <div className="text-center text-[10px] text-white/20">
+          <div className="text-center text-[10px] text-muted/70">
             分析时间: {new Date(data.analyzed_at!).toLocaleString('zh-CN')}
           </div>
         )}
 
         {/* 返回按钮 */}
-        <a href="/portfolio" className="block text-center text-[12px] text-white/30 hover:text-white/60 transition py-2">
+        <a href="/portfolio" className="block text-center text-[12px] text-muted hover:text-secondary transition py-2">
           ← 返回持仓管理
         </a>
       </div>

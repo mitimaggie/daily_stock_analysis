@@ -41,35 +41,35 @@ const QuantPanel: React.FC<{
   const isBearMa = maAlignment && (maAlignment.includes('空头') || maAlignment.includes('偏空'));
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] overflow-hidden">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition"
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-black/[0.02] transition"
         onClick={() => setOpen(v => !v)}
       >
-        <span className="text-sm font-semibold text-white/60 flex items-center gap-1.5">
+        <span className="text-sm font-semibold text-secondary flex items-center gap-1.5">
           <span>📉</span> 技术指标
         </span>
         {!open && (
           <div className="flex items-center gap-2 text-[11px] font-mono">
             {maAlignment && (
-              <span className={isBullMa ? 'text-emerald-400/80' : isBearMa ? 'text-red-400/70' : 'text-white/35'}>
+              <span className={isBullMa ? 'text-emerald-600/80' : isBearMa ? 'text-red-600/70' : 'text-muted'}>
                 {maAlignment.length > 8 ? maAlignment.slice(0, 8) : maAlignment}
               </span>
             )}
             {valuationVerdict && (
-              <span className="text-white/30 truncate max-w-[100px]">{valuationVerdict}</span>
+              <span className="text-muted truncate max-w-[100px]">{valuationVerdict}</span>
             )}
             {capitalFlow && capitalFlow !== '资金面数据正常' && (
               <span className="text-amber-400/60 truncate max-w-[80px]">{capitalFlow}</span>
             )}
-            <span className="text-white/20 ml-1">▼</span>
+            <span className="text-muted/70 ml-1">▼</span>
           </div>
         )}
-        {open && <span className="text-xs text-white/25">▲ 收起</span>}
+        {open && <span className="text-xs text-muted">▲ 收起</span>}
       </button>
       {open && (
-        <div className="border-t border-white/[0.04] space-y-3 p-3">
+        <div className="border-t border-black/[0.03] space-y-3 p-3">
           {quantExtras && <QuantAnalysis data={quantExtras} />}
         </div>
       )}
@@ -89,48 +89,48 @@ const HoldingHorizonCard: React.FC<{ horizon: HoldingHorizon }> = ({ horizon }) 
   }));
 
   const BAR_COLOR: Record<number, string> = {
-    0: 'bg-white/10',
+    0: 'bg-black/[0.06]',
     1: 'bg-yellow-500/50',
     2: 'bg-yellow-400/75',
-    3: 'bg-emerald-400',
-    4: 'bg-emerald-400',
+    3: 'bg-emerald-600',
+    4: 'bg-emerald-600',
     5: 'bg-emerald-300',
   };
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white/70">持仓周期建议</h3>
-        {horizon.summary && <span className="text-[10px] text-white/25">{horizon.summary}</span>}
+        <h3 className="text-sm font-semibold text-primary/70">持仓周期建议</h3>
+        {horizon.summary && <span className="text-[10px] text-muted">{horizon.summary}</span>}
       </div>
       <div className="space-y-3">
         {items.map(({ key, label, item, isRec }) => {
           const pct = Math.round((item.score / 5) * 100);
-          const barColor = BAR_COLOR[item.stars] ?? 'bg-white/20';
+          const barColor = BAR_COLOR[item.stars] ?? 'bg-black/[0.12]';
           return (
             <div key={key} className={`p-2.5 rounded-lg border ${
-              isRec ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-white/[0.02] border-white/[0.04]'
+              isRec ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-black/[0.02] border-black/[0.04]'
             }`}>
               <div className="flex items-center gap-2 mb-2">
-                <span className={`text-xs font-semibold w-8 ${isRec ? 'text-emerald-400' : 'text-white/50'}`}>{label}</span>
-                <span className="text-[10px] text-white/25">{item.horizon}</span>
+                <span className={`text-xs font-semibold w-8 ${isRec ? 'text-emerald-600' : 'text-secondary'}`}>{label}</span>
+                <span className="text-[10px] text-muted">{item.horizon}</span>
                 {isRec && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium ml-auto">推荐</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 font-medium ml-auto">推荐</span>
                 )}
               </div>
               <div className="flex items-center gap-2 mb-1.5">
-                <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                <div className="flex-1 h-1.5 rounded-full bg-black/[0.04] overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${barColor}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className={`text-[11px] font-bold font-mono w-8 text-right ${isRec ? 'text-emerald-400' : 'text-white/40'}`}>
+                <span className={`text-[11px] font-bold font-mono w-8 text-right ${isRec ? 'text-emerald-600' : 'text-muted'}`}>
                   {item.score}/5
                 </span>
               </div>
               {item.reasons?.length > 0 && (
-                <div className="text-[10px] text-white/35 leading-relaxed">
+                <div className="text-[10px] text-muted leading-relaxed">
                   {item.reasons.slice(0, 3).join(' · ')}
                 </div>
               )}
@@ -159,17 +159,17 @@ const CollapsibleSection: React.FC<{
 }> = ({ title, children, defaultOpen = false }) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] overflow-hidden">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition"
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-black/[0.02] transition"
         onClick={() => setOpen(v => !v)}
       >
-        <span className="text-sm font-semibold text-white/50">{title}</span>
-        <span className="text-xs text-white/25">{open ? '▲ 收起' : '▼ 展开'}</span>
+        <span className="text-sm font-semibold text-secondary">{title}</span>
+        <span className="text-xs text-muted">{open ? '▲ 收起' : '▼ 展开'}</span>
       </button>
       {open && (
-        <div className="border-t border-white/[0.04] p-3 space-y-3">
+        <div className="border-t border-black/[0.03] p-3 space-y-3">
           {children}
         </div>
       )}

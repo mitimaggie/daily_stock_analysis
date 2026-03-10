@@ -42,8 +42,8 @@ interface CellProps {
 
 const Cell: React.FC<CellProps> = ({ label, value, color, highlight, tip }) => (
   <div className={`flex flex-col items-center rounded-lg px-1 py-1 ${highlight ? 'bg-amber-500/[0.06] border border-amber-500/15' : ''}`} title={tip}>
-    <span className="text-[10px] text-white/35 mb-0.5">{label}</span>
-    <span className={`text-xs font-mono font-medium ${color || 'text-white/80'}`}>{value}</span>
+    <span className="text-[10px] text-muted mb-0.5">{label}</span>
+    <span className={`text-xs font-mono font-medium ${color || 'text-primary/80'}`}>{value}</span>
   </div>
 );
 
@@ -60,7 +60,7 @@ export const TodaySnapshot: React.FC<TodaySnapshotProps> = ({ data }) => {
 
   // 涨跌幅颜色
   const chg = changePct ?? pctChg;
-  const chgColor = chg == null ? '' : chg > 0 ? 'text-red-400' : chg < 0 ? 'text-green-400' : '';
+  const chgColor = chg == null ? '' : chg > 0 ? 'text-red-600' : chg < 0 ? 'text-green-400' : '';
 
   // 振幅
   const amplitude = (high && low && close)
@@ -69,10 +69,10 @@ export const TodaySnapshot: React.FC<TodaySnapshotProps> = ({ data }) => {
 
   // 量比预警
   const vrHigh = volumeRatio != null && volumeRatio >= 2.0;
-  const vrColor = volumeRatio == null ? '' : volumeRatio >= 3.0 ? 'text-red-400' : volumeRatio >= 2.0 ? 'text-amber-400' : volumeRatio >= 1.5 ? 'text-white/70' : 'text-white/50';
+  const vrColor = volumeRatio == null ? '' : volumeRatio >= 3.0 ? 'text-red-600' : volumeRatio >= 2.0 ? 'text-amber-400' : volumeRatio >= 1.5 ? 'text-primary/70' : 'text-secondary';
   // 换手率预警
   const trHigh = turnoverRate != null && turnoverRate >= 5;
-  const trColor = turnoverRate == null ? '' : turnoverRate >= 10 ? 'text-red-400' : turnoverRate >= 5 ? 'text-amber-400' : 'text-white/70';
+  const trColor = turnoverRate == null ? '' : turnoverRate >= 10 ? 'text-red-600' : turnoverRate >= 5 ? 'text-amber-400' : 'text-primary/70';
 
   // 异常标记
   const anomalies: string[] = [];
@@ -80,9 +80,9 @@ export const TodaySnapshot: React.FC<TodaySnapshotProps> = ({ data }) => {
   if (trHigh) anomalies.push(`换手率${(turnoverRate ?? 0).toFixed(1)}%，市场活跃`);
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-card border border-black/[0.04] p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white/60 flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-secondary flex items-center gap-1.5">
           <span>📈</span> 当日行情
         </h3>
         {anomalies.length > 0 && (
@@ -100,7 +100,7 @@ export const TodaySnapshot: React.FC<TodaySnapshotProps> = ({ data }) => {
       </div>
 
       {/* 二行：量额+换手+量比 */}
-      <div className="grid grid-cols-5 gap-2 pt-2 border-t border-white/[0.04]">
+      <div className="grid grid-cols-5 gap-2 pt-2 border-t border-black/[0.03]">
         <Cell label="成交量" value={fmtVolume(volume)} />
         <Cell label="成交额" value={fmtAmount(amount)} />
         <Cell label="振幅" value={amplitude != null ? `${amplitude.toFixed(2)}%` : '—'} />
@@ -112,8 +112,8 @@ export const TodaySnapshot: React.FC<TodaySnapshotProps> = ({ data }) => {
 
       {/* 当前价 */}
       {currentPrice != null && currentPrice > 0 && (
-        <div className="mt-2 pt-2 border-t border-white/[0.04] flex items-center gap-3 text-xs">
-          <span className="text-white/40">当前价</span>
+        <div className="mt-2 pt-2 border-t border-black/[0.03] flex items-center gap-3 text-xs">
+          <span className="text-muted">当前价</span>
           <span className={`font-mono font-bold text-sm ${chgColor}`}>
             {currentPrice.toFixed(2)}
           </span>

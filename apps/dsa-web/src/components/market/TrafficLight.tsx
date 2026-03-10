@@ -46,7 +46,7 @@ const TrafficLight: React.FC<TrafficLightProps> = ({ data, sentiment }) => {
 
         <div className="flex justify-center mb-4">
           <div className={`w-20 h-20 rounded-full ${config.bg} ${config.glow} ring-4 ${config.ring} flex items-center justify-center transition-all duration-500`}>
-            <span className="text-2xl font-bold text-white drop-shadow-md">
+            <span className={`text-2xl font-bold drop-shadow-md ${data.signal === 'cautious' ? 'text-yellow-900' : 'text-white'}`}>
               {data.signalLabel}
             </span>
           </div>
@@ -58,7 +58,7 @@ const TrafficLight: React.FC<TrafficLightProps> = ({ data, sentiment }) => {
           </p>
         )}
 
-        <p className="text-[13px] text-white/80 leading-relaxed max-w-sm mx-auto">
+        <p className="text-[13px] text-primary/80 leading-relaxed max-w-sm mx-auto">
           {data.reason}
         </p>
 

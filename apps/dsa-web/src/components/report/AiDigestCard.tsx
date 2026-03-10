@@ -19,11 +19,11 @@ export const AiDigestCard: React.FC<AiDigestCardProps> = ({ analysisSummary }) =
   const displayText = expanded ? analysisSummary : shortText.slice(0, MAX_CHARS);
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-      <h3 className="text-sm font-semibold text-white/80 mb-2 flex items-center gap-1.5">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4">
+      <h3 className="text-sm font-semibold text-primary/80 mb-2 flex items-center gap-1.5">
         <span>🧠</span> AI 诊断摘要
       </h3>
-      <p className="text-[13px] text-white/65 leading-relaxed whitespace-pre-wrap">
+      <p className="text-[13px] text-secondary leading-relaxed whitespace-pre-wrap">
         {displayText}
         {!expanded && isLong && '…'}
       </p>

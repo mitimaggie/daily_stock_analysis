@@ -107,7 +107,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1.5">
-                      <span className="font-medium text-white truncate text-xs">
+                      <span className="font-medium text-primary truncate text-xs">
                         {item.stockName || item.stockCode}
                       </span>
                       {item.sentimentScore !== undefined && (
@@ -130,7 +130,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                         const adv = item.operationAdvice;
                         const isBuy = adv.includes('买入') || adv.includes('加仓') || adv.includes('吸纳');
                         const isSell = adv.includes('卖出') || adv.includes('减仓') || adv.includes('清仓');
-                        const advCls = isBuy ? 'text-emerald-400/70' : isSell ? 'text-red-400/60' : 'text-white/25';
+                        const advCls = isBuy ? 'text-emerald-600/70' : isSell ? 'text-red-600/60' : 'text-muted';
                         return (
                           <span className={`text-[10px] truncate max-w-[60px] ${advCls}`}>{mapAdviceDisplay(adv)}</span>
                         );

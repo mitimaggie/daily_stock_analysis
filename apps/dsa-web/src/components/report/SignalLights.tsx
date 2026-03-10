@@ -11,10 +11,10 @@ function getTechSignal(qe: Record<string, any>): { color: SignalColor; label: st
   const ma = (qe.ma_alignment ?? qe.maAlignment ?? '').toLowerCase();
   const buySignal = qe.buy_signal ?? qe.buySignal ?? '';
 
-  if (ma.includes('强势多头') || ma.includes('多头排列') || buySignal === '强烈买入' || buySignal === '激进买入') {
+  if (ma.includes('强势多头') || ma.includes('多头排列') || buySignal === '强信号做多') {
     return { color: 'green', label: '强势多头' };
   }
-  if (ma.includes('多头') || ma.includes('偏多') || buySignal === '买入' || buySignal === '加仓') {
+  if (ma.includes('多头') || ma.includes('偏多') || buySignal === '信号偏强' || buySignal === '买入') {
     return { color: 'green', label: '偏多' };
   }
   if (ma.includes('强势空头') || ma.includes('空头排列') || buySignal === '清仓') {
@@ -60,14 +60,14 @@ const DOT_GLOW: Record<SignalColor, string> = {
   green:  'bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.45)]',
   yellow: 'bg-yellow-400  shadow-[0_0_6px_1px_rgba(250,204,21,0.35)]',
   red:    'bg-red-400     shadow-[0_0_8px_2px_rgba(248,113,113,0.45)]',
-  gray:   'bg-white/20',
+  gray:   'bg-black/[0.12]',
 };
 
 const TEXT_COLOR: Record<SignalColor, string> = {
   green:  'text-emerald-400',
   yellow: 'text-yellow-400',
   red:    'text-red-400',
-  gray:   'text-white/25',
+  gray:   'text-muted',
 };
 
 function getNorthboundSignal(nb: Record<string, any> | null | undefined): { color: SignalColor; label: string } | null {
@@ -100,12 +100,12 @@ export const SignalLights: React.FC<SignalLightsProps> = ({ quantExtras, northbo
   ];
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] px-4 py-3">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] px-4 py-3">
       <div className="flex items-center justify-around">
         {signals.map(({ key, color, label }) => (
           <div key={key} className="flex flex-col items-center gap-1.5 flex-1">
             <div className={`w-2.5 h-2.5 rounded-full ${DOT_GLOW[color]}`} />
-            <span className="text-[9px] text-white/25 uppercase tracking-wider">{key}</span>
+            <span className="text-[9px] text-muted uppercase tracking-wider">{key}</span>
             <span className={`text-[11px] font-semibold ${TEXT_COLOR[color]}`}>{label}</span>
           </div>
         ))}

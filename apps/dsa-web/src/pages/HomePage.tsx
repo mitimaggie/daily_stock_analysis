@@ -62,24 +62,24 @@ const QuickAddBar: React.FC<{ report: AnalysisReport }> = ({ report }) => {
         <div className="flex items-center gap-2">
           <input value={costPrice} onChange={e => setCostPriceInput(e.target.value)}
             placeholder="输入成本价" type="number" step="0.01" autoFocus
-            className="w-28 bg-white/5 border border-white/15 rounded px-2 py-1 text-[12px] text-white placeholder-white/25 focus:outline-none focus:border-white/30" />
+            className="w-28 bg-black/[0.03] border border-black/[0.08] rounded px-2 py-1 text-[12px] text-primary placeholder-muted focus:outline-none focus:border-black/[0.15]" />
           <button onClick={handleAddPortfolio} disabled={addingP}
-            className="text-[11px] px-2 py-1 rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 transition disabled:opacity-50">
+            className="text-[11px] px-2 py-1 rounded bg-emerald-600/20 border border-emerald-500/30 text-emerald-600 hover:bg-emerald-600/30 transition disabled:opacity-50">
             {addingP ? '…' : '确认加入持仓'}
           </button>
-          <button onClick={() => setShowCostInput(false)} className="text-[11px] text-white/25 hover:text-white/50">取消</button>
+          <button onClick={() => setShowCostInput(false)} className="text-[11px] text-muted hover:text-secondary">取消</button>
         </div>
       ) : (
         <button onClick={handleAddPortfolio} disabled={addingP}
-          className="text-[11px] px-2.5 py-1 rounded border border-emerald-500/20 text-emerald-400/70 hover:border-emerald-500/40 hover:text-emerald-400 transition disabled:opacity-50">
+          className="text-[11px] px-2.5 py-1 rounded border border-emerald-500/20 text-emerald-600/70 hover:border-emerald-500/40 hover:text-emerald-600 transition disabled:opacity-50">
           {msgP || (addingP ? '…' : '+ 加入持仓')}
         </button>
       )}
       <button onClick={handleAddWatchlist} disabled={addingW}
-        className="text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:border-white/20 hover:text-white/60 transition disabled:opacity-50">
+        className="text-[11px] px-2.5 py-1 rounded border border-black/[0.08] text-muted hover:border-black/[0.12] hover:text-secondary transition disabled:opacity-50">
         {msgW || (addingW ? '…' : '+ 加入关注')}
       </button>
-      <a href="/portfolio" className="text-[11px] text-white/20 hover:text-white/40 transition ml-auto">持仓管理 →</a>
+      <a href="/portfolio" className="text-[11px] text-muted/70 hover:text-muted transition ml-auto">持仓管理 →</a>
     </div>
   );
 };
@@ -618,25 +618,25 @@ const HomePage: React.FC = () => {
           {/* Logo + 品牌 */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan/80 to-cyan/40 flex items-center justify-center shadow-lg shadow-cyan/20">
-              <svg className="w-4 h-4 text-black" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
             </div>
-            <span className="text-[15px] font-bold text-white/90 hidden sm:block tracking-tight">DSA</span>
+            <span className="text-[15px] font-bold text-primary/90 hidden sm:block tracking-tight">DSA</span>
           </div>
 
           {/* 分隔线 */}
-          <div className="w-px h-5 bg-white/10 hidden sm:block" />
+          <div className="w-px h-5 bg-black/[0.08] hidden sm:block" />
 
           {/* 主视图标签 */}
-          <div className="hidden sm:flex items-center gap-0.5 bg-white/[0.04] rounded-lg p-0.5">
+          <div className="hidden sm:flex items-center gap-0.5 bg-black/[0.03] rounded-lg p-0.5">
             <button
               type="button"
               onClick={() => setMainTab('analysis')}
               className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
                 mainTab === 'analysis'
-                  ? 'bg-white/10 text-white/90'
-                  : 'text-white/35 hover:text-white/60'
+                  ? 'bg-black/[0.06] text-primary/90'
+                  : 'text-muted hover:text-secondary'
               }`}
             >
               分析
@@ -646,8 +646,8 @@ const HomePage: React.FC = () => {
               onClick={() => setMainTab('backtest')}
               className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
                 mainTab === 'backtest'
-                  ? 'bg-white/10 text-white/90'
-                  : 'text-white/35 hover:text-white/60'
+                  ? 'bg-black/[0.06] text-primary/90'
+                  : 'text-muted hover:text-secondary'
               }`}
             >
               回测
@@ -658,7 +658,7 @@ const HomePage: React.FC = () => {
           <button
             type="button"
             onClick={() => setSidebarOpen(v => !v)}
-            className="lg:hidden text-muted hover:text-white p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+            className="lg:hidden text-muted hover:text-primary p-1.5 rounded-lg hover:bg-black/[0.03] transition-colors"
             aria-label="切换侧边栏"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -669,7 +669,7 @@ const HomePage: React.FC = () => {
           {/* 搜索输入 + 自动补全 */}
           <div className="flex-1 max-w-xl relative" ref={searchWrapperRef}>
             <div className="relative">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               <input
@@ -711,10 +711,10 @@ const HomePage: React.FC = () => {
               }).slice(0, 6);
               if (suggestions.length === 0) return null;
               return (
-                <div className="absolute top-full left-0 right-0 mt-1 z-[70] rounded-xl bg-[#0d0d14] border border-white/10 shadow-xl shadow-black/50 overflow-hidden animate-fade-in">
+                <div className="absolute top-full left-0 right-0 mt-1 z-[70] rounded-xl bg-card border border-black/[0.08] shadow-xl shadow-black/15 overflow-hidden animate-fade-in">
                   {suggestions.map(item => {
                     const score = item.sentimentScore;
-                    const scoreColor = score == null ? 'text-white/25' : score >= 70 ? 'text-emerald-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
+                    const scoreColor = score == null ? 'text-muted' : score >= 70 ? 'text-emerald-600' : score >= 50 ? 'text-yellow-400' : 'text-red-600';
                     return (
                       <button
                         key={item.stockCode + item.queryId}
@@ -727,15 +727,15 @@ const HomePage: React.FC = () => {
                             if (btn) btn.click();
                           }, 50);
                         }}
-                        className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/[0.05] transition text-left"
+                        className="w-full flex items-center gap-3 px-3 py-2 hover:bg-black/[0.03] transition text-left"
                       >
-                        <span className="text-[13px] font-mono text-white/80 w-16 flex-shrink-0">{item.stockCode}</span>
-                        <span className="text-[12px] text-white/50 flex-1 truncate">{item.stockName || '—'}</span>
+                        <span className="text-[13px] font-mono text-primary/80 w-16 flex-shrink-0">{item.stockCode}</span>
+                        <span className="text-[12px] text-secondary flex-1 truncate">{item.stockName || '—'}</span>
                         {score != null && (
                           <span className={`text-[11px] font-mono font-semibold ${scoreColor}`}>{score}分</span>
                         )}
                         {item.operationAdvice && (
-                          <span className="text-[10px] text-white/25 truncate max-w-[60px]">{mapAdviceDisplay(item.operationAdvice)}</span>
+                          <span className="text-[10px] text-muted truncate max-w-[60px]">{mapAdviceDisplay(item.operationAdvice)}</span>
                         )}
                       </button>
                     );
@@ -767,22 +767,22 @@ const HomePage: React.FC = () => {
 
               {/* 持仓信息浮窗 */}
               {showPosition && (
-                <div className="absolute top-full right-0 mt-2 w-64 p-3 rounded-xl bg-[#111118] border border-white/10 shadow-xl shadow-black/40 animate-slide-up z-[60]">
-                  <div className="text-[11px] text-white/40 font-medium mb-2.5 tracking-wider uppercase">持仓信息</div>
+                <div className="absolute top-full right-0 mt-2 w-64 p-3 rounded-xl bg-card border border-black/[0.08] shadow-xl shadow-black/10 animate-slide-up z-[60]">
+                  <div className="text-[11px] text-muted font-medium mb-2.5 tracking-wider uppercase">持仓信息</div>
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between gap-2">
-                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">总资金(万)</label>
+                      <label className="text-[11px] text-muted whitespace-nowrap w-16">总资金(万)</label>
                       <input type="number" value={totalCapital} onChange={(e) => setTotalCapital(e.target.value)} placeholder="100" className="header-input flex-1 text-xs py-1.5" />
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">持仓(股)</label>
+                      <label className="text-[11px] text-muted whitespace-nowrap w-16">持仓(股)</label>
                       <input type="number" value={positionAmount} onChange={(e) => {
                         setPositionAmount(e.target.value);
                         syncPositionToDb(stockCode, e.target.value, costPrice, '');
                       }} placeholder="100" className="header-input flex-1 text-xs py-1.5" />
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <label className="text-[11px] text-white/30 whitespace-nowrap w-16">成本价</label>
+                      <label className="text-[11px] text-muted whitespace-nowrap w-16">成本价</label>
                       <input type="number" step="0.01" value={costPrice} onChange={(e) => {
                         setCostPrice(e.target.value);
                         syncPositionToDb(stockCode, positionAmount, e.target.value, '');
@@ -796,7 +796,7 @@ const HomePage: React.FC = () => {
                     const posVal = shares > 0 && cp > 0 ? shares * cp : 0;
                     const pct = tc > 0 && posVal > 0 ? (posVal / tc * 100).toFixed(1) : '--';
                     return (
-                      <div className="mt-2 pt-2 border-t border-white/5 text-[11px] text-white/40 font-mono text-right">
+                      <div className="mt-2 pt-2 border-t border-black/[0.05] text-[11px] text-muted font-mono text-right">
                         仓位 {pct !== '--' ? `${pct}%` : '--'}
                         {posVal > 0 && <span className="ml-2">持仓市值 {(posVal / 10000).toFixed(2)}万</span>}
                       </div>
@@ -888,7 +888,7 @@ const HomePage: React.FC = () => {
             isLoadingReport ? (
               <div className="flex flex-col items-center justify-center h-full gap-3">
                 <div className="w-10 h-10 border-[3px] border-cyan/15 border-t-cyan rounded-full animate-spin" />
-                <p className="text-[13px] text-white/30">加载报告中...</p>
+                <p className="text-[13px] text-muted">加载报告中...</p>
               </div>
             ) : selectedReport ? (
               <>
@@ -923,8 +923,8 @@ const HomePage: React.FC = () => {
               <div className="flex flex-col items-center justify-center h-full px-4 gap-6 max-w-2xl mx-auto w-full">
                 {/* 品牌标语 */}
                 <div className="text-center">
-                  <h3 className="text-[16px] font-semibold text-white/70 mb-1">AI 股票智能分析</h3>
-                  <p className="text-[12px] text-white/25 leading-relaxed">
+                  <h3 className="text-[16px] font-semibold text-primary/70 mb-1">AI 股票智能分析</h3>
+                  <p className="text-[12px] text-muted leading-relaxed">
                     输入股票代码或名称，获取 AI 深度分析报告
                   </p>
                 </div>
@@ -939,30 +939,30 @@ const HomePage: React.FC = () => {
                   }).slice(0, 6);
                   return (
                     <div className="w-full">
-                      <p className="text-[11px] text-white/25 mb-2 font-medium tracking-wide uppercase">最近分析</p>
+                      <p className="text-[11px] text-muted mb-2 font-medium tracking-wide uppercase">最近分析</p>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {recents.map(item => {
                           const score = item.sentimentScore;
-                          const scoreColor = score == null ? 'text-white/30' : score >= 70 ? 'text-emerald-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
-                          const borderColor = score == null ? 'border-white/[0.06]' : score >= 70 ? 'border-emerald-500/20' : score >= 50 ? 'border-yellow-500/15' : 'border-red-500/15';
+                          const scoreColor = score == null ? 'text-muted' : score >= 70 ? 'text-emerald-600' : score >= 50 ? 'text-yellow-400' : 'text-red-600';
+                          const borderColor = score == null ? 'border-black/[0.06]' : score >= 70 ? 'border-emerald-500/20' : score >= 50 ? 'border-yellow-500/15' : 'border-red-500/15';
                           const adv = item.operationAdvice || '';
                           const isBuy = adv.includes('买入') || adv.includes('吸纳');
                           const isSell = adv.includes('卖出') || adv.includes('减仓');
-                          const advColor = isBuy ? 'text-emerald-400/70' : isSell ? 'text-red-400/70' : 'text-white/30';
+                          const advColor = isBuy ? 'text-emerald-600/70' : isSell ? 'text-red-600/70' : 'text-muted';
                           return (
                             <button
                               key={item.stockCode}
                               type="button"
                               onClick={() => handleHistoryClick(item.queryId, item.stockCode)}
-                              className={`flex flex-col gap-1 p-3 rounded-xl bg-[var(--bg-card)] border ${borderColor} hover:bg-white/[0.04] transition text-left group`}
+                              className={`flex flex-col gap-1 p-3 rounded-xl bg-card border ${borderColor} hover:bg-black/[0.03] transition text-left group`}
                             >
                               <div className="flex items-center justify-between">
-                                <span className="text-[12px] font-mono font-semibold text-white/80">{item.stockCode}</span>
+                                <span className="text-[12px] font-mono font-semibold text-primary/80">{item.stockCode}</span>
                                 {score != null && (
                                   <span className={`text-[11px] font-mono font-bold ${scoreColor}`}>{score}</span>
                                 )}
                               </div>
-                              <span className="text-[11px] text-white/45 truncate">{item.stockName || '—'}</span>
+                              <span className="text-[11px] text-secondary truncate">{item.stockName || '—'}</span>
                               {adv && (
                                 <span className={`text-[10px] font-medium ${advColor}`}>{mapAdviceDisplay(adv)}</span>
                               )}
@@ -976,7 +976,7 @@ const HomePage: React.FC = () => {
 
                 {/* 无历史记录时的提示 */}
                 {historyItems.length === 0 && !isLoadingHistory && (
-                  <p className="text-[12px] text-white/20 text-center">
+                  <p className="text-[12px] text-muted/70 text-center">
                     在上方输入股票代码开始第一次分析
                   </p>
                 )}

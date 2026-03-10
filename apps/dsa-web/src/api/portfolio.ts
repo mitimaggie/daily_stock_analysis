@@ -132,12 +132,24 @@ export const portfolioApi = {
   },
 
   // 持仓监控
-  monitor: async (): Promise<{ signals: MonitorSignal[]; concentrationWarnings: string[] }> => {
-    const res = await apiClient.get<{ signals: unknown[]; concentration_warnings?: string[] }>('/api/v1/portfolio/monitor/signals');
+  monitor: async (): Promise<{ signals: MonitorSignal[]; concentrationWarnings: string[]; portfolioSize: number; totalMarketValue: number }> => {
+    const res = await apiClient.get<{ signals: unknown[]; concentration_warnings?: string[]; portfolio_size?: number; total_market_value?: number }>('/api/v1/portfolio/monitor/signals');
     return {
       signals: (res.data.signals || []).map(s => toCamelCase<MonitorSignal>(s as Record<string, unknown>)),
       concentrationWarnings: res.data.concentration_warnings || [],
+      portfolioSize: res.data.portfolio_size || 0,
+      totalMarketValue: res.data.total_market_value || 0,
     };
+  },
+
+  // 更新总资金配置
+  updateCapital: async (value: number): Promise<boolean> => {
+    try {
+      const res = await apiClient.post<{ success: boolean }>('/api/v1/config/update', {
+        PORTFOLIO_SIZE: String(value),
+      });
+      return res.data.success;
+    } catch { return false; }
   },
 
   // 关注股 CRUD

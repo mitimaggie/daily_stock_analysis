@@ -54,9 +54,9 @@ const SKILL_DESC: Record<string, string> = {
 };
 
 const DIFFICULTY_COLOR: Record<string, string> = {
-  低: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  低: 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20',
   中: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  高: 'text-red-400 bg-red-500/10 border-red-500/20',
+  高: 'text-red-600 bg-red-500/10 border-red-500/20',
 };
 
 export const ReportOverview: React.FC<ReportOverviewProps> = ({
@@ -208,19 +208,19 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
   };
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4 space-y-3">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4 space-y-3">
       {/* 第一行：股票名 + 价格 + 评分（紧凑 header） */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[14px] font-bold text-white">{meta.stockName || meta.stockCode}</span>
-          <span className="text-[11px] text-white/25 font-mono">{meta.stockCode}</span>
+          <span className="text-[14px] font-bold text-primary">{meta.stockName || meta.stockCode}</span>
+          <span className="text-[11px] text-muted font-mono">{meta.stockCode}</span>
           {displayPrice != null && (
             <span className={`text-[14px] font-bold font-mono ${getPriceChangeColor(displayChangePct)}`}>
               {displayPrice.toFixed(2)}
               <span className="text-[11px] ml-1">{formatChangePct(displayChangePct)}</span>
             </span>
           )}
-          {lastUpdate && <span className="text-[10px] text-white/20 font-mono">{lastUpdate}</span>}
+          {lastUpdate && <span className="text-[10px] text-muted/70 font-mono">{lastUpdate}</span>}
           {/* 场景模式 badge（紧跟股票名）*/}
           {analysisScene && SCENE_CONFIG[analysisScene] && (
             <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${SCENE_CONFIG[analysisScene].color}`}>
@@ -234,7 +234,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               type="button"
               onClick={onRefresh}
               disabled={isRefreshing}
-              className="p-1.5 rounded-lg hover:bg-white/[0.06] text-white/30 hover:text-white/60 transition-colors disabled:opacity-40"
+              className="p-1.5 rounded-lg hover:bg-black/[0.04] text-muted hover:text-secondary transition-colors disabled:opacity-40"
               title="刷新分析"
             >
               <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -253,7 +253,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/35'
                 : isSell
                   ? 'bg-red-500/15 text-red-300 border-red-500/30'
-                  : 'bg-white/[0.07] text-white/50 border-white/10';
+                  : 'bg-black/[0.04] text-secondary border-black/[0.08]';
               return (
                 <span className={`text-[11px] px-2 py-0.5 rounded font-mono font-semibold border ${colorClass}`}>
                   {displayAdv}
@@ -282,7 +282,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         if (todayPctChg != null && todayPctChg > 5 && isBuyAdvice) {
           return (
             <div className="rounded-lg px-3 py-2.5 border border-red-500/30 bg-red-500/[0.08] flex items-start gap-2">
-              <span className="text-red-400 text-sm flex-shrink-0 leading-5">⚠️</span>
+              <span className="text-red-600 text-sm flex-shrink-0 leading-5">⚠️</span>
               <p className="text-[12px] text-red-300/90 leading-relaxed">
                 该股今日已涨 <span className="font-mono font-semibold text-red-300">{todayPctChg.toFixed(1)}%</span>，追高买入风险较大，历史追涨胜率偏低。建议等待回调再考虑入场。
               </p>
@@ -297,7 +297,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
         <div className={`rounded-lg p-3 border ${
           actionNow
             ? 'border-cyan-500/30 bg-cyan-500/[0.06]'
-            : 'border-white/[0.08] bg-white/[0.03]'
+            : 'border-black/[0.06] bg-black/[0.02]'
         }`}>
           {actionNow && (
             <div className="mb-2">
@@ -310,18 +310,18 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   </span>
                 )}
                 {executionDifficulty && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ml-auto ${DIFFICULTY_COLOR[executionDifficulty] ?? 'text-white/40 bg-white/5 border-white/10'}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ml-auto ${DIFFICULTY_COLOR[executionDifficulty] ?? 'text-muted bg-black/[0.03] border-black/[0.08]'}`}>
                     难度{executionDifficulty}
                   </span>
                 )}
               </div>
-              <p className="text-[14px] text-white font-semibold leading-snug">{actionNow}</p>
-              {executionNote && <p className="text-[11px] text-white/45 mt-1 leading-relaxed">{executionNote}</p>}
+              <p className="text-[14px] text-primary font-semibold leading-snug">{actionNow}</p>
+              {executionNote && <p className="text-[11px] text-secondary mt-1 leading-relaxed">{executionNote}</p>}
             </div>
           )}
           {oneSentence && (
             <p className={`text-[13px] leading-relaxed ${
-              actionNow ? 'text-white/55 border-t border-white/[0.07] pt-2 mt-1' : 'text-white/80'
+              actionNow ? 'text-secondary border-t border-black/[0.07] pt-2 mt-1' : 'text-primary/80'
             }`}>{oneSentence}</p>
           )}
         </div>
@@ -347,10 +347,10 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
       )}
       {/* P2: 多时间线胜率（只在有操作意义的信号下展示，n>=20才显示） */}
       {timeframeWr && timeframeWr.n >= 20 && summary.sentimentScore != null && summary.sentimentScore >= 75 && (
-        <div className="rounded-lg px-3 py-2.5 border border-white/[0.07] bg-white/[0.025]">
-          <div className="text-[10px] text-white/25 mb-2 font-mono">
-            历史同类信号 <span className="text-white/40">n={timeframeWr.n}</span>
-            {timeframeWr.weekly_trend && <span className="ml-1 text-white/20">· {timeframeWr.weekly_trend}</span>}
+        <div className="rounded-lg px-3 py-2.5 border border-black/[0.07] bg-black/[0.02]">
+          <div className="text-[10px] text-muted mb-2 font-mono">
+            历史同类信号 <span className="text-muted">n={timeframeWr.n}</span>
+            {timeframeWr.weekly_trend && <span className="ml-1 text-muted/70">· {timeframeWr.weekly_trend}</span>}
           </div>
           <div className="flex gap-3">
             {[
@@ -362,12 +362,12 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               const isGood = (wr ?? 0) >= 55;
               const isPoor = (wr ?? 0) < 45;
               return (
-                <div key={key} className={`flex-1 text-center rounded p-1.5 ${isBest ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-white/[0.03]'}`}>
-                  <div className="text-[9px] text-white/30 mb-0.5">{label}胜率</div>
-                  <div className={`text-[13px] font-bold font-mono ${isBest ? 'text-emerald-400' : isGood ? 'text-white/70' : isPoor ? 'text-red-400/70' : 'text-white/50'}`}>
+                <div key={key} className={`flex-1 text-center rounded p-1.5 ${isBest ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-black/[0.02]'}`}>
+                  <div className="text-[9px] text-muted mb-0.5">{label}胜率</div>
+                  <div className={`text-[13px] font-bold font-mono ${isBest ? 'text-emerald-600' : isGood ? 'text-primary/70' : isPoor ? 'text-red-600/70' : 'text-secondary'}`}>
                     {wr != null ? `${wr}%` : '-'}
                   </div>
-                  {isBest && <div className="text-[8px] text-emerald-400/60 mt-0.5">最优</div>}
+                  {isBest && <div className="text-[8px] text-emerald-600/60 mt-0.5">最优</div>}
                 </div>
               );
             })}
@@ -389,13 +389,13 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               type="number" step="1" value={editShares}
               onChange={e => setEditShares(e.target.value)}
               placeholder="持股（股）"
-              className="w-24 bg-white/5 border border-white/15 rounded px-2 py-0.5 text-[12px] text-white font-mono placeholder-white/25 focus:outline-none focus:border-cyan-500/50"
+              className="w-24 bg-black/[0.03] border border-black/[0.1] rounded px-2 py-0.5 text-[12px] text-primary font-mono placeholder-muted focus:outline-none focus:border-cyan-500/50"
             />
             <input
               type="number" step="0.01" value={editCost}
               onChange={e => setEditCost(e.target.value)}
               placeholder="成本价"
-              className="w-24 bg-white/5 border border-white/15 rounded px-2 py-0.5 text-[12px] text-white font-mono placeholder-white/25 focus:outline-none focus:border-cyan-500/50"
+              className="w-24 bg-black/[0.03] border border-black/[0.1] rounded px-2 py-0.5 text-[12px] text-primary font-mono placeholder-muted focus:outline-none focus:border-cyan-500/50"
             />
             <button
               type="button"
@@ -407,14 +407,14 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               }}
               className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/25 transition"
             >确认 →重新分析</button>
-            <button type="button" onClick={() => setEditingPosition(false)} className="text-[11px] text-white/25 hover:text-white/50">取消</button>
+            <button type="button" onClick={() => setEditingPosition(false)} className="text-[11px] text-muted hover:text-secondary">取消</button>
           </div>
         ) : (
-          <div className="flex items-center gap-3 text-[12px] text-white/50 flex-wrap">
-            <span>成本 <span className="font-mono text-white/70">{costPrice.toFixed(2)}</span></span>
-            {sharesVal != null && <span className="font-mono text-white/40">{sharesVal}股</span>}
-            {posVal && <span className="font-mono text-white/40">{(posVal / 10000).toFixed(2)}万</span>}
-            {pctOfCapital && <span className="font-mono text-white/40">仓位{pctOfCapital}%</span>}
+          <div className="flex items-center gap-3 text-[12px] text-secondary flex-wrap">
+            <span>成本 <span className="font-mono text-primary/70">{costPrice.toFixed(2)}</span></span>
+            {sharesVal != null && <span className="font-mono text-muted">{sharesVal}股</span>}
+            {posVal && <span className="font-mono text-muted">{(posVal / 10000).toFixed(2)}万</span>}
+            {pctOfCapital && <span className="font-mono text-muted">仓位{pctOfCapital}%</span>}
             {pnlPct != null && (
               <span className={`font-mono font-semibold ${pnlPct >= 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}`}>
                 {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
@@ -429,7 +429,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               <button
                 type="button"
                 onClick={() => { setEditShares(String(sharesVal ?? '')); setEditCost(String(costPrice)); setEditingPosition(true); }}
-                className="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/25 hover:text-white/50 hover:border-white/20 transition ml-1"
+                className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.08] text-muted hover:text-secondary hover:border-black/[0.12] transition ml-1"
               >修改</button>
             )}
           </div>
@@ -437,14 +437,14 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
       })()}
 
       {/* 操作建议摘要（紧凑单行） */}
-      <div className="flex items-center gap-3 text-[12px] text-white/50 flex-wrap">
+      <div className="flex items-center gap-3 text-[12px] text-secondary flex-wrap">
         {summary.operationAdvice && (
-          <span>建议：<span className="text-white/75">{mapAdviceDisplay(summary.operationAdvice)}</span></span>
+          <span>建议：<span className="text-primary/70">{mapAdviceDisplay(summary.operationAdvice)}</span></span>
         )}
         <button
           type="button"
           onClick={() => setDetailExpanded(!detailExpanded)}
-          className="ml-auto text-[10px] text-white/25 hover:text-white/50 transition-colors"
+          className="ml-auto text-[10px] text-muted hover:text-secondary transition-colors"
         >
           {detailExpanded ? '收起详情 ▲' : '更多详情 ▼'}
         </button>
@@ -482,10 +482,10 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   })()}
                 </svg>
                 <div className="flex items-center gap-1.5 text-[10px] font-mono">
-                  <span className="text-white/25">{scores[0].date.slice(5)}</span>
-                  <span className="text-white/20">→</span>
-                  <span className="text-white/25">{scores[scores.length - 1].date.slice(5)}</span>
-                  <span className={`ml-1 ${dir === 'improving' ? 'text-emerald-400' : dir === 'declining' ? 'text-red-400' : 'text-white/35'}`}>
+                  <span className="text-muted">{scores[0].date.slice(5)}</span>
+                  <span className="text-muted/70">→</span>
+                  <span className="text-muted">{scores[scores.length - 1].date.slice(5)}</span>
+                  <span className={`ml-1 ${dir === 'improving' ? 'text-emerald-600' : dir === 'declining' ? 'text-red-600' : 'text-muted'}`}>
                     {dir === 'improving' ? '↗' : dir === 'declining' ? '↘' : '→'}
                     {scoreTrend.avg_score.toFixed(0)}均
                   </span>
@@ -497,8 +497,8 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
           {/* 趋势预测 */}
           {summary.trendPrediction && (
             <div className="text-[12px]">
-              <span className="text-white/30 text-[11px]">趋势预测 </span>
-              <span className="text-white/70">{summary.trendPrediction}</span>
+              <span className="text-muted text-[11px]">趋势预测 </span>
+              <span className="text-primary/70">{summary.trendPrediction}</span>
             </div>
           )}
 
@@ -509,7 +509,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               <button
                 type="button"
                 onClick={() => setSceneExpanded(!sceneExpanded)}
-                className="text-[11px] text-white/30 hover:text-white/55 transition-colors text-left"
+                className="text-[11px] text-muted hover:text-secondary transition-colors text-left"
               >
                 {sceneExpanded ? '▲ 收起场景识别' : '▼ 场景识别'}
                 {summary.positionAdvice.tradeAdvice.scenarioLabel
@@ -519,27 +519,27 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
               {sceneExpanded && (() => {
                 const ta = summary.positionAdvice!.tradeAdvice!;
                 const isPositive = !ta.scenarioId?.startsWith('E');
-                const confColor = ta.scenarioConfidence === '高' ? 'text-emerald-400' : ta.scenarioConfidence === '中' ? 'text-amber-400' : 'text-white/40';
+                const confColor = ta.scenarioConfidence === '高' ? 'text-emerald-600' : ta.scenarioConfidence === '中' ? 'text-amber-400' : 'text-muted';
                 const borderColor = isPositive ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5';
                 const isIntraday = ta.turnoverPercentileConfidence === '盘中折算估算' || (ta.scenarioLabel?.includes('盘中') ?? false);
                 const tpDisplay = ta.turnoverPercentile !== undefined ? `${Math.round(ta.turnoverPercentile * 100)}%分位` : '';
                 return (
                   <div className={`rounded-lg p-3 border ${borderColor} space-y-2`}>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${isPositive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${isPositive ? 'bg-emerald-500/15 text-emerald-600' : 'bg-red-500/15 text-red-600'}`}>
                         场景{ta.scenarioId}
                       </span>
-                      <span className="text-[12px] text-white/80 font-medium">{ta.scenarioLabel}</span>
+                      <span className="text-[12px] text-primary/80 font-medium">{ta.scenarioLabel}</span>
                       <span className={`text-[10px] ml-auto ${confColor}`}>置信度: {ta.scenarioConfidence}</span>
                     </div>
                     <div className="flex items-center gap-3 flex-wrap">
                       {tpDisplay && (
-                        <span className="text-[11px] text-white/40">
-                          换手率历史分位: <span className="font-mono text-white/60">{tpDisplay}</span>
+                        <span className="text-[11px] text-muted">
+                          换手率历史分位: <span className="font-mono text-secondary">{tpDisplay}</span>
                         </span>
                       )}
                       {ta.turnoverPercentileConfidence && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isIntraday ? 'border-amber-500/30 text-amber-400/70 bg-amber-500/5' : 'border-emerald-500/20 text-emerald-400/60 bg-emerald-500/5'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isIntraday ? 'border-amber-500/30 text-amber-400/70 bg-amber-500/5' : 'border-emerald-500/20 text-emerald-600/60 bg-emerald-500/5'}`}>
                           {ta.turnoverPercentileConfidence}
                         </span>
                       )}
@@ -547,15 +547,15 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                     {(ta.expectedReturn20d || ta.winRate) && (
                       <div className="flex gap-4 text-[11px]">
                         {ta.expectedReturn20d && (
-                          <span className="text-white/50">20日预期: <span className={`font-mono font-semibold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>{ta.expectedReturn20d}</span></span>
+                          <span className="text-secondary">20日预期: <span className={`font-mono font-semibold ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>{ta.expectedReturn20d}</span></span>
                         )}
                         {ta.winRate && (
-                          <span className="text-white/50">历史胜率: <span className="font-mono text-white/70">{ta.winRate}</span></span>
+                          <span className="text-secondary">历史胜率: <span className="font-mono text-primary/70">{ta.winRate}</span></span>
                         )}
                       </div>
                     )}
                     {(hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty) && (
-                      <p className="text-[12px] text-white/70 leading-relaxed">
+                      <p className="text-[12px] text-primary/70 leading-relaxed">
                         {hasPositionInfo ? ta.adviceHolding : ta.adviceEmpty}
                       </p>
                     )}
@@ -571,14 +571,14 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
             <div className="space-y-2">
               {hasPositionInfo && summary.positionAdvice?.hasPosition && (
                 <div className="flex gap-2 items-start text-[13px]">
-                  <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">策略</span>
-                  <p className="text-white/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
+                  <span className="text-[10px] text-muted bg-black/[0.03] px-1.5 py-0.5 rounded flex-shrink-0">策略</span>
+                  <p className="text-primary/70 leading-relaxed">{summary.positionAdvice.hasPosition}</p>
                 </div>
               )}
               {!hasPositionInfo && summary.positionAdvice?.noPosition && (
                 <div className="flex gap-2 items-start text-[13px]">
-                  <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
-                  <p className="text-white/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
+                  <span className="text-[10px] text-muted bg-black/[0.03] px-1.5 py-0.5 rounded flex-shrink-0">空仓</span>
+                  <p className="text-primary/70 leading-relaxed">{summary.positionAdvice.noPosition}</p>
                 </div>
               )}
             </div>

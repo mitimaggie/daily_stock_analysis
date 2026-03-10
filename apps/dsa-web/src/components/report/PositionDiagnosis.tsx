@@ -94,10 +94,10 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
     <Card variant="bordered" padding="md">
       <div className="flex items-baseline gap-2 mb-1">
         <span className="label-uppercase">PORTFOLIO</span>
-        <h3 className="text-base font-semibold text-white">持仓诊断</h3>
+        <h3 className="text-base font-semibold text-primary">持仓诊断</h3>
       </div>
-      <div className="text-[10px] text-white/25 mb-3 leading-relaxed">
-        💡 <span className="text-white/35">成本线的作用</span>：不作为硬止损执行线（统计显示跌破成本线触发率高达 97%，会过早被迫出场），而是用于①感知当前浮盈状态②判断是否应启动「保利止损线（移动止损）」。止损执行以上方「盘中关键价位」的技术止损为准。
+      <div className="text-[10px] text-muted mb-3 leading-relaxed">
+        💡 <span className="text-muted">成本线的作用</span>：不作为硬止损执行线（统计显示跌破成本线触发率高达 97%，会过早被迫出场），而是用于①感知当前浮盈状态②判断是否应启动「保利止损线（移动止损）」。止损执行以上方「盘中关键价位」的技术止损为准。
       </div>
 
       <div className="space-y-3">
@@ -105,7 +105,7 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
         {hasPnl && (
           <div className={`p-3 rounded-lg border ${pnlPct >= 0 ? 'bg-success/5 border-success/20' : 'bg-danger/5 border-danger/20'}`}>
             <div className="flex items-center justify-between">
-              <div className="text-sm text-white">
+              <div className="text-sm text-primary">
                 <span className="text-muted mr-2">成本</span>
                 <span className="font-mono font-bold">{costPrice.toFixed(2)}</span>
                 <span className="text-muted mx-2">→</span>
@@ -127,18 +127,18 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
         {/* 仓位占比 */}
         {hasPosition && (
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-surface-2 rounded-lg p-2.5 text-center">
+            <div className="bg-elevated rounded-lg p-2.5 text-center">
               <div className="text-[10px] text-muted mb-1">当前仓位</div>
-              <div className="text-sm font-bold font-mono text-white">{actualPct.toFixed(1)}%</div>
+              <div className="text-sm font-bold font-mono text-primary">{actualPct.toFixed(1)}%</div>
             </div>
-            <div className="bg-surface-2 rounded-lg p-2.5 text-center">
+            <div className="bg-elevated rounded-lg p-2.5 text-center">
               <div className="text-[10px] text-muted mb-1">持仓金额</div>
-              <div className="text-sm font-bold font-mono text-white">{(posAmount / 10000).toFixed(1)}万</div>
+              <div className="text-sm font-bold font-mono text-primary">{(posAmount / 10000).toFixed(1)}万</div>
             </div>
             {entryPct != null && entryPct > 0 && (
-              <div className="bg-surface-2 rounded-lg p-2.5 text-center">
+              <div className="bg-elevated rounded-lg p-2.5 text-center">
                 <div className="text-[10px] text-muted mb-1">空仓建议仓位</div>
-                <div className="text-sm font-bold font-mono text-white/50">{entryPct}%</div>
+                <div className="text-sm font-bold font-mono text-secondary">{entryPct}%</div>
               </div>
             )}
           </div>
@@ -146,7 +146,7 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
 
         {/* 持仓策略建议 */}
         {hasPosition && adviceText && (
-          <div className="text-[11px] p-2.5 rounded-lg bg-cyan/5 border border-cyan/15 text-white/70 leading-relaxed">
+          <div className="text-[11px] p-2.5 rounded-lg bg-cyan/5 border border-cyan/15 text-primary/70 leading-relaxed">
             <span className="text-cyan font-medium mr-1">持仓策略:</span>
             {adviceText}
           </div>
@@ -159,7 +159,7 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
             <div className="grid grid-cols-2 gap-2">
               {/* 止损位 */}
               {stopFromCost !== null && (
-                <div className="bg-surface-2 rounded-lg p-2.5">
+                <div className="bg-elevated rounded-lg p-2.5">
                   <div className="text-[10px] text-danger/70 font-medium mb-1">
                     🛡 {recStopLabel}
                   </div>
@@ -169,12 +169,12 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
                       ({stopFromCost >= 0 ? '+' : ''}{stopFromCost.toFixed(1)}%)
                     </span>
                   </div>
-                  {recStopHint && <div className="text-[9px] text-white/25 mt-1">{recStopHint}</div>}
+                  {recStopHint && <div className="text-[9px] text-muted mt-1">{recStopHint}</div>}
                 </div>
               )}
               {/* 减仓/止盈目标 */}
               {targetFromCost !== null && (
-                <div className="bg-surface-2 rounded-lg p-2.5">
+                <div className="bg-elevated rounded-lg p-2.5">
                   <div className="text-[10px] text-success/70 font-medium mb-1">
                     🎯 {recTargetLabel}
                   </div>
@@ -184,18 +184,18 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
                       ({targetFromCost >= 0 ? '+' : ''}{targetFromCost.toFixed(1)}%)
                     </span>
                   </div>
-                  {recTargetHint && <div className="text-[9px] text-white/25 mt-1">{recTargetHint}</div>}
+                  {recTargetHint && <div className="text-[9px] text-muted mt-1">{recTargetHint}</div>}
                 </div>
               )}
             </div>
 
             {/* 持仓者额外显示：移动止盈线（如果不是推荐止损本身） */}
             {hasPosition && hs?.trailingStop && hs.trailingStop > 0 && recStopType !== 'trailing' && (
-              <div className="mt-2 bg-[#1a1a2e] rounded-lg p-2.5 border border-cyan/10">
+              <div className="mt-2 bg-elevated rounded-lg p-2.5 border border-cyan/10">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-[10px] text-cyan/70 font-medium">📈 移动止盈线（保利线）</div>
-                    <div className="text-[9px] text-white/25 mt-0.5">跌破此价即离场，保护已有利润</div>
+                    <div className="text-[9px] text-muted mt-0.5">跌破此价即离场，保护已有利润</div>
                   </div>
                   <div className="text-right">
                     <span className="text-sm font-bold font-mono text-cyan">{hs.trailingStop.toFixed(2)}</span>
@@ -220,33 +220,33 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
 
         {/* P3: 止损3档参考（按持仓意图选择） */}
         {(stopLossIntraday || stopLoss || hs?.stopLossShort || stopLossMid || hs?.stopLossMid) && (
-          <div className="border-t border-white/5 pt-2">
-            <div className="text-[10px] text-white/25 mb-1.5">止损参考 <span className="text-white/15">— 按你的持仓意图选择</span></div>
+          <div className="border-t border-black/[0.03] pt-2">
+            <div className="text-[10px] text-muted mb-1.5">止损参考 <span className="text-muted/50">— 按你的持仓意图选择</span></div>
             <div className="space-y-1">
               {stopLossIntraday && (
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-white/30">日内离场</span>
+                  <span className="text-muted">日内离场</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-white/60">{stopLossIntraday}</span>
-                    <span className="text-[9px] text-white/20">今天操作用</span>
+                    <span className="font-mono text-secondary">{stopLossIntraday}</span>
+                    <span className="text-[9px] text-muted/70">今天操作用</span>
                   </div>
                 </div>
               )}
               {(stopLoss || hs?.stopLossShort) && (
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-white/50 font-medium">短线止损 ←主推</span>
+                  <span className="text-secondary font-medium">短线止损 ←主推</span>
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-danger/80 font-semibold">{stopLoss ?? hs?.stopLossShort?.toFixed(2)}</span>
-                    <span className="text-[9px] text-white/20">持股3-5天用</span>
+                    <span className="text-[9px] text-muted/70">持股3-5天用</span>
                   </div>
                 </div>
               )}
               {(stopLossMid || hs?.stopLossMid) && (
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-white/30">中线止损</span>
+                  <span className="text-muted">中线止损</span>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-white/50">{stopLossMid ?? hs?.stopLossMid?.toFixed(2)}</span>
-                    <span className="text-[9px] text-white/20">持股10天+用</span>
+                    <span className="font-mono text-secondary">{stopLossMid ?? hs?.stopLossMid?.toFixed(2)}</span>
+                    <span className="text-[9px] text-muted/70">持股10天+用</span>
                   </div>
                 </div>
               )}
@@ -256,12 +256,12 @@ export const PositionDiagnosis: React.FC<PositionDiagnosisProps> = ({
 
         {/* 所有量化锚点参考（止盈目标） */}
         {hasPosition && hs && (hs.targetShort || hs.targetMid) && (
-          <div className="border-t border-white/5 pt-2">
+          <div className="border-t border-black/[0.03] pt-2">
             <div className="text-[10px] text-muted mb-1.5">止盈目标</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px]">
-              {hs.trailingStop ? <div className="flex justify-between"><span className="text-white/30">保利线</span><span className="font-mono text-white/50">{hs.trailingStop.toFixed(2)}</span></div> : null}
-              {hs.targetShort ? <div className="flex justify-between"><span className="text-white/30">短线目标</span><span className="font-mono text-white/50">{hs.targetShort.toFixed(2)}</span></div> : null}
-              {hs.targetMid ? <div className="flex justify-between"><span className="text-white/30">中线目标</span><span className="font-mono text-white/50">{hs.targetMid.toFixed(2)}</span></div> : null}
+              {hs.trailingStop ? <div className="flex justify-between"><span className="text-muted">保利线</span><span className="font-mono text-secondary">{hs.trailingStop.toFixed(2)}</span></div> : null}
+              {hs.targetShort ? <div className="flex justify-between"><span className="text-muted">短线目标</span><span className="font-mono text-secondary">{hs.targetShort.toFixed(2)}</span></div> : null}
+              {hs.targetMid ? <div className="flex justify-between"><span className="text-muted">中线目标</span><span className="font-mono text-secondary">{hs.targetMid.toFixed(2)}</span></div> : null}
             </div>
           </div>
         )}

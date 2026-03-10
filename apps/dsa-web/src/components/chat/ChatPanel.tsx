@@ -31,7 +31,7 @@ function AgentProgressBubble({ steps }: { steps: AgentStep[] }) {
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-[12px] bg-surface-2 border border-white/5 text-white/50">
+      <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-[12px] bg-elevated border border-black/[0.05] text-secondary">
         <div className="flex items-center gap-2">
           {isThinking ? (
             <>
@@ -59,7 +59,7 @@ function AgentProgressBubble({ steps }: { steps: AgentStep[] }) {
         {steps.length > 1 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {steps.filter(s => s.type === 'tool_done').map((s, i) => (
-              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/30">
+              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-black/[0.03] text-muted">
                 ✓ {s.display_name || s.tool}
               </span>
             ))}
@@ -201,18 +201,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
   }, [queryId]);
 
   return (
-    <div className="flex flex-col h-full bg-surface-1 border-l border-white/5">
+    <div className="flex flex-col h-full bg-card border-l border-black/[0.05]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-black/[0.05]">
         <div className="flex items-center gap-2">
           <span className="text-base">💬</span>
-          <h3 className="text-sm font-semibold text-white">AI 深度探讨</h3>
+          <h3 className="text-sm font-semibold text-primary">AI 深度探讨</h3>
         </div>
         <div className="flex items-center gap-1">
           {messages.length > 0 && (
             <button
               onClick={handleClear}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-muted hover:text-white hover:bg-white/5 transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-md text-muted hover:text-primary hover:bg-black/[0.03] transition-colors"
               title="清空对话"
             >
               🗑
@@ -220,7 +220,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
           )}
           <button
             onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-md text-muted hover:text-white hover:bg-white/5 transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded-md text-muted hover:text-primary hover:bg-black/[0.03] transition-colors"
           >
             ✕
           </button>
@@ -237,7 +237,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
               <button
                 key={q}
                 onClick={() => handleSend(q)}
-                className="text-[11px] px-2.5 py-1.5 rounded-full border border-white/10 text-white/50 hover:text-white hover:border-cyan/30 hover:bg-cyan/5 transition-all"
+                className="text-[11px] px-2.5 py-1.5 rounded-full border border-black/[0.08] text-secondary hover:text-primary hover:border-cyan/30 hover:bg-cyan/5 transition-all"
               >
                 {q}
               </button>
@@ -253,8 +253,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
             <div
               className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
                 msg.role === 'user'
-                  ? 'bg-cyan/15 text-white border border-cyan/20 whitespace-pre-wrap'
-                  : 'bg-surface-2 text-white/80 border border-white/5 chat-markdown'
+                  ? 'bg-cyan/15 text-primary border border-cyan/20 whitespace-pre-wrap'
+                  : 'bg-elevated text-primary/80 border border-black/[0.05] chat-markdown'
               }`}
             >
               {msg.role === 'assistant' ? (
@@ -274,7 +274,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
         {/* Streaming response */}
         {loading && streamingText && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed bg-surface-2 text-white/80 border border-white/5 chat-markdown">
+            <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed bg-elevated text-primary/80 border border-black/[0.05] chat-markdown">
               <ReactMarkdown>{streamingText}</ReactMarkdown>
               <span className="inline-block w-1.5 h-4 bg-cyan/60 animate-pulse ml-0.5 align-text-bottom" />
             </div>
@@ -284,7 +284,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
         {/* Loading indicator (before first chunk, no agent steps) */}
         {loading && !streamingText && agentSteps.length === 0 && (
           <div className="flex justify-start">
-            <div className="bg-surface-2 border border-white/5 rounded-xl px-3.5 py-2.5 text-[13px] text-muted">
+            <div className="bg-elevated border border-black/[0.05] rounded-xl px-3.5 py-2.5 text-[13px] text-muted">
               <span className="inline-flex gap-1">
                 <span className="animate-pulse">●</span>
                 <span className="animate-pulse" style={{ animationDelay: '0.2s' }}>●</span>
@@ -308,7 +308,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
               <button
                 key={q}
                 onClick={() => handleSend(q)}
-                className="text-[10px] px-2 py-1 rounded-full border border-white/8 text-white/35 hover:text-white/60 hover:border-cyan/25 hover:bg-cyan/5 transition-all"
+                className="text-[10px] px-2 py-1 rounded-full border border-black/[0.06] text-muted hover:text-secondary hover:border-cyan/25 hover:bg-cyan/5 transition-all"
               >
                 {q}
               </button>
@@ -318,7 +318,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
       </div>
 
       {/* Input */}
-      <div className="px-3 py-3 border-t border-white/5">
+      <div className="px-3 py-3 border-t border-black/[0.05]">
         <div className="flex gap-2 items-end">
           <textarea
             ref={inputRef}
@@ -327,7 +327,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ queryId, onClose }) => {
             onKeyDown={handleKeyDown}
             placeholder="输入问题...（Enter 发送，Shift+Enter 换行）"
             rows={1}
-            className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-[13px] text-white placeholder-white/30 resize-none focus:outline-none focus:border-cyan/30 transition-colors"
+            className="flex-1 bg-elevated border border-black/[0.08] rounded-lg px-3 py-2 text-[13px] text-primary placeholder-muted resize-none focus:outline-none focus:border-cyan/30 transition-colors"
             style={{ maxHeight: '120px' }}
             disabled={loading}
           />

@@ -58,10 +58,10 @@ const InsiderBadge: React.FC<{ direction?: string }> = ({ direction }) => {
   const isNet = direction.includes('净增持');
   const isSell = direction.includes('净减持');
   const cls = isNet
-    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25'
+    ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/25'
     : isSell
-      ? 'bg-red-500/15 text-red-400 border-red-500/25'
-      : 'bg-white/[0.06] text-white/40 border-white/10';
+      ? 'bg-red-500/15 text-red-600 border-red-500/25'
+      : 'bg-black/[0.04] text-muted border-black/[0.08]';
   const icon = isNet ? '↑' : isSell ? '↓' : '—';
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono font-semibold ${cls}`}>
@@ -76,10 +76,10 @@ const UnlockRiskBadge: React.FC<{ floatPct?: number }> = ({ floatPct }) => {
   const isHigh = floatPct >= 5;
   const isMid = floatPct >= 1;
   const cls = isHigh
-    ? 'bg-red-500/15 text-red-400 border-red-500/25'
+    ? 'bg-red-500/15 text-red-600 border-red-500/25'
     : isMid
       ? 'bg-amber-500/15 text-amber-400 border-amber-500/25'
-      : 'bg-white/[0.06] text-white/35 border-white/10';
+      : 'bg-black/[0.04] text-muted border-black/[0.08]';
   const label = isHigh ? '高风险' : isMid ? '中风险' : '低风险';
   return (
     <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${cls}`}>{label} {floatPct.toFixed(1)}%</span>
@@ -117,8 +117,8 @@ export const ShareholderCard: React.FC<ShareholderCardProps> = ({
   const repurchaseProgress = repurchase?.progress_pct ?? repurchase?.progressPct;
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
-      <h3 className="text-sm font-semibold text-white/60 flex items-center gap-1.5 mb-3">
+    <div className="rounded-xl bg-card border border-black/[0.04] p-4">
+      <h3 className="text-sm font-semibold text-secondary flex items-center gap-1.5 mb-3">
         <span>👥</span> 股东动态
       </h3>
 
@@ -126,15 +126,15 @@ export const ShareholderCard: React.FC<ShareholderCardProps> = ({
         {/* 高管增减持 */}
         {insiderHas && (
           <div className="flex items-start gap-3">
-            <span className="text-[10px] text-white/25 w-16 flex-shrink-0 pt-0.5">增减持</span>
+            <span className="text-[10px] text-muted w-16 flex-shrink-0 pt-0.5">增减持</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap mb-1">
                 <InsiderBadge direction={netDir} />
-                <span className="text-[11px] text-white/35 font-mono">
+                <span className="text-[11px] text-muted font-mono">
                   增{buyCount}次{buyQty != null ? ` ${buyQty}万股` : ''} / 减{sellCount}次{sellQty != null ? ` ${sellQty}万股` : ''}
                 </span>
                 {latestDate && (
-                  <span className="text-[10px] text-white/20 font-mono ml-auto">{latestDate}</span>
+                  <span className="text-[10px] text-muted/70 font-mono ml-auto">{latestDate}</span>
                 )}
               </div>
             </div>
@@ -144,16 +144,16 @@ export const ShareholderCard: React.FC<ShareholderCardProps> = ({
         {/* 限售解禁 */}
         {unlockHas && unlockDate && (
           <div className="flex items-start gap-3">
-            <span className="text-[10px] text-white/25 w-16 flex-shrink-0 pt-0.5">限售解禁</span>
+            <span className="text-[10px] text-muted w-16 flex-shrink-0 pt-0.5">限售解禁</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[12px] text-white/70 font-mono font-medium">{unlockDate}</span>
+                <span className="text-[12px] text-primary/70 font-mono font-medium">{unlockDate}</span>
                 {unlockMv != null && (
-                  <span className="text-[11px] text-white/40 font-mono">{unlockMv.toFixed(2)}亿元</span>
+                  <span className="text-[11px] text-muted font-mono">{unlockMv.toFixed(2)}亿元</span>
                 )}
                 <UnlockRiskBadge floatPct={unlockFloatPct} />
                 {unlockType && (
-                  <span className="text-[10px] text-white/25 truncate max-w-[140px]">{unlockType}</span>
+                  <span className="text-[10px] text-muted truncate max-w-[140px]">{unlockType}</span>
                 )}
               </div>
             </div>
@@ -163,21 +163,21 @@ export const ShareholderCard: React.FC<ShareholderCardProps> = ({
         {/* 股票回购 */}
         {repurchaseHas && repurchaseAmt != null && (
           <div className="flex items-start gap-3">
-            <span className="text-[10px] text-white/25 w-16 flex-shrink-0 pt-0.5">股票回购</span>
+            <span className="text-[10px] text-muted w-16 flex-shrink-0 pt-0.5">股票回购</span>
             <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono bg-emerald-500/10 text-emerald-400/80 border-emerald-500/20">
+              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-mono bg-emerald-500/10 text-emerald-600/80 border-emerald-500/20">
                 ↻ 回购中
               </span>
-              <span className="text-[11px] text-white/40 font-mono">上限{repurchaseAmt.toFixed(2)}亿</span>
+              <span className="text-[11px] text-muted font-mono">上限{repurchaseAmt.toFixed(2)}亿</span>
               {repurchaseProgress != null && (
                 <div className="flex items-center gap-1.5">
-                  <div className="w-20 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                  <div className="w-20 h-1.5 rounded-full bg-black/[0.04] overflow-hidden">
                     <div
                       className="h-full rounded-full bg-emerald-500/50"
                       style={{ width: `${Math.min(100, repurchaseProgress)}%` }}
                     />
                   </div>
-                  <span className="text-[10px] text-white/30 font-mono">{repurchaseProgress.toFixed(0)}%</span>
+                  <span className="text-[10px] text-muted font-mono">{repurchaseProgress.toFixed(0)}%</span>
                 </div>
               )}
             </div>

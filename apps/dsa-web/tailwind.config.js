@@ -7,49 +7,45 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 主色调 - 青色
         'cyan': {
-          DEFAULT: '#00d4ff',
-          dim: '#00a8cc',
-          glow: 'rgba(0, 212, 255, 0.4)',
+          DEFAULT: '#0891b2',
+          dim: '#0e7490',
+          glow: 'rgba(8, 145, 178, 0.2)',
         },
-        // 辅助色 - 紫色
         'purple': {
           DEFAULT: '#6f61f1',
-          dim: '#533483',
-          glow: 'rgba(168, 85, 247, 0.3)',
+          dim: '#5b50d6',
+          glow: 'rgba(111, 97, 241, 0.15)',
         },
-        // 状态色
-        'success': '#00ff88',
-        'warning': '#ffaa00',
-        'danger': '#ff4466',
-        // 背景色
-        'base': '#08080c',
-        'card': '#0d0d14',
-        'elevated': '#12121a',
-        'hover': '#1a1a24',
-        // 文字色
-        'primary': '#ffffff',
-        'secondary': '#a0a0b0',
-        'muted': '#606070',
-        // 边框色
+        'success': '#16a34a',
+        'warning': '#d97706',
+        'danger': '#dc2626',
+        'base': '#f5f5f5',
+        'card': '#ffffff',
+        'elevated': '#f0f0f0',
+        'hover': '#e5e5e5',
+        'primary': '#1a1a2e',
+        'secondary': '#5f6368',
+        'muted': '#9aa0a6',
         'border': {
-          dim: 'rgba(255, 255, 255, 0.06)',
-          DEFAULT: 'rgba(255, 255, 255, 0.1)',
-          accent: 'rgba(0, 212, 255, 0.3)',
-          purple: 'rgba(168, 85, 247, 0.3)',
+          dim: 'rgba(0, 0, 0, 0.06)',
+          DEFAULT: 'rgba(0, 0, 0, 0.1)',
+          accent: 'rgba(8, 145, 178, 0.3)',
+          purple: 'rgba(111, 97, 241, 0.3)',
         },
       },
       backgroundImage: {
-        'gradient-purple-cyan': 'linear-gradient(135deg, rgba(168, 85, 247, 0.2) 0%, rgba(0, 212, 255, 0.1) 100%)',
-        'gradient-card-border': 'linear-gradient(180deg, rgba(168, 85, 247, 0.4) 0%, rgba(168, 85, 247, 0.1) 50%, rgba(0, 212, 255, 0.2) 100%)',
-        'gradient-cyan': 'linear-gradient(135deg, #00d4ff 0%, #00a8cc 100%)',
+        'gradient-purple-cyan': 'linear-gradient(135deg, rgba(111, 97, 241, 0.15) 0%, rgba(8, 145, 178, 0.08) 100%)',
+        'gradient-card-border': 'linear-gradient(180deg, rgba(111, 97, 241, 0.3) 0%, rgba(111, 97, 241, 0.08) 50%, rgba(8, 145, 178, 0.15) 100%)',
+        'gradient-cyan': 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
       },
       boxShadow: {
-        'glow-cyan': '0 0 20px rgba(0, 212, 255, 0.4)',
-        'glow-purple': '0 0 20px rgba(168, 85, 247, 0.3)',
-        'glow-success': '0 0 20px rgba(0, 255, 136, 0.3)',
-        'glow-danger': '0 0 20px rgba(255, 68, 102, 0.3)',
+        'glow-cyan': '0 2px 12px rgba(8, 145, 178, 0.15)',
+        'glow-purple': '0 2px 12px rgba(111, 97, 241, 0.15)',
+        'glow-success': '0 2px 12px rgba(22, 163, 74, 0.15)',
+        'glow-danger': '0 2px 12px rgba(220, 38, 38, 0.15)',
+        'card': '0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)',
+        'card-hover': '0 4px 12px rgba(0, 0, 0, 0.1)',
       },
       borderRadius: {
         'xl': '12px',
@@ -85,8 +81,8 @@ export default {
           'to': { opacity: '1', transform: 'translateX(0)' },
         },
         pulseGlow: {
-          '0%, 100%': { boxShadow: '0 0 20px rgba(0, 212, 255, 0.4)' },
-          '50%': { boxShadow: '0 0 40px rgba(0, 212, 255, 0.6)' },
+          '0%, 100%': { boxShadow: '0 2px 12px rgba(8, 145, 178, 0.15)' },
+          '50%': { boxShadow: '0 4px 20px rgba(8, 145, 178, 0.25)' },
         },
       },
     },

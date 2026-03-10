@@ -128,23 +128,23 @@ export const TradeLog: React.FC<TradeLogProps> = ({
           {/* 统计卡片 */}
           {stats && stats.reviewedCount > 0 && (
             <div className="grid grid-cols-4 gap-1 text-[10px] text-center">
-              <div className="bg-surface-2 rounded p-1">
+              <div className="bg-elevated rounded p-1">
                 <div className="text-muted">胜率</div>
                 <div className={stats.winRate >= 50 ? 'text-success font-bold' : 'text-danger font-bold'}>
                   {stats.winRate}%
                 </div>
               </div>
-              <div className="bg-surface-2 rounded p-1">
+              <div className="bg-elevated rounded p-1">
                 <div className="text-muted">盈亏</div>
                 <div className={stats.totalPnl >= 0 ? 'text-success' : 'text-danger'}>
                   {stats.totalPnl >= 0 ? '+' : ''}{stats.totalPnl.toFixed(0)}
                 </div>
               </div>
-              <div className="bg-surface-2 rounded p-1">
+              <div className="bg-elevated rounded p-1">
                 <div className="text-muted">已复盘</div>
                 <div>{stats.reviewedCount}/{stats.totalTrades}</div>
               </div>
-              <div className="bg-surface-2 rounded p-1">
+              <div className="bg-elevated rounded p-1">
                 <div className="text-muted">跟随建议</div>
                 <div>{stats.followedAdviceCount}</div>
               </div>
@@ -161,7 +161,7 @@ export const TradeLog: React.FC<TradeLogProps> = ({
               + 记录操作
             </button>
           ) : (
-            <div className="space-y-1.5 p-2 bg-surface-2 rounded text-[11px]">
+            <div className="space-y-1.5 p-2 bg-elevated rounded text-[11px]">
               {/* 操作类型 */}
               <div className="flex gap-1">
                 {(['buy', 'sell', 'hold', 'watch'] as const).map(a => (
@@ -169,7 +169,7 @@ export const TradeLog: React.FC<TradeLogProps> = ({
                     key={a}
                     type="button"
                     className={`flex-1 py-0.5 rounded text-[10px] transition ${
-                      action === a ? 'bg-cyan text-black font-bold' : 'bg-surface-3 text-muted hover:text-foreground'
+                      action === a ? 'bg-cyan text-white font-bold' : 'bg-elevated text-muted hover:text-primary'
                     }`}
                     onClick={() => setAction(a)}
                   >
@@ -185,14 +185,14 @@ export const TradeLog: React.FC<TradeLogProps> = ({
                     placeholder="价格"
                     value={price || ''}
                     onChange={e => setPrice(Number(e.target.value))}
-                    className="flex-1 bg-surface-3 rounded px-1.5 py-0.5 text-[11px]"
+                    className="flex-1 bg-elevated rounded px-1.5 py-0.5 text-[11px]"
                   />
                   <input
                     type="number"
                     placeholder="股数"
                     value={shares || ''}
                     onChange={e => setShares(Number(e.target.value))}
-                    className="flex-1 bg-surface-3 rounded px-1.5 py-0.5 text-[11px]"
+                    className="flex-1 bg-elevated rounded px-1.5 py-0.5 text-[11px]"
                     step={100}
                   />
                 </div>
@@ -203,20 +203,20 @@ export const TradeLog: React.FC<TradeLogProps> = ({
                 placeholder="操作理由（可选）"
                 value={reason}
                 onChange={e => setReason(e.target.value)}
-                className="w-full bg-surface-3 rounded px-1.5 py-0.5 text-[11px]"
+                className="w-full bg-elevated rounded px-1.5 py-0.5 text-[11px]"
               />
               {/* 按钮 */}
               <div className="flex gap-1">
                 <button
                   type="button"
-                  className="flex-1 py-0.5 rounded bg-cyan text-black text-[10px] font-bold"
+                  className="flex-1 py-0.5 rounded bg-cyan text-white text-[10px] font-bold"
                   onClick={handleSubmit}
                 >
                   保存
                 </button>
                 <button
                   type="button"
-                  className="flex-1 py-0.5 rounded bg-surface-3 text-muted text-[10px]"
+                  className="flex-1 py-0.5 rounded bg-elevated text-muted text-[10px]"
                   onClick={() => setShowForm(false)}
                 >
                   取消
@@ -235,7 +235,7 @@ export const TradeLog: React.FC<TradeLogProps> = ({
               {logs.map(log => {
                 const al = ACTION_LABELS[log.action] || ACTION_LABELS.watch;
                 return (
-                  <div key={log.id} className="bg-surface-2 rounded p-1.5 text-[10px]">
+                  <div key={log.id} className="bg-elevated rounded p-1.5 text-[10px]">
                     <div className="flex items-center justify-between">
                       <span>
                         <span className={al.color}>{al.emoji} {al.label}</span>
@@ -267,7 +267,7 @@ export const TradeLog: React.FC<TradeLogProps> = ({
                                   key={r}
                                   type="button"
                                   className={`flex-1 py-0.5 rounded text-[9px] ${
-                                    reviewResult === r ? 'bg-cyan text-black' : 'bg-surface-3'
+                                    reviewResult === r ? 'bg-cyan text-white' : 'bg-elevated'
                                   }`}
                                   onClick={() => setReviewResult(r)}
                                 >
@@ -281,27 +281,27 @@ export const TradeLog: React.FC<TradeLogProps> = ({
                                 placeholder="盈亏金额"
                                 value={reviewPnl || ''}
                                 onChange={e => setReviewPnl(Number(e.target.value))}
-                                className="flex-1 bg-surface-3 rounded px-1 py-0.5 text-[9px]"
+                                className="flex-1 bg-elevated rounded px-1 py-0.5 text-[9px]"
                               />
                               <input
                                 type="text"
                                 placeholder="复盘备注"
                                 value={reviewNote}
                                 onChange={e => setReviewNote(e.target.value)}
-                                className="flex-1 bg-surface-3 rounded px-1 py-0.5 text-[9px]"
+                                className="flex-1 bg-elevated rounded px-1 py-0.5 text-[9px]"
                               />
                             </div>
                             <div className="flex gap-1">
                               <button
                                 type="button"
-                                className="flex-1 py-0.5 rounded bg-cyan text-black text-[9px]"
+                                className="flex-1 py-0.5 rounded bg-cyan text-white text-[9px]"
                                 onClick={() => handleReview(log.id)}
                               >
                                 保存
                               </button>
                               <button
                                 type="button"
-                                className="py-0.5 px-1 rounded bg-surface-3 text-[9px]"
+                                className="py-0.5 px-1 rounded bg-elevated text-[9px]"
                                 onClick={() => setReviewingId(null)}
                               >
                                 取消

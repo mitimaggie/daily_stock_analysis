@@ -126,7 +126,7 @@ export const ScoreGauge: React.FC<ScoreGaugeProps> = ({
             cy={width / 2}
             r={radius}
             fill="none"
-            stroke="rgba(255, 255, 255, 0.05)"
+            stroke="rgba(0, 0, 0, 0.08)"
             strokeWidth={stroke}
             strokeLinecap="round"
             strokeDasharray={`${arcLength} ${circumference}`}
@@ -165,7 +165,7 @@ export const ScoreGauge: React.FC<ScoreGaugeProps> = ({
         {/* 中心数值 */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span
-            className={`font-bold ${fontSize} text-white`}
+            className={`font-bold ${fontSize} text-primary`}
             style={{ 
               textShadow: `0 0 30px ${glowColor}`,
             }}

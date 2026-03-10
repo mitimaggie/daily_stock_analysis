@@ -63,9 +63,9 @@ const ScreenerPage: React.FC = () => {
   };
 
   const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-emerald-400';
+    if (score >= 80) return 'text-emerald-600';
     if (score >= 60) return 'text-yellow-400';
-    return 'text-red-400';
+    return 'text-red-600';
   };
 
   const getScoreBg = (score: number) => {
@@ -75,10 +75,10 @@ const ScreenerPage: React.FC = () => {
   };
 
   const getAdviceColor = (advice: string) => {
-    if (advice.includes('买入') || advice.includes('吸纳')) return 'text-emerald-400 bg-emerald-500/10';
-    if (advice.includes('卖出') || advice.includes('减仓')) return 'text-red-400 bg-red-500/10';
+    if (advice.includes('买入') || advice.includes('吸纳')) return 'text-emerald-600 bg-emerald-500/10';
+    if (advice.includes('卖出') || advice.includes('减仓')) return 'text-red-600 bg-red-500/10';
     if (advice.includes('持有')) return 'text-cyan bg-cyan/10';
-    return 'text-white/50 bg-white/5';
+    return 'text-secondary bg-black/[0.03]';
   };
 
   return (
@@ -86,7 +86,7 @@ const ScreenerPage: React.FC = () => {
       <div className="max-w-lg lg:max-w-3xl mx-auto px-4 py-4 space-y-4">
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
-          <h1 className="text-[18px] font-bold text-white">智能选股</h1>
+          <h1 className="text-[18px] font-bold text-primary">智能选股</h1>
           <span className="text-[11px] text-muted font-mono">
             {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })}
           </span>
@@ -94,13 +94,13 @@ const ScreenerPage: React.FC = () => {
 
         {/* 筛选条件卡片 */}
         <div className="terminal-card p-4 space-y-4">
-          <div className="text-[12px] text-white/40 font-medium tracking-wider uppercase mb-1">
+          <div className="text-[12px] text-muted font-medium tracking-wider uppercase mb-1">
             筛选条件
           </div>
 
           {/* 评分区间 */}
           <div className="space-y-2">
-            <label className="text-[12px] text-white/50 font-medium">评分区间</label>
+            <label className="text-[12px] text-secondary font-medium">评分区间</label>
             <div className="flex items-center gap-3">
               <div className="flex-1">
                 <input
@@ -112,7 +112,7 @@ const ScreenerPage: React.FC = () => {
                     const v = Number(e.target.value);
                     setMinScore(Math.min(v, maxScore));
                   }}
-                  className="w-full accent-cyan h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer
+                  className="w-full accent-cyan h-1.5 bg-black/[0.06] rounded-full appearance-none cursor-pointer
                     [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
                     [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan [&::-webkit-slider-thumb]:shadow-md"
                 />
@@ -124,17 +124,17 @@ const ScreenerPage: React.FC = () => {
                   max={100}
                   value={minScore}
                   onChange={(e) => setMinScore(Math.min(Number(e.target.value), maxScore))}
-                  className="w-14 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[12px] text-white text-center font-mono
+                  className="w-14 bg-black/[0.03] border border-black/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-primary text-center font-mono
                     focus:outline-none focus:border-cyan/40 transition"
                 />
-                <span className="text-white/20 text-[12px]">—</span>
+                <span className="text-muted/70 text-[12px]">—</span>
                 <input
                   type="number"
                   min={0}
                   max={100}
                   value={maxScore}
                   onChange={(e) => setMaxScore(Math.max(Number(e.target.value), minScore))}
-                  className="w-14 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[12px] text-white text-center font-mono
+                  className="w-14 bg-black/[0.03] border border-black/[0.08] rounded-lg px-2 py-1.5 text-[12px] text-primary text-center font-mono
                     focus:outline-none focus:border-cyan/40 transition"
                 />
               </div>
@@ -144,7 +144,7 @@ const ScreenerPage: React.FC = () => {
           {/* 回溯天数 + 操作建议 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-[12px] text-white/50 font-medium">回溯天数</label>
+              <label className="text-[12px] text-secondary font-medium">回溯天数</label>
               <div className="flex gap-1.5">
                 {DAYS_OPTIONS.map((d) => (
                   <button
@@ -154,7 +154,7 @@ const ScreenerPage: React.FC = () => {
                     className={`flex-1 py-1.5 rounded-lg text-[12px] font-medium transition-all ${
                       days === d
                         ? 'bg-cyan/15 text-cyan border border-cyan/30'
-                        : 'bg-white/[0.03] text-white/40 border border-white/[0.06] hover:border-white/15 hover:text-white/60'
+                        : 'bg-black/[0.02] text-muted border border-black/[0.04] hover:border-black/[0.08] hover:text-secondary'
                     }`}
                   >
                     {d}天
@@ -164,15 +164,15 @@ const ScreenerPage: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[12px] text-white/50 font-medium">操作建议</label>
+              <label className="text-[12px] text-secondary font-medium">操作建议</label>
               <select
                 value={adviceFilter}
                 onChange={(e) => setAdviceFilter(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[12px] text-white
+                className="w-full bg-black/[0.03] border border-black/[0.08] rounded-lg px-3 py-1.5 text-[12px] text-primary
                   focus:outline-none focus:border-cyan/40 transition appearance-none cursor-pointer"
               >
                 {ADVICE_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt} className="bg-[#111118] text-white">
+                  <option key={opt} value={opt} className="bg-card text-primary">
                     {opt}
                   </option>
                 ))}
@@ -182,7 +182,7 @@ const ScreenerPage: React.FC = () => {
 
           {/* 返回数量 */}
           <div className="flex items-center justify-between">
-            <label className="text-[12px] text-white/50 font-medium">最多返回</label>
+            <label className="text-[12px] text-secondary font-medium">最多返回</label>
             <div className="flex items-center gap-2">
               {[10, 20, 50].map((n) => (
                 <button
@@ -191,8 +191,8 @@ const ScreenerPage: React.FC = () => {
                   onClick={() => setLimit(n)}
                   className={`px-3 py-1 rounded-lg text-[11px] font-medium transition-all ${
                     limit === n
-                      ? 'bg-white/10 text-white/80 border border-white/15'
-                      : 'text-white/30 hover:text-white/50'
+                      ? 'bg-black/[0.06] text-primary/80 border border-black/[0.08]'
+                      : 'text-muted hover:text-secondary'
                   }`}
                 >
                   {n}条
@@ -240,22 +240,22 @@ const ScreenerPage: React.FC = () => {
         {searched && !error && (
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1">
-              <span className="text-[13px] text-white/70 font-medium">
+              <span className="text-[13px] text-primary/70 font-medium">
                 筛选结果
               </span>
-              <span className="text-[11px] text-white/30 font-mono">
+              <span className="text-[11px] text-muted font-mono">
                 共 {total} 只
               </span>
             </div>
 
             {results.length === 0 ? (
               <div className="terminal-card p-8 flex flex-col items-center gap-3">
-                <svg className="w-10 h-10 text-white/10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-10 h-10 text-muted/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                     d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <p className="text-[13px] text-white/30">没有符合条件的股票</p>
-                <p className="text-[11px] text-white/15">试试降低评分门槛或扩大回溯天数</p>
+                <p className="text-[13px] text-muted">没有符合条件的股票</p>
+                <p className="text-[11px] text-muted/50">试试降低评分门槛或扩大回溯天数</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -264,8 +264,8 @@ const ScreenerPage: React.FC = () => {
                     key={item.code}
                     type="button"
                     onClick={() => handleStockClick(item.code)}
-                    className="w-full terminal-card p-3.5 flex items-center gap-3 hover:bg-white/[0.03]
-                      hover:border-white/15 transition-all group text-left"
+                    className="w-full terminal-card p-3.5 flex items-center gap-3 hover:bg-black/[0.02]
+                      hover:border-black/[0.08] transition-all group text-left"
                   >
                     {/* 评分圆圈 */}
                     <div className={`w-11 h-11 rounded-full border flex items-center justify-center flex-shrink-0 ${getScoreBg(item.score)}`}>
@@ -277,19 +277,19 @@ const ScreenerPage: React.FC = () => {
                     {/* 股票信息 */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-[14px] font-semibold text-white/90 font-mono">{item.code}</span>
-                        <span className="text-[12px] text-white/50 truncate">{item.name}</span>
+                        <span className="text-[14px] font-semibold text-primary/90 font-mono">{item.code}</span>
+                        <span className="text-[12px] text-secondary truncate">{item.name}</span>
                       </div>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getAdviceColor(item.advice)}`}>
                           {mapAdviceDisplay(item.advice)}
                         </span>
-                        <span className="text-[10px] text-white/20 font-mono">{item.analyzedAt}</span>
+                        <span className="text-[10px] text-muted/70 font-mono">{item.analyzedAt}</span>
                       </div>
                     </div>
 
                     {/* 箭头 */}
-                    <svg className="w-4 h-4 text-white/15 group-hover:text-white/30 transition flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 text-muted/50 group-hover:text-muted transition flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
@@ -306,8 +306,8 @@ const ScreenerPage: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
-            <p className="text-[13px] text-white/40 font-medium">设置筛选条件，发现高分好股</p>
-            <p className="text-[11px] text-white/20 text-center leading-relaxed">
+            <p className="text-[13px] text-muted font-medium">设置筛选条件，发现高分好股</p>
+            <p className="text-[11px] text-muted/70 text-center leading-relaxed">
               从近期分析记录中筛选评分达标的股票<br />
               快速定位值得关注的投资机会
             </p>

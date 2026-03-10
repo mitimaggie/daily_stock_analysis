@@ -53,7 +53,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ stockCode, limit = 20 })
       <div className="flex items-center justify-between mb-3">
         <div className="mb-3 flex items-baseline gap-2">
           <span className="label-uppercase">F10 DISCLOSURE</span>
-          <h3 className="text-base font-semibold text-white">公告与披露</h3>
+          <h3 className="text-base font-semibold text-primary">公告与披露</h3>
         </div>
         <div className="flex items-center gap-2">
           {isLoading && (
@@ -62,7 +62,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ stockCode, limit = 20 })
           <button
             type="button"
             onClick={fetchDisclosures}
-            className="text-xs text-cyan hover:text-white transition-colors"
+            className="text-xs text-cyan hover:text-primary transition-colors"
           >
             刷新
           </button>
@@ -75,7 +75,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ stockCode, limit = 20 })
           <button
             type="button"
             onClick={fetchDisclosures}
-            className="text-xs text-cyan hover:text-white transition-colors"
+            className="text-xs text-cyan hover:text-primary transition-colors"
           >
             重试
           </button>
@@ -98,15 +98,15 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ stockCode, limit = 20 })
           {items.map((item: DisclosureItem, index: number) => (
             <div
               key={`${item.title}-${index}`}
-              className="group p-3 rounded-lg bg-elevated/80 border border-white/5 hover:border-cyan/30 hover:bg-hover transition-colors"
+              className="group p-3 rounded-lg bg-elevated/80 border border-black/[0.03] hover:border-cyan/30 hover:bg-hover transition-colors"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0 text-left">
-                  <p className="text-sm text-white font-medium leading-snug">
+                  <p className="text-sm text-primary font-medium leading-snug">
                     {item.title}
                   </p>
                   {item.pub_date && (
-                    <p className="text-[10px] text-white/30 mt-1 font-mono">{item.pub_date}</p>
+                    <p className="text-[10px] text-muted mt-1 font-mono">{item.pub_date}</p>
                   )}
                 </div>
                 {item.url && (
@@ -114,7 +114,7 @@ export const ReportNews: React.FC<ReportNewsProps> = ({ stockCode, limit = 20 })
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-cyan hover:text-white transition-colors inline-flex items-center gap-1 whitespace-nowrap"
+                    className="text-xs text-cyan hover:text-primary transition-colors inline-flex items-center gap-1 whitespace-nowrap"
                   >
                     查看
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

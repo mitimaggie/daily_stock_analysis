@@ -9,7 +9,7 @@ const ConceptHeatMap: React.FC<ConceptHeatMapProps> = ({ concepts }) => {
   if (!concepts || concepts.length === 0) {
     return (
       <div className="terminal-card p-4">
-        <h3 className="text-[14px] font-semibold text-white mb-3 flex items-center gap-2">
+        <h3 className="text-[14px] font-semibold text-primary mb-3 flex items-center gap-2">
           <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
           </svg>
@@ -22,7 +22,7 @@ const ConceptHeatMap: React.FC<ConceptHeatMapProps> = ({ concepts }) => {
 
   return (
     <div className="terminal-card p-4">
-      <h3 className="text-[14px] font-semibold text-white mb-3 flex items-center gap-2">
+      <h3 className="text-[14px] font-semibold text-primary mb-3 flex items-center gap-2">
         <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
         </svg>
@@ -42,7 +42,7 @@ const ConceptHeatMap: React.FC<ConceptHeatMapProps> = ({ concepts }) => {
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-[13px] font-medium text-white truncate">{item.name}</span>
+                  <span className="text-[13px] font-medium text-primary truncate">{item.name}</span>
                   <span className={`text-[12px] font-mono font-semibold ${isUp ? 'text-success' : 'text-danger'}`}>
                     {isUp ? '+' : ''}{item.pctChg.toFixed(1)}%
                   </span>

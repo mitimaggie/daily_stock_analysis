@@ -9,29 +9,29 @@ interface QuantAnalysisProps {
 
 /** RSI 结论 */
 function rsiVerdict(val: number, _status: string): { text: string; color: string } {
-  if (typeof val !== 'number' || isNaN(val)) return { text: '--', color: 'text-white/40' };
+  if (typeof val !== 'number' || isNaN(val)) return { text: '--', color: 'text-muted' };
   if (val > 80) return { text: `严重超买(${val.toFixed(1)})`, color: 'text-danger' };
   if (val > 70) return { text: `超买(${val.toFixed(1)})，短线回调风险`, color: 'text-danger' };
   if (val < 20) return { text: `严重超卖(${val.toFixed(1)})`, color: 'text-success' };
   if (val < 30) return { text: `超卖(${val.toFixed(1)})，反弹机会`, color: 'text-success' };
-  if (val >= 50) return { text: `偏强(${val.toFixed(1)})`, color: 'text-white/70' };
-  return { text: `偏弱(${val.toFixed(1)})`, color: 'text-white/50' };
+  if (val >= 50) return { text: `偏强(${val.toFixed(1)})`, color: 'text-primary/70' };
+  return { text: `偏弱(${val.toFixed(1)})`, color: 'text-secondary' };
 }
 
 /** KDJ 结论 */
 function kdjVerdict(k: number, j: number, kdjStatus: string): { text: string; color: string } {
-  if (typeof k !== 'number' || typeof j !== 'number' || isNaN(k) || isNaN(j)) return { text: '--', color: 'text-white/40' };
+  if (typeof k !== 'number' || typeof j !== 'number' || isNaN(k) || isNaN(j)) return { text: '--', color: 'text-muted' };
   if (j > 100) return { text: `J=${j.toFixed(0)} 严重超买，回调概率大`, color: 'text-danger' };
   if (j > 80) return { text: `J=${j.toFixed(0)} 高位，注意回调`, color: 'text-[#ff8c00]' };
   if (j < 0) return { text: `J=${j.toFixed(0)} 严重超卖，反弹在即`, color: 'text-success' };
   if (j < 20) return { text: `J=${j.toFixed(0)} 低位，关注企稳信号`, color: 'text-success' };
-  if (kdjStatus) return { text: `K${k.toFixed(0)}/J${j.toFixed(0)} ${kdjStatus}`, color: k > 50 ? 'text-white/70' : 'text-white/50' };
-  return { text: `K${k.toFixed(0)}/J${j.toFixed(0)}`, color: 'text-white/60' };
+  if (kdjStatus) return { text: `K${k.toFixed(0)}/J${j.toFixed(0)} ${kdjStatus}`, color: k > 50 ? 'text-primary/70' : 'text-secondary' };
+  return { text: `K${k.toFixed(0)}/J${j.toFixed(0)}`, color: 'text-secondary' };
 }
 
 /** MACD 结论 */
 function macdVerdict(bar: number, status: string): { text: string; color: string } {
-  if (typeof bar !== 'number' || isNaN(bar)) return { text: '--', color: 'text-white/40' };
+  if (typeof bar !== 'number' || isNaN(bar)) return { text: '--', color: 'text-muted' };
   const bullish = bar > 0;
   const statusMap: Record<string, { text: string; color: string }> = {
     '零轴上金叉': { text: '零轴上金叉，强买入信号', color: 'text-success' },
@@ -48,17 +48,17 @@ function macdVerdict(bar: number, status: string): { text: string; color: string
 
 /** 布林带%B 结论 */
 function bbVerdict(pctB: number): { text: string; color: string } {
-  if (typeof pctB !== 'number' || isNaN(pctB)) return { text: '--', color: 'text-white/40' };
+  if (typeof pctB !== 'number' || isNaN(pctB)) return { text: '--', color: 'text-muted' };
   if (pctB > 1.0) return { text: `${pctB.toFixed(2)} 突破上轨，超强/超买`, color: 'text-danger' };
   if (pctB > 0.8) return { text: `${pctB.toFixed(2)} 接近上轨，注意回调`, color: 'text-[#ff8c00]' };
   if (pctB < 0) return { text: `${pctB.toFixed(2)} 跌破下轨，超弱/超卖`, color: 'text-success' };
   if (pctB < 0.2) return { text: `${pctB.toFixed(2)} 接近下轨，关注支撑`, color: 'text-success' };
-  return { text: `${pctB.toFixed(2)} 中轨附近`, color: 'text-white/50' };
+  return { text: `${pctB.toFixed(2)} 中轨附近`, color: 'text-secondary' };
 }
 
 /** 均线排列结论 */
 function maVerdict(alignment: string): { text: string; color: string } {
-  if (!alignment) return { text: '--', color: 'text-white/40' };
+  if (!alignment) return { text: '--', color: 'text-muted' };
   const lower = alignment.toLowerCase();
   if (lower.includes('强势多头') || lower.includes('多头排列'))
     return { text: alignment, color: 'text-success' };
@@ -81,12 +81,12 @@ const IndicatorCard: React.FC<{
   color: string;
   detail?: string;
 }> = ({ label, conclusion, color, detail }) => (
-  <div className="bg-white/[0.02] rounded-lg p-2.5 border border-white/[0.04]">
+  <div className="bg-black/[0.02] rounded-lg p-2.5 border border-black/[0.04]">
     <div className="flex items-center justify-between mb-1">
-      <span className="text-[10px] text-white/30 font-medium">{label}</span>
+      <span className="text-[10px] text-muted font-medium">{label}</span>
     </div>
     <div className={`text-[12px] font-bold leading-snug ${color}`}>{conclusion}</div>
-    {detail && <div className="text-[10px] text-white/25 mt-1">{detail}</div>}
+    {detail && <div className="text-[10px] text-muted mt-1">{detail}</div>}
   </div>
 );
 
@@ -122,25 +122,25 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
   const maV = maVerdict(maAlignment);
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4">
       <button
         type="button"
         className="w-full flex items-center justify-between text-left mb-3"
         onClick={() => setExpanded(!expanded)}
       >
-        <h3 className="text-sm font-semibold text-white/70">量化诊断</h3>
-        <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
+        <h3 className="text-sm font-semibold text-primary/70">量化诊断</h3>
+        <span className="text-xs text-muted">{expanded ? '▲' : '▼'}</span>
       </button>
 
       {/* 量化诊断结论（始终可见）—— 只显示信号标签，不显示数字评分 */}
-      <div className="p-2.5 rounded-lg bg-white/[0.03] border border-white/[0.05] mb-3">
+      <div className="p-2.5 rounded-lg bg-black/[0.02] border border-black/[0.05] mb-3">
         <div className="flex items-center gap-2 mb-1.5">
           {buySignal && (
             <span className={`text-sm font-semibold px-2.5 py-1 rounded ${
-              ['买入','强烈买入','激进买入','加仓'].includes(buySignal)
+              ['强信号做多','信号偏强','买入'].includes(buySignal)
                 ? 'bg-green-500/15 text-green-400'
                 : ['清仓','减仓'].includes(buySignal)
-                  ? 'bg-red-500/15 text-red-400'
+                  ? 'bg-red-500/15 text-red-600'
                   : 'bg-yellow-500/15 text-yellow-400'
             }`}>
               {buySignal}
@@ -149,7 +149,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         </div>
         {/* 信号理由 */}
         {(qe.signal_reasons ?? qe.signalReasons)?.length > 0 && (
-          <div className="text-[11px] text-white/50 leading-relaxed">
+          <div className="text-[11px] text-secondary leading-relaxed">
             {(qe.signal_reasons ?? qe.signalReasons).slice(0, 4).join(' · ')}
           </div>
         )}
@@ -170,41 +170,41 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
       </div>
 
       {/* 指标一行摘要 */}
-      <div className="text-[11px] text-white/60 leading-relaxed mb-2 font-mono flex flex-wrap gap-x-2 gap-y-0.5">
+      <div className="text-[11px] text-secondary leading-relaxed mb-2 font-mono flex flex-wrap gap-x-2 gap-y-0.5">
         {(qe.trend_status ?? qe.trendStatus) && (
           <span>趋势:<span className={maV.color}>{qe.trend_status ?? qe.trendStatus}</span></span>
         )}
         {macdStatus && (
-          <span className="text-white/20">|</span>
+          <span className="text-muted/70">|</span>
         )}
         {macdStatus && (
           <span>MACD:<span className={macdV.color}>{macdStatus}</span></span>
         )}
         {typeof rsiVal === 'number' && (
-          <><span className="text-white/20">|</span><span>RSI:<span className={rsiV.color}>{rsiVal.toFixed(0)}</span></span></>
+          <><span className="text-muted/70">|</span><span>RSI:<span className={rsiV.color}>{rsiVal.toFixed(0)}</span></span></>
         )}
         {kdjStatus && (
-          <><span className="text-white/20">|</span><span>KDJ:<span className={kdjV.color}>{kdjStatus}</span></span></>
+          <><span className="text-muted/70">|</span><span>KDJ:<span className={kdjV.color}>{kdjStatus}</span></span></>
         )}
         {(qe.volume_status ?? qe.volumeStatus) && (
-          <><span className="text-white/20">|</span><span>量能:<span className="text-white/70">{qe.volume_status ?? qe.volumeStatus}{(qe.volume_ratio ?? qe.volumeRatio) != null ? `(${(qe.volume_ratio ?? qe.volumeRatio).toFixed(2)})` : ''}</span></span></>
+          <><span className="text-muted/70">|</span>          <span>量能:<span className="text-primary/70">{qe.volume_status ?? qe.volumeStatus}{(qe.volume_ratio ?? qe.volumeRatio) != null ? `(${(qe.volume_ratio ?? qe.volumeRatio).toFixed(2)})` : ''}</span></span></>
         )}
         {(qe.chip_signal ?? qe.chipSignal) && (
-          <><span className="text-white/20">|</span><span>筹码:<span className="text-white/70">{qe.chip_signal ?? qe.chipSignal}</span></span></>
+          <><span className="text-muted/70">|</span><span>筹码:<span className="text-primary/70">{qe.chip_signal ?? qe.chipSignal}</span></span></>
         )}
         {(qe.valuation_verdict ?? qe.valuationVerdict) && (
-          <><span className="text-white/20">|</span><span>估值:<span className="text-white/70">{qe.valuation_verdict ?? qe.valuationVerdict}</span></span></>
+          <><span className="text-muted/70">|</span><span>估值:<span className="text-primary/70">{qe.valuation_verdict ?? qe.valuationVerdict}</span></span></>
         )}
         {(qe.capital_flow_signal ?? qe.capitalFlowSignal) && (qe.capital_flow_signal ?? qe.capitalFlowSignal) !== '资金面数据正常' && (
-          <><span className="text-white/20">|</span><span>资金:<span className="text-white/70">{qe.capital_flow_signal ?? qe.capitalFlowSignal}</span></span></>
+          <><span className="text-muted/70">|</span><span>资金:<span className="text-primary/70">{qe.capital_flow_signal ?? qe.capitalFlowSignal}</span></span></>
         )}
         {(qe.sector_name ?? qe.sectorName) && (() => {
           const sp = qe.sector_pct ?? qe.sectorPct;
           const s5d = qe.sector_5d_pct ?? qe.sector5dPct;
           const sRank = qe.sector_rank ?? qe.sectorRank;
           const sTotal = qe.sector_rank_total ?? qe.sectorRankTotal;
-          return <><span className="text-white/20">|</span>
-          <span>板块:<span className="text-white/70">{qe.sector_name ?? qe.sectorName}
+          return <><span className="text-muted/70">|</span>
+          <span>板块:<span className="text-primary/70">{qe.sector_name ?? qe.sectorName}
             {typeof sp === 'number' && ` ${sp >= 0 ? '+' : ''}${sp.toFixed(2)}%`}
             {typeof sRank === 'number' && typeof sTotal === 'number' && ` 排名${sRank}/${sTotal}`}
             {typeof s5d === 'number' && ` 5日${s5d >= 0 ? '+' : ''}${s5d.toFixed(1)}%`}
@@ -217,8 +217,8 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
             sideways: { label: '震荡市', color: 'text-warning' },
             recovery: { label: '修复中', color: 'text-cyan-400' },
           };
-          const r = regimeMap[qe.market_regime ?? qe.marketRegime] ?? { label: qe.market_regime ?? qe.marketRegime, color: 'text-white/50' };
-          return <><span className="text-white/20">|</span><span>大盘:<span className={r.color}>{r.label}</span></span></>;
+          const r = regimeMap[qe.market_regime ?? qe.marketRegime] ?? { label: qe.market_regime ?? qe.marketRegime, color: 'text-secondary' };
+          return <><span className="text-muted/70">|</span><span>大盘:<span className={r.color}>{r.label}</span></span></>;
         })()}
       </div>
 
@@ -226,7 +226,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
         <div className="space-y-4">
           {/* 技术指标（每个都带结论） */}
           <div>
-            <h4 className="text-[11px] font-medium text-white/40 mb-2">技术指标</h4>
+            <h4 className="text-[11px] font-medium text-muted mb-2">技术指标</h4>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <IndicatorCard
                 label="RSI(12)"
@@ -266,7 +266,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 <IndicatorCard
                   label="ATR(14)"
                   conclusion={`${atr14.toFixed(2)}`}
-                  color="text-white/60"
+                  color="text-secondary"
                   detail={`日波幅 ≈ ${atr14.toFixed(2)} 元`}
                 />
               )}
@@ -275,26 +275,26 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
 
           {/* 估值 + 资金面 + 筹码（结论简洁） */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-white/[0.03] rounded-lg p-2.5">
-              <div className="text-[10px] text-white/30 mb-1">估值</div>
-              <div className={`text-[13px] font-semibold ${(qe.valuation_score ?? qe.valuationScore) <= 3 ? 'text-[#ff4d4d]' : (qe.valuation_score ?? qe.valuationScore) >= 7 ? 'text-[#00d46a]' : 'text-white/80'}`}>
+            <div className="bg-black/[0.02] rounded-lg p-2.5">
+              <div className="text-[10px] text-muted mb-1">估值</div>
+              <div className={`text-[13px] font-semibold ${(qe.valuation_score ?? qe.valuationScore) <= 3 ? 'text-[#ff4d4d]' : (qe.valuation_score ?? qe.valuationScore) >= 7 ? 'text-[#00d46a]' : 'text-primary/80'}`}>
                 {qe.valuation_verdict ?? qe.valuationVerdict ?? '--'}
               </div>
-              <div className="text-[10px] text-white/25 mt-1">PE {(qe.pe_ratio ?? qe.peRatio)?.toFixed(1) ?? '--'} · PB {(qe.pb_ratio ?? qe.pbRatio)?.toFixed(2) ?? '--'}</div>
+              <div className="text-[10px] text-muted mt-1">PE {(qe.pe_ratio ?? qe.peRatio)?.toFixed(1) ?? '--'} · PB {(qe.pb_ratio ?? qe.pbRatio)?.toFixed(2) ?? '--'}</div>
             </div>
-            <div className="bg-white/[0.03] rounded-lg p-2.5">
-              <div className="text-[10px] text-white/30 mb-1">资金面</div>
-              <div className={`text-[13px] font-semibold ${(qe.capital_flow_score ?? qe.capitalFlowScore) >= 7 ? 'text-[#00d46a]' : (qe.capital_flow_score ?? qe.capitalFlowScore) <= 3 ? 'text-[#ff4d4d]' : 'text-white/80'}`}>
+            <div className="bg-black/[0.02] rounded-lg p-2.5">
+              <div className="text-[10px] text-muted mb-1">资金面</div>
+              <div className={`text-[13px] font-semibold ${(qe.capital_flow_score ?? qe.capitalFlowScore) >= 7 ? 'text-[#00d46a]' : (qe.capital_flow_score ?? qe.capitalFlowScore) <= 3 ? 'text-[#ff4d4d]' : 'text-primary/80'}`}>
                 {qe.capital_flow_signal ?? qe.capitalFlowSignal ?? '--'}
               </div>
-              <div className="text-[10px] text-white/25 mt-1">{qe.capital_flow_score ?? qe.capitalFlowScore ?? '--'}/10{(qe.suggested_position_pct ?? qe.suggestedPositionPct) != null ? ` · 仓位${qe.suggested_position_pct ?? qe.suggestedPositionPct}%` : ''}</div>
+              <div className="text-[10px] text-muted mt-1">{qe.capital_flow_score ?? qe.capitalFlowScore ?? '--'}/10{(qe.suggested_position_pct ?? qe.suggestedPositionPct) != null ? ` · 仓位${qe.suggested_position_pct ?? qe.suggestedPositionPct}%` : ''}</div>
             </div>
-            <div className="bg-white/[0.03] rounded-lg p-2.5">
-              <div className="text-[10px] text-white/30 mb-1">筹码</div>
-              <div className={`text-[13px] font-semibold ${(qe.chip_score ?? qe.chipScore) >= 7 ? 'text-[#00d46a]' : (qe.chip_score ?? qe.chipScore) <= 3 ? 'text-[#ff4d4d]' : 'text-white/80'}`}>
+            <div className="bg-black/[0.02] rounded-lg p-2.5">
+              <div className="text-[10px] text-muted mb-1">筹码</div>
+              <div className={`text-[13px] font-semibold ${(qe.chip_score ?? qe.chipScore) >= 7 ? 'text-[#00d46a]' : (qe.chip_score ?? qe.chipScore) <= 3 ? 'text-[#ff4d4d]' : 'text-primary/80'}`}>
                 {qe.chip_signal ?? qe.chipSignal ?? '--'}
               </div>
-              <div className="text-[10px] text-white/25 mt-1">{qe.chip_score ?? qe.chipScore ?? '--'}/10{(qe.profit_ratio ?? qe.profitRatio) != null ? ` · 获利${(qe.profit_ratio ?? qe.profitRatio)?.toFixed(0)}%` : ''}</div>
+              <div className="text-[10px] text-muted mt-1">{qe.chip_score ?? qe.chipScore ?? '--'}/10{(qe.profit_ratio ?? qe.profitRatio) != null ? ` · 获利${(qe.profit_ratio ?? qe.profitRatio)?.toFixed(0)}%` : ''}</div>
             </div>
           </div>
 
@@ -302,8 +302,8 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* 周线趋势 */}
           {(qe.weekly_trend) && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">周线大背景</h4>
-              <div className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
+              <h4 className="text-[11px] font-medium text-muted mb-2">周线大背景</h4>
+              <div className="bg-black/[0.02] rounded-lg p-3 border border-black/[0.04]">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className={`text-[13px] font-bold ${
                     qe.weekly_trend === '多头' ? 'text-success' :
@@ -317,14 +317,14 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                     )}
                   </span>
                   {qe.weekly_rsi != null && (
-                    <span className="text-[10px] text-white/30 font-mono">周RSI {(qe.weekly_rsi as number).toFixed(0)}</span>
+                    <span className="text-[10px] text-muted font-mono">周RSI {(qe.weekly_rsi as number).toFixed(0)}</span>
                   )}
                 </div>
                 {qe.weekly_trend_note && (
-                  <div className="text-[10px] text-white/40 leading-relaxed">{qe.weekly_trend_note}</div>
+                  <div className="text-[10px] text-muted leading-relaxed">{qe.weekly_trend_note}</div>
                 )}
                 {(qe.weekly_ma5 || qe.weekly_ma10 || qe.weekly_ma20) && (
-                  <div className="text-[10px] text-white/25 mt-1 font-mono">
+                  <div className="text-[10px] text-muted mt-1 font-mono">
                     周MA5={qe.weekly_ma5?.toFixed(2) ?? '--'} MA10={qe.weekly_ma10?.toFixed(2) ?? '--'} MA20={qe.weekly_ma20?.toFixed(2) ?? '--'}
                   </div>
                 )}
@@ -335,16 +335,16 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* 经典形态 */}
           {qe.chart_pattern && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">经典形态识别</h4>
+              <h4 className="text-[11px] font-medium text-muted mb-2">经典形态识别</h4>
               <div className={`rounded-lg p-3 border ${
                 qe.chart_pattern_signal === '看多' ? 'bg-success/10 border-success/20' :
                 qe.chart_pattern_signal === '看空' ? 'bg-danger/10 border-danger/20' :
-                'bg-white/[0.03] border-white/[0.04]'
+                'bg-black/[0.02] border-black/[0.04]'
               }`}>
                 <div className="flex items-center gap-2 mb-1">
                   <span className={`text-[13px] font-bold ${
                     qe.chart_pattern_signal === '看多' ? 'text-success' :
-                    qe.chart_pattern_signal === '看空' ? 'text-danger' : 'text-white/80'
+                    qe.chart_pattern_signal === '看空' ? 'text-danger' : 'text-primary/80'
                   }`}>
                     {qe.chart_pattern}
                   </span>
@@ -360,7 +360,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                   )}
                 </div>
                 {qe.chart_pattern_note && (
-                  <div className="text-[10px] text-white/40 leading-relaxed">{qe.chart_pattern_note}</div>
+                  <div className="text-[10px] text-muted leading-relaxed">{qe.chart_pattern_note}</div>
                 )}
               </div>
             </div>
@@ -369,13 +369,13 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* 黄金分割回撤位 */}
           {(qe.fib_level_382 || qe.fib_swing_high) && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">黄金分割回撤位</h4>
-              <div className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
+              <h4 className="text-[11px] font-medium text-muted mb-2">黄金分割回撤位</h4>
+              <div className="bg-black/[0.02] rounded-lg p-3 border border-black/[0.04]">
                 <div className="flex items-center justify-between mb-2">
                   <span className={`text-[12px] font-semibold ${
                     qe.fib_signal?.includes('支撑') ? 'text-success' :
                     qe.fib_signal?.includes('阻力') ? 'text-danger' :
-                    qe.fib_signal?.includes('结构破坏') ? 'text-danger' : 'text-white/60'
+                    qe.fib_signal?.includes('结构破坏') ? 'text-danger' : 'text-secondary'
                   }`}>
                     {qe.fib_current_zone || qe.fib_signal || '区间中部'}
                   </span>
@@ -391,14 +391,14 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                     { label: '0.500', val: qe.fib_level_500 },
                     { label: '0.618', val: qe.fib_level_618 },
                   ].map(({ label, val }) => (
-                    <div key={label} className="bg-white/[0.02] rounded p-1.5">
-                      <div className="text-[9px] text-white/25">{label}</div>
-                      <div className="text-[11px] font-mono text-white/70">{(val as number)?.toFixed(2) ?? '--'}</div>
+                    <div key={label} className="bg-black/[0.02] rounded p-1.5">
+                      <div className="text-[9px] text-muted">{label}</div>
+                      <div className="text-[11px] font-mono text-primary/70">{(val as number)?.toFixed(2) ?? '--'}</div>
                     </div>
                   ))}
                 </div>
                 {qe.fib_note && (
-                  <div className="text-[10px] text-white/25 mt-1.5 font-mono truncate">{qe.fib_note}</div>
+                  <div className="text-[10px] text-muted mt-1.5 font-mono truncate">{qe.fib_note}</div>
                 )}
               </div>
             </div>
@@ -407,16 +407,16 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* 量价结构 */}
           {qe.vol_price_structure && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">量价结构</h4>
+              <h4 className="text-[11px] font-medium text-muted mb-2">量价结构</h4>
               <div className={`rounded-lg p-3 border ${
                 ['放量突破', '缩量回踩'].includes(qe.vol_price_structure as string) ? 'bg-success/10 border-success/20' :
                 ['放量下跌', '突破失败', '缩量反弹'].includes(qe.vol_price_structure as string) ? 'bg-danger/10 border-danger/20' :
-                'bg-white/[0.03] border-white/[0.04]'
+                'bg-black/[0.02] border-black/[0.04]'
               }`}>
                 <div className="flex items-center justify-between mb-1">
                   <span className={`text-[13px] font-bold ${
                     ['放量突破', '缩量回踩'].includes(qe.vol_price_structure as string) ? 'text-success' :
-                    ['放量下跌', '突破失败', '缩量反弹'].includes(qe.vol_price_structure as string) ? 'text-danger' : 'text-white/70'
+                    ['放量下跌', '突破失败', '缩量反弹'].includes(qe.vol_price_structure as string) ? 'text-danger' : 'text-primary/70'
                   }`}>
                     {qe.vol_price_structure}
                   </span>
@@ -427,7 +427,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                   )}
                 </div>
                 {qe.vol_price_structure_note && (
-                  <div className="text-[10px] text-white/40 font-mono leading-relaxed">{qe.vol_price_structure_note}</div>
+                  <div className="text-[10px] text-muted font-mono leading-relaxed">{qe.vol_price_structure_note}</div>
                 )}
               </div>
             </div>
@@ -436,13 +436,13 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* 天量/地量异常检测 */}
           {qe.vol_anomaly && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">量能异常检测</h4>
+              <h4 className="text-[11px] font-medium text-muted mb-2">量能异常检测</h4>
               <div className={`rounded-lg p-3 border ${
                 qe.vol_anomaly === '天量' && (qe.vol_anomaly_adj ?? 0) > 0 ? 'bg-success/10 border-success/20' :
                 qe.vol_anomaly === '天量' && (qe.vol_anomaly_adj ?? 0) < 0 ? 'bg-danger/10 border-danger/20' :
                 ['地量', '次地量'].includes(qe.vol_anomaly as string) && (qe.vol_anomaly_adj ?? 0) > 0 ? 'bg-success/10 border-success/20' :
                 ['地量', '次地量'].includes(qe.vol_anomaly as string) && (qe.vol_anomaly_adj ?? 0) < 0 ? 'bg-warning/10 border-warning/20' :
-                'bg-white/[0.03] border-white/[0.04]'
+                'bg-black/[0.02] border-black/[0.04]'
               }`}>
                 <div className="flex items-center justify-between mb-1">
                   <span className={`text-[13px] font-bold ${
@@ -451,7 +451,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                   }`}>
                     {qe.vol_anomaly}
                     {qe.vol_percentile_60d != null && (qe.vol_percentile_60d as number) >= 0 && (
-                      <span className="ml-2 text-[10px] font-mono text-white/30">
+                      <span className="ml-2 text-[10px] font-mono text-muted">
                         近60日{(qe.vol_percentile_60d as number).toFixed(0)}%分位
                       </span>
                     )}
@@ -463,7 +463,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                   )}
                 </div>
                 {qe.vol_anomaly_note && (
-                  <div className="text-[10px] text-white/40 font-mono leading-relaxed">{qe.vol_anomaly_note}</div>
+                  <div className="text-[10px] text-muted font-mono leading-relaxed">{qe.vol_anomaly_note}</div>
                 )}
               </div>
             </div>
@@ -472,42 +472,42 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* P5-D: 黄金分割回撤位 */}
           {(qe.fib_signal && qe.fib_signal !== '中性') && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">黄金分割回撤位（P5-D）</h4>
-              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+              <h4 className="text-[11px] font-medium text-muted mb-2">黄金分割回撤位（P5-D）</h4>
+              <div className="rounded-lg p-3 border bg-black/[0.02] border-black/[0.06] space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
                     (qe.fib_signal as string).includes('支撑') ? 'bg-success/15 text-success' :
                     (qe.fib_signal as string).includes('阻力') || (qe.fib_signal as string).includes('结构破坏') ? 'bg-danger/15 text-danger' :
-                    'bg-white/10 text-white/50'
+                    'bg-black/[0.06] text-secondary'
                   }`}>{qe.fib_current_zone || qe.fib_signal}</span>
                   {qe.fib_validity && (
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
                       (qe.fib_validity as string).includes('高') ? 'bg-success/10 text-success/70' :
                       (qe.fib_validity as string).includes('中') ? 'bg-warning/10 text-warning/70' :
-                      'bg-white/[0.05] text-white/35'
+                      'bg-black/[0.03] text-muted'
                     }`}>{qe.fib_validity}（{qe.fib_test_count}次测试）</span>
                   )}
                   {(qe.fib_window as number) > 0 && (
-                    <span className="text-[10px] text-white/30 font-mono">{qe.fib_window}日窗口</span>
+                    <span className="text-[10px] text-muted font-mono">{qe.fib_window}日窗口</span>
                   )}
                 </div>
                 <div className="grid grid-cols-3 gap-1.5 text-center">
                   {(qe.fib_level_382 as number) > 0 && (
-                    <div className="p-1.5 rounded bg-white/[0.04]">
-                      <div className="text-[12px] font-mono text-white/60">{(qe.fib_level_382 as number).toFixed(2)}</div>
-                      <div className="text-[9px] text-white/30">0.382</div>
+                    <div className="p-1.5 rounded bg-black/[0.03]">
+                      <div className="text-[12px] font-mono text-secondary">{(qe.fib_level_382 as number).toFixed(2)}</div>
+                      <div className="text-[9px] text-muted">0.382</div>
                     </div>
                   )}
                   {(qe.fib_level_500 as number) > 0 && (
-                    <div className="p-1.5 rounded bg-white/[0.04]">
-                      <div className="text-[12px] font-mono text-white/60">{(qe.fib_level_500 as number).toFixed(2)}</div>
-                      <div className="text-[9px] text-white/30">0.500</div>
+                    <div className="p-1.5 rounded bg-black/[0.03]">
+                      <div className="text-[12px] font-mono text-secondary">{(qe.fib_level_500 as number).toFixed(2)}</div>
+                      <div className="text-[9px] text-muted">0.500</div>
                     </div>
                   )}
                   {(qe.fib_level_618 as number) > 0 && (
-                    <div className="p-1.5 rounded bg-white/[0.04]">
-                      <div className="text-[12px] font-mono text-white/60">{(qe.fib_level_618 as number).toFixed(2)}</div>
-                      <div className="text-[9px] text-white/30">0.618</div>
+                    <div className="p-1.5 rounded bg-black/[0.03]">
+                      <div className="text-[12px] font-mono text-secondary">{(qe.fib_level_618 as number).toFixed(2)}</div>
+                      <div className="text-[9px] text-muted">0.618</div>
                     </div>
                   )}
                 </div>
@@ -518,8 +518,8 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* P3: 行情预判 */}
           {(qe.forecast_scenario || qe.resonance_level) && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">行情预判（1-5日）</h4>
-              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+              <h4 className="text-[11px] font-medium text-muted mb-2">行情预判（1-5日）</h4>
+              <div className="rounded-lg p-3 border bg-black/[0.02] border-black/[0.06] space-y-2">
                 {/* 共振级别 + 操作意图 */}
                 {qe.resonance_level && (
                   <div className="flex items-center gap-2 flex-wrap">
@@ -527,10 +527,10 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                       (qe.resonance_level as string).includes('做多') ? 'bg-success/15 text-success' :
                       (qe.resonance_level as string).includes('做空') ? 'bg-danger/15 text-danger' :
                       (qe.resonance_level as string).includes('分歧') ? 'bg-warning/15 text-warning' :
-                      'bg-white/10 text-white/50'
+                      'bg-black/[0.06] text-secondary'
                     }`}>{qe.resonance_level}</span>
                     {qe.resonance_intent && (
-                      <span className="text-[11px] text-white/50 font-mono">意图：{qe.resonance_intent}</span>
+                      <span className="text-[11px] text-secondary font-mono">意图：{qe.resonance_intent}</span>
                     )}
                     {(qe.resonance_score_adj ?? 0) !== 0 && (
                       <span className={`text-[10px] font-mono ${(qe.resonance_score_adj as number) > 0 ? 'text-success/60' : 'text-danger/60'}`}>
@@ -543,7 +543,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 {(qe.seq_behaviors as string[])?.length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {(qe.seq_behaviors as string[]).map((b: string, i: number) => (
-                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/50 font-mono">{b}</span>
+                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-black/[0.04] text-secondary font-mono">{b}</span>
                     ))}
                   </div>
                 )}
@@ -551,23 +551,23 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 {qe.forecast_scenario && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] text-white/60 font-medium">主情景：{qe.forecast_scenario}</span>
+                      <span className="text-[11px] text-secondary font-medium">主情景：{qe.forecast_scenario}</span>
                     </div>
                     <div className="flex gap-0.5 h-4 rounded overflow-hidden">
                       {(qe.forecast_prob_up as number) > 0 && (
-                        <div className="bg-success/60 flex items-center justify-center text-[9px] text-white/80 font-mono"
+                        <div className="bg-success flex items-center justify-center text-[9px] text-white font-mono"
                              style={{width: `${qe.forecast_prob_up}%`}}>
                           {(qe.forecast_prob_up as number) >= 20 ? `涨${qe.forecast_prob_up}%` : ''}
                         </div>
                       )}
                       {(qe.forecast_prob_sideways as number) > 0 && (
-                        <div className="bg-white/20 flex items-center justify-center text-[9px] text-white/60 font-mono"
+                        <div className="bg-black/[0.12] flex items-center justify-center text-[9px] text-secondary font-mono"
                              style={{width: `${qe.forecast_prob_sideways}%`}}>
                           {(qe.forecast_prob_sideways as number) >= 20 ? `震${qe.forecast_prob_sideways}%` : ''}
                         </div>
                       )}
                       {(qe.forecast_prob_down as number) > 0 && (
-                        <div className="bg-danger/60 flex items-center justify-center text-[9px] text-white/80 font-mono"
+                        <div className="bg-danger flex items-center justify-center text-[9px] text-white font-mono"
                              style={{width: `${qe.forecast_prob_down}%`}}>
                           {(qe.forecast_prob_down as number) >= 20 ? `跌${qe.forecast_prob_down}%` : ''}
                         </div>
@@ -577,13 +577,13 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 )}
                 {/* 触发条件 */}
                 {qe.forecast_trigger && (
-                  <div className="text-[10px] text-white/35 font-mono leading-relaxed border-t border-white/[0.05] pt-1.5">
+                  <div className="text-[10px] text-muted font-mono leading-relaxed border-t border-black/[0.05] pt-1.5">
                     触发：{qe.forecast_trigger}
                   </div>
                 )}
                 {/* 共振明细 */}
                 {qe.resonance_detail && (
-                  <div className="text-[10px] text-white/30 font-mono leading-relaxed">
+                  <div className="text-[10px] text-muted font-mono leading-relaxed">
                     {qe.resonance_detail}
                   </div>
                 )}
@@ -594,42 +594,42 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* P4: 主力资金追踪 */}
           {(qe.capital_flow_trend || (typeof qe.capital_flow_days === 'number' && qe.capital_flow_days !== 0) || (typeof qe.capital_flow_5d_total === 'number' && qe.capital_flow_5d_total !== 0)) && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">主力资金追踪</h4>
-              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+              <h4 className="text-[11px] font-medium text-muted mb-2">主力资金追踪</h4>
+              <div className="rounded-lg p-3 border bg-black/[0.02] border-black/[0.06] space-y-2">
                 {/* 趋势 + 强度 + 加速 */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {qe.capital_flow_trend && (
                     <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
                       (qe.capital_flow_trend as string).includes('流入') ? 'bg-success/15 text-success' :
                       (qe.capital_flow_trend as string).includes('流出') ? 'bg-danger/15 text-danger' :
-                      'bg-white/10 text-white/50'
+                      'bg-black/[0.06] text-secondary'
                     }`}>{qe.capital_flow_trend}</span>
                   )}
                   {qe.capital_flow_intensity && (
-                    <span className="text-[11px] text-white/50 font-mono">{qe.capital_flow_intensity}</span>
+                    <span className="text-[11px] text-secondary font-mono">{qe.capital_flow_intensity}</span>
                   )}
                   {qe.capital_flow_acceleration && (
                     <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded ${
                       (qe.capital_flow_acceleration as string).includes('流入') ? 'text-success/70 bg-success/10' :
                       (qe.capital_flow_acceleration as string).includes('流出') ? 'text-danger/70 bg-danger/10' :
-                      'text-white/40 bg-white/[0.05]'
+                      'text-muted bg-black/[0.03]'
                     }`}>{qe.capital_flow_acceleration}</span>
                   )}
                 </div>
                 {/* 连续天数 + 近5日累计 */}
                 <div className="grid grid-cols-2 gap-2">
                   {typeof qe.capital_flow_days === 'number' && qe.capital_flow_days !== 0 && (
-                    <div className="text-center p-2 rounded bg-white/[0.04]">
+                    <div className="text-center p-2 rounded bg-black/[0.03]">
                       <div className={`text-[16px] font-bold font-mono ${
                         (qe.capital_flow_days as number) > 0 ? 'text-success' : 'text-danger'
                       }`}>
                         {(qe.capital_flow_days as number) > 0 ? '+' : ''}{qe.capital_flow_days}天
                       </div>
-                      <div className="text-[9px] text-white/30 mt-0.5">连续{(qe.capital_flow_days as number) > 0 ? '净流入' : '净流出'}</div>
+                      <div className="text-[9px] text-muted mt-0.5">连续{(qe.capital_flow_days as number) > 0 ? '净流入' : '净流出'}</div>
                     </div>
                   )}
                   {typeof qe.capital_flow_5d_total === 'number' && qe.capital_flow_5d_total !== 0 && (
-                    <div className="text-center p-2 rounded bg-white/[0.04]">
+                    <div className="text-center p-2 rounded bg-black/[0.03]">
                       <div className={`text-[14px] font-bold font-mono ${
                         (qe.capital_flow_5d_total as number) > 0 ? 'text-success' : 'text-danger'
                       }`}>
@@ -638,7 +638,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                           ? `${((qe.capital_flow_5d_total as number)/10000).toFixed(1)}亿`
                           : `${(qe.capital_flow_5d_total as number).toFixed(0)}万`}
                       </div>
-                      <div className="text-[9px] text-white/30 mt-0.5">近5日累计</div>
+                      <div className="text-[9px] text-muted mt-0.5">近5日累计</div>
                     </div>
                   )}
                 </div>
@@ -657,13 +657,13 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* P5-B: VWAP 机构成本线 */}
           {qe.vwap_trend && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">机构成本线（VWAP）</h4>
-              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+              <h4 className="text-[11px] font-medium text-muted mb-2">机构成本线（VWAP）</h4>
+              <div className="rounded-lg p-3 border bg-black/[0.02] border-black/[0.06] space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
                     (qe.vwap_trend as string).includes('上移') ? 'bg-success/15 text-success' :
                     (qe.vwap_trend as string).includes('下移') ? 'bg-danger/15 text-danger' :
-                    'bg-white/10 text-white/50'
+                    'bg-black/[0.06] text-secondary'
                   }`}>{qe.vwap_trend}</span>
                   {qe.vwap_position && (
                     <span className={`text-[11px] font-mono ${
@@ -674,15 +674,15 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                 {((qe.vwap10 as number) > 0 || (qe.vwap20 as number) > 0) && (
                   <div className="grid grid-cols-2 gap-2">
                     {(qe.vwap10 as number) > 0 && (
-                      <div className="text-center p-1.5 rounded bg-white/[0.04]">
-                        <div className="text-[13px] font-mono text-white/70">{(qe.vwap10 as number).toFixed(2)}</div>
-                        <div className="text-[9px] text-white/30">10日VWAP</div>
+                      <div className="text-center p-1.5 rounded bg-black/[0.03]">
+                        <div className="text-[13px] font-mono text-primary/70">{(qe.vwap10 as number).toFixed(2)}</div>
+                        <div className="text-[9px] text-muted">10日VWAP</div>
                       </div>
                     )}
                     {(qe.vwap20 as number) > 0 && (
-                      <div className="text-center p-1.5 rounded bg-white/[0.04]">
-                        <div className="text-[13px] font-mono text-white/70">{(qe.vwap20 as number).toFixed(2)}</div>
-                        <div className="text-[9px] text-white/30">20日VWAP</div>
+                      <div className="text-center p-1.5 rounded bg-black/[0.03]">
+                        <div className="text-[13px] font-mono text-primary/70">{(qe.vwap20 as number).toFixed(2)}</div>
+                        <div className="text-[9px] text-muted">20日VWAP</div>
                       </div>
                     )}
                   </div>
@@ -694,8 +694,8 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* P5-C: 龙虎榜情绪 */}
           {(qe.lhb_signal || (qe.lhb_times as number) > 0) && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">龙虎榜情绪（近一月）</h4>
-              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+              <h4 className="text-[11px] font-medium text-muted mb-2">龙虎榜情绪（近一月）</h4>
+              <div className="rounded-lg p-3 border bg-black/[0.02] border-black/[0.06] space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   {qe.lhb_signal && (
                     <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
@@ -705,11 +705,11 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                     }`}>{qe.lhb_signal}</span>
                   )}
                   {(qe.lhb_times as number) > 0 && (
-                    <span className="text-[11px] text-white/40 font-mono">上榜{qe.lhb_times}次</span>
+                    <span className="text-[11px] text-muted font-mono">上榜{qe.lhb_times}次</span>
                   )}
                 </div>
                 {((qe.lhb_institution_net as number) !== 0) && (
-                  <div className="text-center p-2 rounded bg-white/[0.04]">
+                  <div className="text-center p-2 rounded bg-black/[0.03]">
                     <div className={`text-[14px] font-bold font-mono ${
                       (qe.lhb_institution_net as number) > 0 ? 'text-success' : 'text-danger'
                     }`}>
@@ -718,7 +718,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                         ? `${((qe.lhb_institution_net as number)/1e8).toFixed(2)}亿`
                         : `${((qe.lhb_institution_net as number)/1e4).toFixed(0)}万`}
                     </div>
-                    <div className="text-[9px] text-white/30 mt-0.5">机构净买额</div>
+                    <div className="text-[9px] text-muted mt-0.5">机构净买额</div>
                   </div>
                 )}
               </div>
@@ -728,8 +728,8 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
           {/* P5-C补充: 大宗交易折溢价 + 股东人数 */}
           {(qe.dzjy_signal || qe.holder_signal) && (
             <div>
-              <h4 className="text-[11px] font-medium text-white/40 mb-2">微观结构（大宗/股东）</h4>
-              <div className="rounded-lg p-3 border bg-white/[0.03] border-white/[0.06] space-y-2">
+              <h4 className="text-[11px] font-medium text-muted mb-2">微观结构（大宗/股东）</h4>
+              <div className="rounded-lg p-3 border bg-black/[0.02] border-black/[0.06] space-y-2">
                 {qe.dzjy_signal && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[12px] font-bold px-2 py-0.5 rounded ${
@@ -737,7 +737,7 @@ export const QuantAnalysis: React.FC<QuantAnalysisProps> = ({ data }) => {
                       'bg-danger/15 text-danger'
                     }`}>{qe.dzjy_signal}</span>
                     {(qe.dzjy_times as number) > 0 && (
-                      <span className="text-[10px] text-white/40 font-mono">
+                      <span className="text-[10px] text-muted font-mono">
                         近30日{qe.dzjy_times}笔
                         {(qe.dzjy_avg_premium as number) !== 0 && (
                           ` · 均折溢率${((qe.dzjy_avg_premium as number)*100).toFixed(2)}%`

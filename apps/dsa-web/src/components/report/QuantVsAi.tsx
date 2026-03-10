@@ -25,11 +25,11 @@ const SKILL_DESC: Record<string, string> = {
 
 /** 评分→颜色 */
 const scoreColor = (s: number | null | undefined): string => {
-  if (s == null) return 'text-white/40';
+  if (s == null) return 'text-muted';
   if (s >= 70) return 'text-green-400';
   if (s >= 50) return 'text-yellow-400';
   if (s >= 35) return 'text-orange-400';
-  return 'text-red-400';
+  return 'text-red-600';
 };
 
 /** 评分→方向标签 */
@@ -55,13 +55,13 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
   const [expanded, setExpanded] = useState(hasSevereDivergence);
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-card border border-black/[0.04] p-4">
       <button
         type="button"
         className="w-full flex items-center justify-between text-left"
         onClick={() => setExpanded(!expanded)}
       >
-        <h3 className="text-sm font-semibold text-white/70 flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-primary/70 flex items-center gap-1.5">
           <span>⚖️</span> 技术面 vs AI研判
           {skillUsed && (
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-violet-500/20 bg-violet-500/5 text-violet-400/80 font-mono font-normal">
@@ -69,7 +69,7 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
             </span>
           )}
           {hasSevereDivergence && (
-            <span className="text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold animate-pulse">
+            <span className="text-[11px] px-2 py-0.5 rounded bg-red-500/20 text-red-600 font-semibold animate-pulse">
               ⚠️ 严重分歧 {divergence}分
             </span>
           )}
@@ -79,13 +79,13 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
             </span>
           )}
         </h3>
-        <span className="text-xs text-white/30 ml-2">{expanded ? '▲' : '▼'}</span>
+        <span className="text-xs text-muted ml-2">{expanded ? '▲' : '▼'}</span>
       </button>
       {!expanded && (
-        <div className="mt-2 text-[11px] text-white/35">
+        <div className="mt-2 text-[11px] text-muted">
           技术信号 <span className={`font-mono font-semibold ${scoreColor(quantScore)}`}>{quantScore}</span>
           {aiScore != null && <> · AI <span className={`font-mono font-semibold ${scoreColor(aiScore)}`}>{aiScore}</span></>}
-          {hasSevereDivergence && <span className="ml-1 text-red-400">分歧</span>}
+          {hasSevereDivergence && <span className="ml-1 text-red-600">分歧</span>}
         </div>
       )}
 
@@ -100,7 +100,7 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
       {/* 对比表格 */}
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-white/40 border-b border-white/[0.06]">
+          <tr className="text-muted border-b border-black/[0.04]">
             <th className="text-left py-1.5 font-medium w-16"></th>
             <th className="text-center py-1.5 font-medium">技术信号</th>
             <th className="text-center py-1.5 font-medium">
@@ -111,13 +111,13 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
         </thead>
         <tbody>
           {/* 评分行 */}
-          <tr className="border-b border-white/[0.03]">
-            <td className="py-2 text-white/50 font-medium">评分</td>
+          <tr className="border-b border-black/[0.03]">
+            <td className="py-2 text-secondary font-medium">评分</td>
             <td className="py-2 text-center">
               <span className={`font-mono font-bold text-lg ${scoreColor(quantScore)}`}>
                 {quantScore}
               </span>
-              <span className="text-white/30 text-[11px] ml-1">
+                <span className="text-muted text-[11px] ml-1">
                 ({scoreDirection(quantScore)})
               </span>
             </td>
@@ -126,24 +126,24 @@ export const QuantVsAi: React.FC<QuantVsAiProps> = ({ data, skillUsed }) => {
                 {aiScore ?? '—'}
               </span>
               {aiScore != null && (
-                <span className="text-white/30 text-[11px] ml-1">
+                <span className="text-muted text-[11px] ml-1">
                   ({scoreDirection(aiScore)})
                 </span>
               )}
             </td>
           </tr>
           {/* 建议行 */}
-          <tr className="border-b border-white/[0.03]">
-            <td className="py-2 text-white/50 font-medium">建议</td>
-            <td className="py-2 text-center text-white/80 font-medium">{quantAdvice || '—'}</td>
-            <td className="py-2 text-center text-white/80 font-medium">{aiAdvice || '—'}</td>
+          <tr className="border-b border-black/[0.03]">
+            <td className="py-2 text-secondary font-medium">建议</td>
+            <td className="py-2 text-center text-primary/80 font-medium">{quantAdvice || '—'}</td>
+            <td className="py-2 text-center text-primary/80 font-medium">{aiAdvice || '—'}</td>
           </tr>
         </tbody>
       </table>
 
       {/* 综合研判叙述 */}
-      <div className="mt-2.5 pt-2.5 border-t border-white/[0.06] text-[12px] text-white/60 leading-relaxed">
-        <span className="text-white/40 text-[11px]">综合研判：</span>
+      <div className="mt-2.5 pt-2.5 border-t border-black/[0.04] text-[12px] text-secondary leading-relaxed">
+        <span className="text-muted text-[11px]">综合研判：</span>
         {(() => {
           const qDir = scoreDirection(quantScore);
           const aDir = aiScore != null ? scoreDirection(aiScore) : null;

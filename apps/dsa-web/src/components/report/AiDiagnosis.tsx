@@ -32,16 +32,16 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
   if (!analysisSummary && !hasDetails) return null;
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-card border border-black/[0.04] p-4">
       <button
         type="button"
         className="w-full flex items-center justify-between"
         onClick={() => setExpanded(!expanded)}
       >
-        <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-primary/90 flex items-center gap-1.5">
           <span>🧠</span> AI 诊断
         </h3>
-        <span className="text-xs text-white/30">{expanded ? '▲' : '▼'}</span>
+        <span className="text-xs text-muted">{expanded ? '▲' : '▼'}</span>
       </button>
 
       {/* 操作建议（有仓/无仓分别展示） */}
@@ -56,20 +56,20 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
 
       {/* AI 综合分析（始终可见） */}
       {analysisSummary && (
-        <p className="mt-3 text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap">
+        <p className="mt-3 text-[13px] text-primary/70 leading-relaxed whitespace-pre-wrap">
           {analysisSummary}
         </p>
       )}
 
       {/* 信息依据（折叠） */}
       {expanded && hasDetails && (
-        <div className="mt-3 pt-3 border-t border-white/5 space-y-2.5">
+        <div className="mt-3 pt-3 border-t border-black/[0.03] space-y-2.5">
           {earningsOutlook && (
             <div className="flex items-start gap-2 text-[12px]">
               <span className="flex-shrink-0 text-cyan-400/70">📊</span>
               <div>
-                <span className="text-white/40 text-[11px]">业绩预期</span>
-                <p className="text-white/60 leading-relaxed">{earningsOutlook}</p>
+                <span className="text-muted text-[11px]">业绩预期</span>
+                <p className="text-secondary leading-relaxed">{earningsOutlook}</p>
               </div>
             </div>
           )}
@@ -78,8 +78,8 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
             <div className="flex items-start gap-2 text-[12px]">
               <span className="flex-shrink-0 text-cyan-400/70">🫧</span>
               <div>
-                <span className="text-white/40 text-[11px]">舆情情绪</span>
-                <p className="text-white/60 leading-relaxed">{sentimentSummary}</p>
+                <span className="text-muted text-[11px]">舆情情绪</span>
+                <p className="text-secondary leading-relaxed">{sentimentSummary}</p>
               </div>
             </div>
           )}
@@ -88,9 +88,9 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
             <div className="flex items-start gap-2 text-[12px]">
               <span className="flex-shrink-0 text-green-400/70">✨</span>
               <div>
-                <span className="text-white/40 text-[11px]">正面催化</span>
+                <span className="text-muted text-[11px]">正面催化</span>
                 {positiveCatalysts.map((c, i) => (
-                  <p key={i} className="text-white/60 leading-relaxed">· {c}</p>
+                  <p key={i} className="text-secondary leading-relaxed">· {c}</p>
                 ))}
               </div>
             </div>
@@ -98,11 +98,11 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
 
           {riskAlerts.length > 0 && (
             <div className="flex items-start gap-2 text-[12px]">
-              <span className="flex-shrink-0 text-red-400/70">⚠️</span>
+              <span className="flex-shrink-0 text-red-600/70">⚠️</span>
               <div>
-                <span className="text-white/40 text-[11px]">风险提示</span>
+                <span className="text-muted text-[11px]">风险提示</span>
                 {riskAlerts.map((r, i) => (
-                  <p key={i} className="text-white/60 leading-relaxed">· {r}</p>
+                  <p key={i} className="text-secondary leading-relaxed">· {r}</p>
                 ))}
               </div>
             </div>
@@ -112,9 +112,9 @@ export const AiDiagnosis: React.FC<AiDiagnosisProps> = ({
             <div className="flex items-start gap-2 text-[12px]">
               <span className="flex-shrink-0 text-yellow-400/70">⚖️</span>
               <div>
-                <span className="text-white/40 text-[11px]">反面论据</span>
+                <span className="text-muted text-[11px]">反面论据</span>
                 {counterArguments.map((ca, i) => (
-                  <p key={i} className="text-white/60 leading-relaxed">· {ca}</p>
+                  <p key={i} className="text-secondary leading-relaxed">· {ca}</p>
                 ))}
               </div>
             </div>

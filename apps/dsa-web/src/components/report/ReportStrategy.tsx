@@ -90,7 +90,7 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
   };
   const { rr, label: rrLabel } = calcRR();
   const rrText = rr != null && rr > 0 ? `${rr.toFixed(1)}:1` : '—';
-  const rrColor = rr == null ? '' : rr >= 2 ? 'text-green-400' : rr >= 1.5 ? 'text-yellow-400' : 'text-red-400';
+  const rrColor = rr == null ? '' : rr >= 2 ? 'text-green-400' : rr >= 1.5 ? 'text-yellow-400' : 'text-red-600';
 
   // 持仓时：使用 holdingStrategy 中推荐止损替代通用止损
   const displayStopLoss = hasPositionInfo && holdingStrategy?.recommended_stop
@@ -103,13 +103,13 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
     : null;
 
   return (
-    <div className="rounded-xl bg-[var(--bg-card)] border border-white/[0.06] p-4">
+    <div className="rounded-xl bg-[var(--bg-card)] border border-black/[0.06] p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5">
+        <h3 className="text-sm font-semibold text-primary/80 flex items-center gap-1.5">
           <span>{defenseMode ? '🛡️' : '🎯'}</span> {defenseMode ? '防守作战' : '作战计划'}
         </h3>
         {defenseMode && (
-          <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-400 font-medium">防守模式</span>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-red-500/15 text-red-600 font-medium">防守模式</span>
         )}
       </div>
 
@@ -117,7 +117,7 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-white/40 border-b border-white/[0.06]">
+            <tr className="text-muted border-b border-black/[0.06]">
               <th className="text-center py-1.5 font-medium">{defenseMode ? (hasPositionInfo ? '反弹出货' : '反弹位') : (hasPositionInfo ? '加仓点' : '买点')}</th>
               <th className="text-center py-1.5 font-medium">止损</th>
               <th className="text-center py-1.5 font-medium">{defenseMode ? '减仓目标' : '短线目标'}</th>
@@ -133,7 +133,7 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
                 </span>
               </td>
               <td className="text-center py-2">
-                <span className="font-mono font-bold text-sm text-red-400">
+                <span className="font-mono font-bold text-sm text-red-600">
                   {fmtPrice(displayStopLoss)}
                 </span>
               </td>
@@ -149,7 +149,7 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
               </td>
               <td className="text-center py-2">
                 {defenseMode && maxDrawdown60d != null ? (
-                  <span className="font-mono font-bold text-sm text-red-400">
+                  <span className="font-mono font-bold text-sm text-red-600">
                     {maxDrawdown60d.toFixed(1)}%
                   </span>
                 ) : (
@@ -165,8 +165,8 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
 
       {/* 持仓成本标注 + 仓位动态建议 */}
       {hasPositionInfo && costPrice && costPrice > 0 && (
-        <div className="mt-2 pt-2 border-t border-white/[0.06] flex items-center flex-wrap gap-3 text-[11px] text-white/40">
-          <span>💰 成本 <span className="font-mono text-white/60">{costPrice.toFixed(2)}</span></span>
+        <div className="mt-2 pt-2 border-t border-black/[0.06] flex items-center flex-wrap gap-3 text-[11px] text-muted">
+          <span>💰 成本 <span className="font-mono text-secondary">{costPrice.toFixed(2)}</span></span>
           {pnlPct != null && (
             <span className={pnlPct >= 0 ? 'text-[#ff4d4d]' : 'text-[#00d46a]'}>
               {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
@@ -179,20 +179,20 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
             if (positionDiagnosis?.action && positionDiagnosis.action !== '维持') {
               return (
                 <span className={`font-medium ${
-                  positionDiagnosis.action === '加仓' ? 'text-green-400/80' : 'text-red-400/80'
+                  positionDiagnosis.action === '加仓' ? 'text-green-400/80' : 'text-red-600/80'
                 }`}>
                   {positionDiagnosis.action === '清仓' ? '🚨' : positionDiagnosis.action === '减仓' ? '⚠' : '💡'}
                   {' '}{actPct != null ? `当前${actPct}%` : ''}
                   {' → '}建议{sugPct ?? 0}%
                   {delPct != null && delPct !== 0 && (
-                    <span className="text-white/40 ml-1">({delPct > 0 ? '+' : ''}{delPct}%)</span>
+                    <span className="text-muted ml-1">({delPct > 0 ? '+' : ''}{delPct}%)</span>
                   )}
                 </span>
               );
             }
             if (positionDiagnosis?.action === '维持' && actPct != null) {
               return (
-                <span className="text-white/30">
+                <span className="text-muted">
                   仓位{actPct}% ≈ 建议{sugPct ?? 0}%，合理
                 </span>
               );
@@ -200,32 +200,32 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
             return null;
           })()}
           {holdingStrategy?.recommended_stop_reason && (
-            <span className="text-white/30">止损: {holdingStrategy.recommended_stop_reason}</span>
+            <span className="text-muted">止损: {holdingStrategy.recommended_stop_reason}</span>
           )}
         </div>
       )}
 
       {/* 分批止盈计划 / 持仓策略建议 */}
       {(hasPositionInfo && holdingStrategy?.advice) ? (
-        <div className="mt-2 pt-2 border-t border-white/[0.06] text-[11px] text-white/50">
+        <div className="mt-2 pt-2 border-t border-black/[0.06] text-[11px] text-secondary">
           📋 {holdingStrategy.advice}
         </div>
       ) : strategy.takeProfitPlan ? (
-        <div className="mt-2 pt-2 border-t border-white/[0.06] text-[11px] text-white/50">
+        <div className="mt-2 pt-2 border-t border-black/[0.06] text-[11px] text-secondary">
           📋 {strategy.takeProfitPlan}
         </div>
       ) : null}
 
       {/* 止盈退出计划（profit_take 场景专用）*/}
       {profitTakePlan && analysisScene === 'profit_take' && (
-        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+        <div className="mt-3 pt-3 border-t border-black/[0.06]">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold text-yellow-400/90 flex items-center gap-1">
               💰 分阶段退出计划
             </span>
             <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
               profitTakePlan.urgency === 'HIGH'
-                ? 'bg-red-500/15 text-red-400'
+                ? 'bg-red-500/15 text-red-600'
                 : profitTakePlan.urgency === 'MEDIUM'
                 ? 'bg-yellow-500/15 text-yellow-400'
                 : 'bg-blue-500/15 text-blue-400'
@@ -233,30 +233,30 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
               {profitTakePlan.urgency === 'HIGH' ? '⚡ 高紧迫' : profitTakePlan.urgency === 'MEDIUM' ? '⚠️ 中紧迫' : '📊 低紧迫'}
             </span>
           </div>
-          <div className="text-[10px] text-white/40 mb-2">{profitTakePlan.urgency_note}</div>
+          <div className="text-[10px] text-muted mb-2">{profitTakePlan.urgency_note}</div>
           <div className="flex flex-col gap-1.5">
             {profitTakePlan.stages.map((s) => {
               const lots = stageLots ? stageLots[s.stage - 1] : null;
               return (
                 <div key={s.stage} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold bg-white/10 text-white/60 shrink-0">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold bg-black/[0.06] text-secondary shrink-0">
                     {s.stage}
                   </span>
-                  <span className="text-white/50 shrink-0">{s.label}</span>
+                  <span className="text-secondary shrink-0">{s.label}</span>
                   <span className="font-mono font-bold text-yellow-400">{s.exit_price.toFixed(2)}</span>
                   <span className={`text-[10px] shrink-0 ${
-                    s.exit_pct >= 0 ? 'text-green-400/70' : 'text-red-400/70'
+                    s.exit_pct >= 0 ? 'text-green-400/70' : 'text-red-600/70'
                   }`}>{s.exit_pct >= 0 ? '+' : ''}{s.exit_pct.toFixed(1)}%</span>
                   {lots != null && lots > 0 && (
-                    <span className="text-[10px] text-emerald-400/70 font-mono shrink-0">↓ {lots}股</span>
+                    <span className="text-[10px] text-emerald-600/70 font-mono shrink-0">↓ {lots}股</span>
                   )}
-                  <span className="text-white/30 text-[10px] truncate">{s.condition}</span>
+                  <span className="text-muted text-[10px] truncate">{s.condition}</span>
                 </div>
               );
             })}
           </div>
-          <div className="mt-2 text-[10px] text-white/30">
-            🛡️ ATR追踪止损（底仓保护线）：<span className="font-mono text-white/50">{profitTakePlan.atr_trailing_stop.toFixed(2)}</span>
+          <div className="mt-2 text-[10px] text-muted">
+            🛡️ ATR追踪止损（底仓保护线）：<span className="font-mono text-secondary">{profitTakePlan.atr_trailing_stop.toFixed(2)}</span>
             &nbsp;|&nbsp;ATR={profitTakePlan.atr.toFixed(2)}
           </div>
         </div>
@@ -264,19 +264,19 @@ export const ReportStrategy: React.FC<ReportStrategyProps> = ({
 
       {/* 仓位-评分矩阵（A股专用） */}
       {suggestedPositionPct != null && (
-        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+        <div className="mt-3 pt-3 border-t border-black/[0.06]">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] text-white/30 font-medium">仓位参考（大盘×评分矩阵）</span>
+            <span className="text-[11px] text-muted font-medium">仓位参考（大盘×评分矩阵）</span>
             <span className="text-[11px] font-mono font-bold text-cyan/80">
               建议 {suggestedPositionPct}%
             </span>
           </div>
-          <div className="text-[10px] text-white/20 leading-relaxed">
-            <span className="text-emerald-400/60">≥80分（胜率81%）</span>：牛市50-60% · 震荡30-40% · 弱势15-20%
+          <div className="text-[10px] text-muted/70 leading-relaxed">
+            <span className="text-emerald-600/60">≥80分（胜率81%）</span>：牛市50-60% · 震荡30-40% · 弱势15-20%
             &nbsp;·&nbsp;
             <span className="text-yellow-400/60">70-79分（胜率约38%）</span>：≤15%试仓，等信号确认
             &nbsp;·&nbsp;
-            <span className="text-red-400/50">&lt;70分</span>：0%，禁止新建仓
+            <span className="text-red-600/50">&lt;70分</span>：0%，禁止新建仓
           </div>
         </div>
       )}

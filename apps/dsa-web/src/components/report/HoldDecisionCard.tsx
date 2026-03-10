@@ -55,14 +55,14 @@ export const HoldDecisionCard: React.FC<HoldDecisionCardProps> = ({
   const holdAdvice = hsAny?.advice ?? hsAny?.holdAdvice ?? summary.positionAdvice?.hasPosition;
 
   return (
-    <div className={`rounded-xl bg-[var(--bg-card)] border ${borderColor} p-4`}>
+    <div className={`rounded-xl bg-card border ${borderColor} p-4`}>
       <div className="flex items-center gap-2 mb-3">
         <span className={`text-[13px] px-2.5 py-0.5 rounded font-bold ${adviceBg}`}>
           📋 {advice}
         </span>
         {rrRatio != null && (
           <span className={`text-[11px] font-mono ml-auto ${
-            rrRatio >= 2 ? 'text-emerald-400/70' : rrRatio >= 1.5 ? 'text-yellow-400/70' : 'text-red-400/60'
+            rrRatio >= 2 ? 'text-emerald-600/70' : rrRatio >= 1.5 ? 'text-yellow-400/70' : 'text-red-600/60'
           }`}>
             风险收益比 1:{rrRatio.toFixed(1)}
           </span>
@@ -73,23 +73,23 @@ export const HoldDecisionCard: React.FC<HoldDecisionCardProps> = ({
         <div className="grid grid-cols-2 gap-3 mb-3">
           {stopLoss && (
             <div className="rounded-lg bg-red-500/[0.06] border border-red-500/15 px-3 py-2">
-              <div className="text-[10px] text-red-400/50 mb-0.5">止损价</div>
-              <div className="text-[16px] font-bold font-mono text-red-400">
+              <div className="text-[10px] text-red-600/50 mb-0.5">止损价</div>
+              <div className="text-[16px] font-bold font-mono text-red-600">
                 ¥{stopLoss.toFixed(2)}
               </div>
               {slPct != null && (
-                <div className="text-[10px] text-red-400/50">{slPct.toFixed(1)}%</div>
+                <div className="text-[10px] text-red-600/50">{slPct.toFixed(1)}%</div>
               )}
             </div>
           )}
           {target && (
             <div className="rounded-lg bg-emerald-500/[0.06] border border-emerald-500/15 px-3 py-2">
-              <div className="text-[10px] text-emerald-400/50 mb-0.5">止盈价</div>
-              <div className="text-[16px] font-bold font-mono text-emerald-400">
+              <div className="text-[10px] text-emerald-600/50 mb-0.5">止盈价</div>
+              <div className="text-[16px] font-bold font-mono text-emerald-600">
                 ¥{target.toFixed(2)}
               </div>
               {tpPct != null && (
-                <div className="text-[10px] text-emerald-400/50">+{tpPct.toFixed(1)}%</div>
+                <div className="text-[10px] text-emerald-600/50">+{tpPct.toFixed(1)}%</div>
               )}
             </div>
           )}
@@ -97,7 +97,7 @@ export const HoldDecisionCard: React.FC<HoldDecisionCardProps> = ({
       )}
 
       {holdAdvice && (
-        <div className="pt-2 border-t border-white/[0.06] text-[12px] text-white/55 leading-relaxed">
+        <div className="pt-2 border-t border-black/[0.04] text-[12px] text-secondary leading-relaxed">
           {isHold ? '📌 ' : ''}{holdAdvice}
         </div>
       )}
