@@ -367,10 +367,7 @@ const HomePage: React.FC = () => {
       stockParamHandled.current = true;
       setStockCode(stockParam);
       setSearchParams({}, { replace: true });
-      setTimeout(() => {
-        const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
-        if (btn) btn.click();
-      }, 100);
+      handleAnalyze(stockParam);
     }
   }, [searchParams, setSearchParams]);
 
@@ -395,8 +392,8 @@ const HomePage: React.FC = () => {
   };
 
   // 分析股票（异步模式）
-  const handleAnalyze = async () => {
-    const { valid, message, normalized } = validateStockCode(stockCode);
+  const handleAnalyze = async (codeOverride?: string) => {
+    const { valid, message, normalized } = validateStockCode(codeOverride || stockCode);
     if (!valid) {
       setInputError(message);
       return;
@@ -572,10 +569,7 @@ const HomePage: React.FC = () => {
   // 自选股：单只分析
   const handleWatchlistAnalyze = useCallback((code: string) => {
     setStockCode(code);
-    setTimeout(() => {
-      const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
-      if (btn) btn.click();
-    }, 50);
+    handleAnalyze(code);
   }, []);
 
   // 自选股：批量分析
@@ -739,10 +733,7 @@ const HomePage: React.FC = () => {
                         onMouseDown={() => {
                           setStockCode(item.stockCode);
                           setShowSuggestions(false);
-                          setTimeout(() => {
-                            const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
-                            if (btn) btn.click();
-                          }, 50);
+                          handleAnalyze(item.stockCode);
                         }}
                         className="w-full flex items-center gap-3 px-3 py-2 hover:bg-black/[0.03] transition text-left"
                       >
@@ -825,9 +816,8 @@ const HomePage: React.FC = () => {
 
             <button
               type="button"
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={!stockCode || isAnalyzing}
-              data-analyze-btn
               className="header-btn-primary"
             >
               {isAnalyzing ? (

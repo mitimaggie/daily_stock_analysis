@@ -47,7 +47,7 @@ const PortfolioHeatScan: React.FC<PortfolioHeatScanProps> = ({ portfolioItems })
     };
     load();
     return () => { cancelled = true; };
-  }, [expanded, loaded]);
+  }, [expanded, loaded, holdingCodesKey]);
 
   const topConcepts = concepts.slice(0, 20);
 

@@ -44,6 +44,50 @@ def _compute_beta(stock_returns: List[float], market_returns: List[float]) -> Op
     return round(cov / var_m, 3)
 
 
+def calculate_single_stock_beta(
+    code: str,
+    lookback: int = _LOOKBACK_DAYS,
+) -> Optional[float]:
+    """
+    计算单只股票近 N 日相对大盘的 Beta，带 1h 内存缓存。
+
+    用于持仓监控时获取实时 Beta，替代依赖 analysis_history 中可能过时的值。
+    数据不足（如次新股）或计算失败时返回 None，由调用方 fallback。
+
+    Args:
+        code: 股票代码
+        lookback: 历史天数（默认60）
+
+    Returns:
+        Beta 浮点值，或 None
+    """
+    cache_key = f"single_beta_{code}_{lookback}"
+    cached = _BETA_CACHE.get(cache_key)
+    if cached and (time.time() - cached["ts"]) < _BETA_CACHE_TTL_SECONDS:
+        return cached["data"]
+
+    try:
+        from src.storage import DatabaseManager
+        db = DatabaseManager.get_instance()
+
+        market_series = db.get_index_returns(index_name=_BENCHMARK_CODE, days=lookback + 5)
+        if market_series.empty or len(market_series) < 20:
+            return None
+
+        stock_series = db.get_stock_returns(code=code, days=lookback + 5)
+        if stock_series.empty or len(stock_series) < 20:
+            return None
+
+        beta = _compute_beta(stock_series.tolist(), market_series.tolist())
+        if beta is not None:
+            _BETA_CACHE[cache_key] = {"ts": time.time(), "data": beta}
+            logger.debug("[Beta] %s 实时Beta=%.3f (近%d日)", code, beta, lookback)
+        return beta
+    except Exception as e:
+        logger.debug("[Beta] %s 实时计算失败: %s", code, e)
+        return None
+
+
 def calculate_portfolio_beta(
     holdings: List[Dict[str, Any]],
     lookback: int = _LOOKBACK_DAYS,

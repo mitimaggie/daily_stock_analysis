@@ -612,7 +612,17 @@ def _analyze_intraday_for_monitor(code: str) -> Dict[str, Any]:
 
 
 def _get_beta_from_analysis(code: str) -> float:
-    """从最近一次分析记录中提取 Beta 系数，找不到时降级为 1.0。"""
+    """获取个股 Beta 系数，三级 fallback：实时计算 → analysis_history → 1.0。"""
+    # 优先级 1：实时计算近 60 日 Beta
+    try:
+        from src.services.portfolio_risk_service import calculate_single_stock_beta
+        realtime_beta = calculate_single_stock_beta(code)
+        if realtime_beta is not None:
+            return realtime_beta
+    except Exception:
+        pass
+
+    # 优先级 2：从最近一次分析记录提取
     try:
         import json
         from src.storage import AnalysisHistory
@@ -624,16 +634,17 @@ def _get_beta_from_analysis(code: str) -> float:
                 .order_by(desc(AnalysisHistory.created_at))
                 .limit(1)
             ).scalar_one_or_none()
-        if not rec or not rec.raw_result:
-            logger.debug("[beta] %s 无分析记录，使用默认 beta=1.0", code)
-            return 1.0
-        raw = json.loads(rec.raw_result)
-        beta = (raw.get('dashboard', {}).get('quant_extras', {}).get('beta_vs_index')
-                or 1.0)
-        return float(beta)
+        if rec and rec.raw_result:
+            raw = json.loads(rec.raw_result)
+            beta = raw.get('dashboard', {}).get('quant_extras', {}).get('beta_vs_index')
+            if beta:
+                return float(beta)
     except Exception:
-        logger.debug("[beta] %s 获取 beta 失败，使用默认 1.0", code)
-        return 1.0
+        logger.debug("[beta] %s analysis_history 读取失败", code)
+
+    # 优先级 3：安全中性值
+    logger.debug("[beta] %s 无可用 Beta 数据，使用默认 1.0", code)
+    return 1.0
 
 
 def _process_single_holding(holding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
