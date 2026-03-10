@@ -13,8 +13,8 @@ const actionLabel: Record<string, string> = {
   take_profit: '止盈出场', manual: '手动记录',
 };
 const actionColor: Record<string, string> = {
-  buy: 'text-emerald-400', add: 'text-emerald-300', reduce: 'text-amber-400',
-  stop_exit: 'text-red-400', take_profit: 'text-sky-400', manual: 'text-white/40',
+  buy: 'text-red-400', add: 'text-red-300', reduce: 'text-emerald-400',
+  stop_exit: 'text-amber-400', take_profit: 'text-sky-400', manual: 'text-white/40',
 };
 
 // ─── 信号颜色映射 ─────────────────────────────
@@ -172,7 +172,7 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
   const navigate = useNavigate();
   const cfg = signalConfig[signal.signal] || signalConfig.unknown;
   const pnl = signal.pnlPct;
-  const pnlColor = pnl == null ? 'text-white/40' : pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const pnlColor = pnl == null ? 'text-white/40' : pnl >= 0 ? 'text-red-400' : 'text-emerald-400';
   const pnlStr = pnl == null ? '--' : `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
   const [showLogs, setShowLogs] = useState(false);
 
@@ -219,7 +219,7 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
         <span className="text-white/40">现价 <span className={`font-mono ${signal.currentPrice ? 'text-white/80' : 'text-white/30'}`}>{signal.currentPrice?.toFixed(2) ?? '--'}</span></span>
         <span className="text-white/40">浮盈 <span className={`font-mono font-medium ${pnlColor}`}>{pnlStr}</span></span>
         {scoreTrend && (
-          <span className="text-white/40">评分 <span className={`font-mono font-medium ${scoreTrend.change > 0 ? 'text-emerald-400' : scoreTrend.change < 0 ? 'text-red-400' : 'text-white/60'}`}>{scoreTrend.score}{scoreTrend.change !== 0 && <span className="text-[10px] ml-0.5">({scoreTrend.change > 0 ? '+' : ''}{scoreTrend.change})</span>}</span></span>
+          <span className="text-white/40">评分 <span className={`font-mono font-medium ${scoreTrend.change > 0 ? 'text-red-400' : scoreTrend.change < 0 ? 'text-emerald-400' : 'text-white/60'}`}>{scoreTrend.score}{scoreTrend.change !== 0 && <span className="text-[10px] ml-0.5">({scoreTrend.change > 0 ? '+' : ''}{scoreTrend.change})</span>}</span></span>
         )}
       </div>
 
@@ -227,7 +227,7 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
       {signal.atrStop > 0 && (
         <div className="flex items-center gap-4 text-[11px] text-white/40">
           <span>ATR止损 <span className="font-mono text-amber-400/80">{safeFixed(signal.atrStop, 2)}</span></span>
-          <span>锁住浮盈 <span className={`font-mono ${(signal.stopPnlPct ?? 0) >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>{(signal.stopPnlPct ?? 0) >= 0 ? '+' : ''}{safeFixed(signal.stopPnlPct, 1)}%</span></span>
+          <span>锁住浮盈 <span className={`font-mono ${(signal.stopPnlPct ?? 0) >= 0 ? 'text-red-400/70' : 'text-emerald-400/70'}`}>{(signal.stopPnlPct ?? 0) >= 0 ? '+' : ''}{safeFixed(signal.stopPnlPct, 1)}%</span></span>
           {signal.highestPrice > 0 && <span>持仓高点 <span className="font-mono text-white/50">{safeFixed(signal.highestPrice, 2)}</span></span>}
         </div>
       )}
@@ -281,13 +281,13 @@ const WatchlistCard: React.FC<{
   onAnalyze: (code: string) => void;
 }> = ({ item, onRemove, onAnalyze }) => {
   const scoreColor = item.lastScore == null ? 'text-white/30'
-    : item.lastScore >= 70 ? 'text-emerald-400'
+    : item.lastScore >= 70 ? 'text-red-400'
     : item.lastScore >= 50 ? 'text-amber-400'
-    : 'text-red-400';
+    : 'text-emerald-400';
 
   const changeColor = item.scoreChange == null ? ''
-    : item.scoreChange > 0 ? 'text-emerald-400'
-    : item.scoreChange < 0 ? 'text-red-400'
+    : item.scoreChange > 0 ? 'text-red-400'
+    : item.scoreChange < 0 ? 'text-emerald-400'
     : 'text-white/40';
 
   return (
@@ -434,7 +434,7 @@ const PortfolioPage: React.FC = () => {
         )}
       </div>
 
-      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {/* Tab 切换 */}
         <div className="flex gap-1 p-1 rounded-lg bg-white/5 border border-white/8 w-fit">
           {(['monitor', 'watchlist'] as const).map(t => (
@@ -582,7 +582,7 @@ const PortfolioPage: React.FC = () => {
                 暂无持仓，点击「新增持仓」添加
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {signals.map(s => (
                   <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} />
                 ))}
@@ -622,7 +622,7 @@ const PortfolioPage: React.FC = () => {
                 暂无关注股，在报告页点击「加入关注」添加
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {watchlist.map(item => (
                   <WatchlistCard key={item.code} item={item} onRemove={handleRemoveWatchlist} onAnalyze={handleAnalyze} />
                 ))}

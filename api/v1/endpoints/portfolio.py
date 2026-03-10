@@ -200,9 +200,9 @@ def api_monitor_portfolio():
         from src.services.portfolio_risk_service import calculate_sector_exposure
         signals = monitor_portfolio()
         _NUMERIC_DEFAULTS = {
-            'currentPrice': 0, 'pnlPct': 0, 'atrStop': 0,
-            'highestPrice': 0, 'stopPnlPct': 0, 'shares': 0,
-            'costPrice': 0,
+            'current_price': 0, 'pnl_pct': 0, 'atr_stop': 0,
+            'highest_price': 0, 'stop_pnl_pct': 0, 'shares': 0,
+            'cost_price': 0,
         }
         for sig in signals:
             for key, default in _NUMERIC_DEFAULTS.items():

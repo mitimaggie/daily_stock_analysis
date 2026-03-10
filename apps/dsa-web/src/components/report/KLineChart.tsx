@@ -265,7 +265,7 @@ export const KLineChart: React.FC<KLineChartProps> = ({ stockCode, stockName }) 
               {error}
               <button
                 type="button"
-                onClick={fetchAndRender}
+                onClick={() => fetchAndRender()}
                 className="ml-2 text-cyan hover:text-white"
               >
                 重试
