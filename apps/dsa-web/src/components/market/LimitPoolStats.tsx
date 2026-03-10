@@ -40,7 +40,7 @@ const LimitPoolStats: React.FC<LimitPoolStatsProps> = ({ data }) => {
         </div>
         <div className="flex justify-between items-center">
           <span className="text-[12px] text-muted">情绪温度</span>
-          <span className="text-[12px] font-mono text-cyan">{data.emotionTemp}</span>
+          <span className="text-[12px] font-mono text-cyan">{data.emotionTemp != null ? data.emotionTemp : '数据不可用'}</span>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-[12px] text-muted">上涨</span>

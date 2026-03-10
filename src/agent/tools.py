@@ -197,7 +197,7 @@ def get_market_sentiment(**kwargs) -> Dict[str, Any]:
         if sentiment is None:
             return {"error": "市场情绪数据暂不可用"}
         return {
-            "temperature": sentiment.temperature,
+            "temperature": sentiment.temperature,  # 可能为 None（数据不可用）
             "temperature_label": sentiment.temperature_label,
             "limit_up_count": sentiment.limit_up_count,
             "limit_down_count": sentiment.limit_down_count,

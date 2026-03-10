@@ -21,6 +21,35 @@ from src.storage import DatabaseManager, Portfolio, PortfolioLog, Watchlist
 logger = logging.getLogger(__name__)
 
 
+def _ensure_daily_data(code: str, min_rows: int = 20) -> None:
+    """确保 stock_daily 表有足够的日线数据供 ATR 计算。
+
+    添加持仓时自动检查并补充日线数据，避免新股票因无历史数据导致 ATR 止损为 0。
+    使用 DataFetcherManager 自动走优先级 fallback（ETF 由 baostock 接管）。
+    """
+    try:
+        from src.storage import StockDaily
+        from sqlalchemy import func
+        db = DatabaseManager.get_instance()
+        with db.get_session() as session:
+            count = session.execute(
+                select(func.count()).select_from(StockDaily).where(StockDaily.code == code)
+            ).scalar() or 0
+        if count >= min_rows:
+            return
+
+        from data_provider.base import DataFetcherManager
+        manager = DataFetcherManager()
+        df, source_name = manager.get_daily_data(code, days=120)
+        if df is not None and not df.empty:
+            saved = db.save_daily_data(df, code, data_source=source_name)
+            logger.info("[portfolio] 自动拉取日线 %s: %d 条入库(source=%s)", code, saved, source_name)
+        else:
+            logger.warning("[portfolio] 自动拉取日线 %s 返回空数据，止损计算将不可用", code)
+    except Exception as e:
+        logger.warning("[portfolio] 自动拉取日线 %s 异常: %s", code, e)
+
+
 # ─────────────────────────────────────────────
 # 持仓 CRUD
 # ─────────────────────────────────────────────
@@ -95,6 +124,7 @@ def add_portfolio(
             existing.updated_at = datetime.now()
             session.commit()
             session.refresh(existing)
+            _ensure_daily_data(code)
             return existing.to_dict()
         else:
             record = Portfolio(
@@ -109,6 +139,7 @@ def add_portfolio(
             session.add(record)
             session.commit()
             session.refresh(record)
+            _ensure_daily_data(code)
             return record.to_dict()
 
 

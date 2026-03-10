@@ -50,6 +50,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--no-market-review', action='store_true', help='跳过大盘复盘')
     parser.add_argument('--serve', action='store_true', help='启动 FastAPI 后端服务（同时执行分析任务）')
     parser.add_argument('--serve-only', action='store_true', help='仅启动 FastAPI 后端服务，不自动执行分析')
+    parser.add_argument('--webui-only', action='store_true', help='同 --serve-only，仅启动 WebUI 后端')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='FastAPI 监听地址')
     parser.add_argument('--port', type=int, default=8000, help='FastAPI 服务端口')
     parser.add_argument('--no-context-snapshot', action='store_true', help='不保存快照')
@@ -313,8 +314,9 @@ def main() -> int:
         stock_codes = [c.strip() for c in args.stocks.split(',') if c.strip()]
         logger.info(f"指定分析股票: {stock_codes}")
     
-    # FastAPI 服务
-    start_serve = (args.serve or args.serve_only) and os.getenv("GITHUB_ACTIONS") != "true"
+    # FastAPI 服务（--webui-only 等价于 --serve-only）
+    serve_only_mode = getattr(args, 'serve_only', False) or getattr(args, 'webui_only', False)
+    start_serve = (args.serve or args.serve_only or serve_only_mode) and os.getenv("GITHUB_ACTIONS") != "true"
     if start_serve:
         try:
             start_api_server(host=args.host, port=args.port, config=config)
@@ -322,8 +324,29 @@ def main() -> int:
         except Exception as e:
             logger.error(f"FastAPI 服务启动失败: {e}")
     
-    if args.serve_only:
-        logger.info("模式: 仅 FastAPI 服务")
+    if serve_only_mode:
+        logger.info("模式: 仅 FastAPI 服务 (WebUI)")
+        # 概念映射表为空时，后台异步拉取（不阻塞启动）
+        def _ensure_concept_mappings():
+            try:
+                from src.storage import DatabaseManager
+                from sqlalchemy import text
+                db = DatabaseManager.get_instance()
+                with db.get_session() as session:
+                    cnt = session.execute(text("SELECT COUNT(*) FROM stock_concept_mapping")).scalar() or 0
+                if cnt == 0:
+                    logger.info("概念映射表为空，后台自动拉取 Top 概念成分股映射...")
+                    from data_provider.concept_fetcher import fetch_concept_daily, update_concept_mappings
+                    concepts = fetch_concept_daily(db, config)
+                    if concepts:
+                        saved = update_concept_mappings(db, concepts, config)
+                        logger.info(f"概念映射更新完成: {saved} 条")
+                    else:
+                        logger.warning("概念热度获取为空，概念映射未更新。可稍后运行 python main.py --update-concepts")
+            except Exception as e:
+                logger.warning(f"概念映射自动拉取失败: {e}")
+        import threading
+        threading.Thread(target=_ensure_concept_mappings, daemon=True).start()
         logger.info(f"API 运行中: http://{args.host}:{args.port} 文档: http://{args.host}:{args.port}/docs")
         try:
             while True: time.sleep(1)

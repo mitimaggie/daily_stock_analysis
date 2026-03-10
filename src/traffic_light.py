@@ -36,8 +36,10 @@ _LEVEL_TO_SIGNAL: Dict[int, str] = {v: k for k, v in SIGNAL_LEVELS.items()}
 
 
 def _calc_raw_score(sentiment: MarketSentiment,
-                    deviation: Optional[float]) -> float:
-    """基于情绪温度和修正因子计算原始综合得分 (0-100)"""
+                    deviation: Optional[float]) -> Optional[float]:
+    """基于情绪温度和修正因子计算原始综合得分 (0-100)，temperature 为 None 时返回 None"""
+    if sentiment.temperature is None:
+        return None
     score = float(sentiment.temperature)
 
     if deviation is not None:
@@ -146,14 +148,22 @@ def compute_traffic_light(sentiment: MarketSentiment,
 
     Returns:
         {
-            "signal": "active" | "cautious" | "wait" | "cash",
+            "signal": "active" | "cautious" | "wait" | "cash" | "unavailable",
             "signal_label": str,
             "signal_color": str,
             "reason": str,
-            "score": float,
+            "score": float | None,
         }
     """
     score = _calc_raw_score(sentiment, deviation)
+    if score is None:
+        return {
+            "signal": "unavailable",
+            "signal_label": "数据不可用",
+            "signal_color": "gray",
+            "reason": "市场情绪数据不可用",
+            "score": None,
+        }
     raw_signal = _score_to_signal(score)
 
     today_str = datetime.now().strftime('%Y-%m-%d')

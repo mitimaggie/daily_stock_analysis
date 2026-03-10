@@ -6,7 +6,12 @@ interface TrafficLightProps {
   sentiment?: SentimentData;
 }
 
-const signalConfig: Record<TrafficLightData['signal'], { bg: string; glow: string; ring: string }> = {
+const signalConfig: Record<string, { bg: string; glow: string; ring: string }> = {
+  unavailable: {
+    bg: 'bg-gray-400',
+    glow: 'shadow-[0_0_20px_rgba(156,163,175,0.3)]',
+    ring: 'ring-gray-400/20',
+  },
   active: {
     bg: 'bg-emerald-500',
     glow: 'shadow-[0_0_40px_rgba(16,185,129,0.5)]',
@@ -30,7 +35,7 @@ const signalConfig: Record<TrafficLightData['signal'], { bg: string; glow: strin
 };
 
 const TrafficLight: React.FC<TrafficLightProps> = ({ data, sentiment }) => {
-  const config = signalConfig[data.signal] ?? signalConfig.wait;
+  const config = signalConfig[data.signal] ?? signalConfig.unavailable;
 
   const summaryParts: string[] = [];
   if (sentiment) {
@@ -46,7 +51,7 @@ const TrafficLight: React.FC<TrafficLightProps> = ({ data, sentiment }) => {
 
         <div className="flex justify-center mb-4">
           <div className={`w-20 h-20 rounded-full ${config.bg} ${config.glow} ring-4 ${config.ring} flex items-center justify-center transition-all duration-500`}>
-            <span className={`text-2xl font-bold drop-shadow-md ${data.signal === 'cautious' ? 'text-yellow-900' : 'text-white'}`}>
+            <span className={`text-2xl font-bold drop-shadow-md ${data.signal === 'cautious' ? 'text-yellow-900' : data.signal === 'unavailable' ? 'text-gray-800' : 'text-white'}`}>
               {data.signalLabel}
             </span>
           </div>

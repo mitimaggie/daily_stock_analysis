@@ -44,16 +44,17 @@ class MarketSentiment:
     # 炸板率
     broken_limit_count: int = 0  # 炸板家数(曾涨停后打开)
     broken_limit_rate: float = 0.0  # 炸板率(%)
-    # 综合情绪温度 (0-100)
-    temperature: int = 50        # 50=中性, >70=贪婪, <30=恐惧
-    temperature_label: str = "中性"  # 极度恐惧/恐惧/中性/贪婪/极度贪婪
+    # 综合情绪温度 (0-100)，None 表示数据不可用
+    temperature: Optional[int] = None  # 50=中性, >70=贪婪, <30=恐惧
+    temperature_label: str = "中性"  # 极度恐惧/恐惧/中性/贪婪/极度贪婪/数据不可用
     # 文本描述
     summary: str = ""
 
     def to_context_string(self) -> str:
         """生成供LLM和推送使用的文本"""
+        temp_str = f"{self.temperature}/100" if self.temperature is not None else "数据不可用"
         lines = [
-            f"🌡️ 市场情绪温度: {self.temperature}/100 ({self.temperature_label})",
+            f"🌡️ 市场情绪温度: {temp_str} ({self.temperature_label})",
             f"涨停{self.limit_up_count}家 跌停{self.limit_down_count}家 | 上涨{self.up_count} 下跌{self.down_count} 平盘{self.flat_count}",
         ]
         if self.up_gt5_pct > 0 or self.down_gt5_pct > 0:
@@ -70,7 +71,7 @@ class MarketSentiment:
 def calc_sentiment_temperature(limit_up: int, limit_down: int,
                                 up_count: int, down_count: int,
                                 up_gt5_pct: float = 0,
-                                broken_rate: float = 0) -> int:
+                                broken_rate: float = 0) -> Optional[int]:
     """
     计算情绪温度 (0-100)
     
@@ -79,7 +80,12 @@ def calc_sentiment_temperature(limit_up: int, limit_down: int,
     - 涨跌家数比 (权重30%)
     - 涨幅>5%占比 (权重20%)
     - 炸板率反向 (权重10%)
+    
+    当所有输入为 0 时返回 None，表示数据不可用（避免假中性 50 分）。
     """
+    if limit_up == 0 and limit_down == 0 and up_count == 0 and down_count == 0:
+        return None
+
     # 1. 涨跌停比 (0-100)
     total_limit = limit_up + limit_down
     if total_limit > 0:
@@ -110,8 +116,10 @@ def calc_sentiment_temperature(limit_up: int, limit_down: int,
     return max(0, min(100, temperature))
 
 
-def get_temperature_label(temp: int) -> str:
-    """温度标签"""
+def get_temperature_label(temp: Optional[int]) -> str:
+    """温度标签，temp 为 None 时返回「数据不可用」"""
+    if temp is None:
+        return "数据不可用"
     if temp >= 80:
         return "极度贪婪"
     elif temp >= 65:
@@ -199,12 +207,15 @@ def _derive_limit_from_spot() -> Optional[MarketSentiment]:
         up_gt5_pct=up_gt5_pct,
         down_gt5_pct=down_gt5_pct,
     )
-    sentiment.temperature = calc_sentiment_temperature(
+    temp_val = calc_sentiment_temperature(
         limit_up=limit_up, limit_down=limit_down,
         up_count=up_count, down_count=down_count,
         up_gt5_pct=up_gt5_pct, broken_rate=0,
     )
-    sentiment.temperature_label = get_temperature_label(sentiment.temperature)
+    sentiment.temperature = temp_val
+    sentiment.temperature_label = get_temperature_label(temp_val)
+    if temp_val is None:
+        sentiment.summary = "📊 市场情绪数据不可用（全市场平盘或数据缺失）"
     return sentiment
 
 
@@ -309,21 +320,24 @@ def _fetch_market_sentiment_inner() -> Optional[MarketSentiment]:
                     sentiment.down_gt5_pct = (pct_col < -5).sum() / total * 100
 
         # 计算情绪温度
-        sentiment.temperature = calc_sentiment_temperature(
+        temp_val = calc_sentiment_temperature(
             sentiment.limit_up_count, sentiment.limit_down_count,
             sentiment.up_count, sentiment.down_count,
             sentiment.up_gt5_pct, sentiment.broken_limit_rate
         )
-        sentiment.temperature_label = get_temperature_label(sentiment.temperature)
+        sentiment.temperature = temp_val
+        sentiment.temperature_label = get_temperature_label(temp_val)
 
         # 生成摘要
-        if sentiment.temperature >= 70:
+        if temp_val is None:
+            sentiment.summary = "📊 市场情绪数据不可用，请稍后重试"
+        elif temp_val >= 70:
             sentiment.summary = "🔥 市场情绪高涨，赚钱效应强，但需警惕过热回调"
-        elif sentiment.temperature >= 55:
+        elif temp_val >= 55:
             sentiment.summary = "📈 市场情绪偏暖，赚钱效应尚可，可积极参与"
-        elif sentiment.temperature >= 40:
+        elif temp_val >= 40:
             sentiment.summary = "😐 市场情绪中性，赚钱效应一般，精选个股"
-        elif sentiment.temperature >= 25:
+        elif temp_val >= 25:
             sentiment.summary = "📉 市场情绪偏冷，亏钱效应明显，控制仓位"
         else:
             sentiment.summary = "❄️ 市场极度恐惧，多数股票下跌，建议空仓观望"
@@ -428,7 +442,7 @@ def get_market_sentiment_cached(db: Optional[object] = None) -> Optional[MarketS
     return sentiment
 
 
-def calc_temperature_deviation(today_temp: int, db: Optional[object] = None,
+def calc_temperature_deviation(today_temp: Optional[int], db: Optional[object] = None,
                                n: int = 10) -> Optional[float]:
     """计算今日温度相对近N日的偏离度（标准差倍数）
 
@@ -437,8 +451,10 @@ def calc_temperature_deviation(today_temp: int, db: Optional[object] = None,
         db: DatabaseManager 实例
         n: 需要的历史样本数
     Returns:
-        偏离度（正数=偏热，负数=偏冷），样本不足返回 None
+        偏离度（正数=偏热，负数=偏冷），样本不足或 today_temp 为 None 时返回 None
     """
+    if today_temp is None:
+        return None
     if db is None:
         try:
             from src.storage import DatabaseManager
@@ -522,12 +538,14 @@ def parse_sentiment_from_briefing() -> Optional['MarketSentiment']:
         if total_touched > 0:
             s.broken_limit_rate = broken / total_touched * 100
 
-        s.temperature = calc_sentiment_temperature(
+        temp_val = calc_sentiment_temperature(
             limit_up=limit_up, limit_down=limit_down,
             up_count=0, down_count=0,  # 无全量涨跌家数，只用涨停维度
             up_gt5_pct=0, broken_rate=s.broken_limit_rate
         )
-        logger.debug(f"[市场情绪] 简报解析: 涨停{limit_up}跌停{limit_down}炸板{broken} → 温度{s.temperature}")
+        s.temperature = temp_val
+        s.temperature_label = get_temperature_label(temp_val)
+        logger.debug(f"[市场情绪] 简报解析: 涨停{limit_up}跌停{limit_down}炸板{broken} → 温度{temp_val}")
         return s
     except Exception as e:
         logger.debug(f"[市场情绪] 简报解析失败: {e}")

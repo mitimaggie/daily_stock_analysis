@@ -1,11 +1,11 @@
 /** 市场概览相关类型定义 */
 
 export interface TrafficLightData {
-  signal: 'active' | 'cautious' | 'wait' | 'cash';
+  signal: 'active' | 'cautious' | 'wait' | 'cash' | 'unavailable';
   signalLabel: string;
   signalColor: string;
   reason: string;
-  score: number;
+  score: number | null;
 }
 
 export interface SentimentData {
@@ -13,7 +13,7 @@ export interface SentimentData {
   limitDown: number;
   broken: number;
   brokenRate: number;
-  emotionTemp: number;
+  emotionTemp: number | null;
   advanceCount: number;
   declineCount: number;
   flatCount: number;

@@ -509,6 +509,9 @@ class ScoringFlow:
             return
 
         temp = sentiment.temperature
+        if temp is None:
+            return  # 数据不可用，不应用情绪修正
+
         adj = 0
 
         # ---- 温度区间修正（逆向情绪投资）----

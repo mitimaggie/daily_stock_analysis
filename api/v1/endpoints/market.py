@@ -57,12 +57,12 @@ async def get_market_overview() -> Dict[str, Any]:
             raw["limit_down"] = raw.get("limit_down_count", 0)
             raw["broken"] = raw.get("broken_limit_count", 0)
             raw["broken_rate"] = raw.get("broken_limit_rate", 0.0)
-            raw["emotion_temp"] = raw.get("temperature", 50)
-            raw["emotion_label"] = raw.get("temperature_label", "中性")
+            raw["emotion_temp"] = raw.get("temperature")  # None 表示数据不可用
+            raw["emotion_label"] = raw.get("temperature_label", "数据不可用")
             raw["advance_count"] = raw.get("up_count", 0)
             raw["decline_count"] = raw.get("down_count", 0)
             result["sentiment"] = raw
-            deviation = calc_temperature_deviation(sentiment.temperature, db)
+            deviation = calc_temperature_deviation(sentiment.temperature, db) if sentiment.temperature is not None else None
             result["temperature_deviation"] = deviation
     except Exception as e:
         logger.warning(f"获取市场情绪失败: {e}")
@@ -97,10 +97,24 @@ class ConceptHoldingsRequest(BaseModel):
 @router.post("/concept-holdings", summary="持仓股概念关联查询")
 async def api_concept_holdings(req: ConceptHoldingsRequest) -> Dict[str, Any]:
     """查询持仓股属于哪些概念"""
+    from sqlalchemy import text
     from src.storage import DatabaseManager
 
     db = DatabaseManager.get_instance()
     mappings: Dict[str, List[str]] = {}
+
+    # 检测概念映射表是否为空
+    try:
+        with db.get_session() as session:
+            cnt = session.execute(text("SELECT COUNT(*) FROM stock_concept_mapping")).scalar() or 0
+        if cnt == 0:
+            logger.warning("概念映射表为空，请运行 python main.py --update-concepts 更新")
+            for code in req.codes:
+                mappings[code] = []
+            return {"mappings": mappings}
+    except Exception as e:
+        logger.warning(f"概念映射表检查失败: {e}")
+
     for code in req.codes:
         concepts = db.get_stock_concepts(code)
         mappings[code] = [c.concept_name for c in concepts] if concepts else []
