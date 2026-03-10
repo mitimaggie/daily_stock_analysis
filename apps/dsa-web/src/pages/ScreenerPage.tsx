@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { screenerApi } from '../api/screener';
 import type { ScreenerResultItem } from '../api/screener';
@@ -22,6 +22,7 @@ const ScreenerPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   const handleSearch = useCallback(async () => {
     setLoading(true);
@@ -37,6 +38,7 @@ const ScreenerPage: React.FC = () => {
       setResults(resp.results);
       setTotal(resp.total);
       setSearched(true);
+      setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (err) {
       setError(err instanceof Error ? err.message : '筛选请求失败');
     } finally {
@@ -222,7 +224,7 @@ const ScreenerPage: React.FC = () => {
 
         {/* 结果列表 */}
         {searched && !error && (
-          <div className="space-y-3">
+          <div ref={resultsRef} className="space-y-3">
             <div className="flex items-center justify-between px-1">
               <span className="text-[13px] text-primary/70 font-medium">
                 筛选结果

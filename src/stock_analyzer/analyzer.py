@@ -236,7 +236,8 @@ class StockTrendAnalyzer:
             _in_warmup = bool(latest.get('_warmup', False))
             if _in_warmup:
                 result.data_insufficient = True
-                logger.info(f"[{code}] 最新K线仍在指标预热期，技术指标可能不可靠")
+                result.risk_factors.append(f"仅有 {len(df)} 天K线数据，技术指标处于预热期")
+                logger.info(f"[{code}] 最新K线仍在指标预热期({len(df)}天数据)，技术指标可能不可靠")
 
             result.current_price = float(latest['close'])
             result.ma5 = float(latest['MA5']) if pd.notna(latest.get('MA5')) else None

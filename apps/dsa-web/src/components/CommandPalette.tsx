@@ -16,6 +16,10 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+let _cachedItems: HistoryItem[] = [];
+let _cachedAt = 0;
+
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -25,6 +29,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
   const inputRef = useRef<HTMLInputElement>(null);
 
   const fetchHistory = useCallback(async () => {
+    if (Date.now() - _cachedAt < CACHE_TTL_MS && _cachedItems.length > 0) {
+      setHistoryItems(_cachedItems);
+      return;
+    }
     setIsLoading(true);
     try {
       const response = await historyApi.getList({
@@ -39,6 +47,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose })
         seen.add(item.stockCode);
         return true;
       });
+      _cachedItems = deduped;
+      _cachedAt = Date.now();
       setHistoryItems(deduped);
     } catch (err) {
       console.error('CommandPalette fetch history failed:', err);

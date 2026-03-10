@@ -182,13 +182,16 @@ def _check_stop_loss(holding: Any, session: Any,
             result_data = json.loads(latest.raw_result)
             quant = result_data.get("dashboard", {}).get("quant_extras", {})
             if quant.get("stop_loss_breached"):
+                breach_detail = quant.get("stop_loss_breach_detail", "")
+                if atr_stop and atr_stop > 0:
+                    breach_detail += f"（ATR追踪止损 {atr_stop:.2f}）"
                 todos.append({
                     "type": "stop_loss",
                     "priority": "high",
                     "code": code,
                     "name": name,
                     "message": f"{name} 已触发止损位",
-                    "detail": quant.get("stop_loss_breach_detail", ""),
+                    "detail": breach_detail,
                     "stop_price": atr_stop,
                     "analyzed_at": analyzed_at,
                 })
@@ -252,7 +255,7 @@ def _check_score_change(holding: Any, session: Any,
 
     try:
         rows = session.execute(
-            select(AnalysisHistory.sentiment_score, AnalysisHistory.created_at)
+            select(AnalysisHistory.llm_score, AnalysisHistory.sentiment_score, AnalysisHistory.created_at)
             .where(AnalysisHistory.code == code)
             .order_by(desc(AnalysisHistory.created_at))
             .limit(2)
@@ -260,17 +263,23 @@ def _check_score_change(holding: Any, session: Any,
     except Exception:
         return
 
-    if len(rows) < 2 or rows[0][0] is None or rows[1][0] is None:
+    if len(rows) < 2:
         return
 
-    latest_score, prev_score = rows[0][0], rows[1][0]
+    def _pick_score(row):
+        return row[0] if row[0] is not None else row[1]
+
+    latest_score = _pick_score(rows[0])
+    prev_score = _pick_score(rows[1])
+    if latest_score is None or prev_score is None:
+        return
     diff = latest_score - prev_score
     if abs(diff) < 10:
         return
 
     direction = "上升" if diff > 0 else "下降"
     priority = "medium" if abs(diff) < 15 else "high"
-    analyzed_at = rows[0][1].isoformat() if rows[0][1] else None
+    analyzed_at = rows[0][2].isoformat() if rows[0][2] else None
     todos.append({
         "type": "score_change",
         "priority": priority,

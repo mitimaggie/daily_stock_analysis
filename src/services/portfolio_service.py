@@ -21,11 +21,12 @@ from src.storage import DatabaseManager, Portfolio, PortfolioLog, Watchlist
 logger = logging.getLogger(__name__)
 
 
-def _ensure_daily_data(code: str, min_rows: int = 20) -> None:
+def _ensure_daily_data(code: str, min_rows: int = 20) -> bool:
     """确保 stock_daily 表有足够的日线数据供 ATR 计算。
 
     添加持仓时自动检查并补充日线数据，避免新股票因无历史数据导致 ATR 止损为 0。
     使用 DataFetcherManager 自动走优先级 fallback（ETF 由 baostock 接管）。
+    返回 True 表示数据充足，False 表示数据不足（止损计算不可用）。
     """
     try:
         from src.storage import StockDaily
@@ -36,18 +37,21 @@ def _ensure_daily_data(code: str, min_rows: int = 20) -> None:
                 select(func.count()).select_from(StockDaily).where(StockDaily.code == code)
             ).scalar() or 0
         if count >= min_rows:
-            return
+            return True
 
         from data_provider.base import DataFetcherManager
         manager = DataFetcherManager()
-        df, source_name = manager.get_daily_data(code, days=120)
+        df, source_name = manager.get_daily_data(code, days=180)
         if df is not None and not df.empty:
             saved = db.save_daily_data(df, code, data_source=source_name)
             logger.info("[portfolio] 自动拉取日线 %s: %d 条入库(source=%s)", code, saved, source_name)
+            return saved >= min_rows
         else:
             logger.warning("[portfolio] 自动拉取日线 %s 返回空数据，止损计算将不可用", code)
+            return False
     except Exception as e:
         logger.warning("[portfolio] 自动拉取日线 %s 异常: %s", code, e)
+        return False
 
 
 # ─────────────────────────────────────────────
@@ -124,8 +128,10 @@ def add_portfolio(
             existing.updated_at = datetime.now()
             session.commit()
             session.refresh(existing)
-            _ensure_daily_data(code)
-            return existing.to_dict()
+            daily_ready = _ensure_daily_data(code)
+            result = existing.to_dict()
+            result['daily_data_ready'] = daily_ready
+            return result
         else:
             record = Portfolio(
                 code=code,
@@ -139,8 +145,10 @@ def add_portfolio(
             session.add(record)
             session.commit()
             session.refresh(record)
-            _ensure_daily_data(code)
-            return record.to_dict()
+            daily_ready = _ensure_daily_data(code)
+            result = record.to_dict()
+            result['daily_data_ready'] = daily_ready
+            return result
 
 
 def remove_portfolio(code: str) -> bool:
@@ -383,25 +391,35 @@ def remove_watchlist(code: str) -> bool:
 def list_watchlist(sort_by: str = 'score') -> List[Dict[str, Any]]:
     """获取所有关注股（支持按评分排序）。
 
-    返回前检查每条记录的 name 是否为空，若为空则调用 _resolve_stock_name 回填并更新数据库。
-    回填失败的记录静默跳过，不影响返回。
+    返回前检查每条记录的 name 是否为空，若为空则在 session 外调用 _resolve_stock_name
+    回填并单独写入数据库，避免长时间持有 session 导致 SQLite 锁表。
     """
     db = DatabaseManager.get_instance()
+
     with db.get_session() as session:
         records = session.execute(
             select(Watchlist).order_by(Watchlist.created_at)
         ).scalars().all()
-        for rec in records:
-            if not rec.name or not str(rec.name).strip():
-                try:
-                    resolved = _resolve_stock_name(rec.code)
-                    if resolved:
-                        rec.name = resolved
-                        session.commit()
-                        session.refresh(rec)
-                except Exception:
-                    pass
         items = [r.to_dict() for r in records]
+        codes_to_backfill = [r.code for r in records if not r.name or not str(r.name).strip()]
+
+    if codes_to_backfill:
+        for code in codes_to_backfill:
+            try:
+                resolved = _resolve_stock_name(code)
+                if resolved:
+                    with db.get_session() as session:
+                        rec = session.execute(
+                            select(Watchlist).where(Watchlist.code == code)
+                        ).scalar_one_or_none()
+                        if rec:
+                            rec.name = resolved
+                            session.commit()
+                    for item in items:
+                        if item.get('code') == code:
+                            item['name'] = resolved
+            except Exception:
+                pass
 
     if sort_by == 'score':
         items.sort(key=lambda x: (x.get('last_score') or 0), reverse=True)

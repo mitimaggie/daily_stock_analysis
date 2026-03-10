@@ -5,6 +5,49 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.5.0] - 2026-03-10
+
+### 新增
+- 🔍 **Cmd+K 全局快速查股**
+  - 任意页面按 Cmd+K（Mac）/ Ctrl+K（Windows）弹出搜索面板
+  - 输入股票代码或名称联想，选中后跳转分析页自动触发分析
+  - 支持上下键导航、Enter 选中、Escape 关闭，5 分钟缓存历史记录
+- 📦 **添加持仓自动拉取日线数据**
+  - 添加持仓时自动拉取 180 天日线数据，返回 `daily_data_ready` 标志
+  - 确保新持仓的 ATR 止损等指标可立即计算
+- 🏷️ **关注股名称自动回填**
+  - 添加关注股时自动填充股票名称
+
+### 改进
+- 🧭 **前端导航重构**
+  - 底部 Tab 改为顶部导航栏
+- 🖥️ **全站宽屏优化**
+  - max-width 放宽、侧边栏 280→320px、报告区 max-w-5xl
+- 🎨 **浅色主题视觉升级**
+  - 暖白背景、卡片阴影加强、边框加深，视觉层次更清晰
+- 🔧 **选股器 UX 优化**
+  - 筛选条件从纵向改为横向排列，筛选完自动滚动到结果区域
+- 📋 **持仓卡片按钮精简**
+  - "详情""分析"直接展示，"日志""记录""移除"收入"..."菜单，减少视觉噪音
+- 📊 **评分体系统一使用 LLM 分优先**
+  - 评分逻辑统一为 llm_score → sentiment_score fallback，消除多源评分不一致
+- 🛡️ **止损体系统一**
+  - 全站统一使用动态 ATR 倍数 + 两阶段追踪止损（保本→保利润）
+- 🌡️ **情绪温度准确性提升**
+  - 非交易日/数据全零时返回 None，评分不再受假中性数据影响
+- 📉 **pct_chg 数据源标准化**
+  - 短 K 线保护 + 反向极值校验安全网，防止异常涨跌幅数据污染评分
+- ⏳ **技术指标预热期保护**
+  - K 线不足时评分封顶 55 + 情绪修正减半 + 标注具体 K 线天数，避免虚高评分误导操作
+
+### 研发流程
+- 📜 **SOP 新增红线原则**
+  - #4 专家意见零丢失：每条意见逐条编号追踪，禁止凭记忆归纳合并
+  - #5 批量改动必须分批：每批最多 3 项相关改动，独立走完整 SOP
+  - #6 研发总监不碰代码：所有代码修改必须通过 Coder/Frontend 执行
+- 📋 **SOP 新增阶段门禁检查和专家意见追踪表**
+- 📝 **新建 checklist-template.mdc 检查清单模板**
+
 ## [2.4.0] - 2026-03-10
 
 ### 新增
@@ -404,7 +447,8 @@
 
 ---
 
-[Unreleased]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.2.5...v2.3.0
 [2.2.5]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.2.4...v2.2.5

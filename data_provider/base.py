@@ -115,10 +115,16 @@ class BaseFetcher(ABC):
             logger.debug("_clean_data: pct_chg 缺失，已用 close.pct_change() 补全")
 
         if 'pct_chg' in df.columns and not df['pct_chg'].isna().all():
-            median_abs = df['pct_chg'].abs().median()
-            if 0 < median_abs < 0.5:
-                df['pct_chg'] = df['pct_chg'] * 100
-                logger.debug("_clean_data: pct_chg 疑似小数格式(median_abs=%.4f)，已乘以100转为百分比", median_abs)
+            valid_pct = df['pct_chg'].dropna()
+            if len(valid_pct) >= 10:
+                median_abs = valid_pct.abs().median()
+                if 0 < median_abs < 0.5:
+                    converted = valid_pct * 100
+                    if converted.abs().max() <= 30:
+                        df['pct_chg'] = df['pct_chg'] * 100
+                        logger.debug("_clean_data: pct_chg 疑似小数格式(median_abs=%.4f)，已乘以100转为百分比", median_abs)
+                    else:
+                        logger.debug("_clean_data: pct_chg median_abs=%.4f<0.5 但乘100后极值=%.2f>30，跳过转换（可能是低波股）", median_abs, converted.abs().max())
 
         return df
     
