@@ -47,21 +47,7 @@ const ScreenerPage: React.FC = () => {
   }, [minScore, maxScore, days, adviceFilter, limit]);
 
   const handleStockClick = (code: string) => {
-    navigate('/analysis');
-    setTimeout(() => {
-      const input = document.querySelector('input[placeholder*="股票代码"]') as HTMLInputElement;
-      if (input) {
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype, 'value',
-        )?.set;
-        nativeInputValueSetter?.call(input, code);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      setTimeout(() => {
-        const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
-        if (btn) btn.click();
-      }, 100);
-    }, 200);
+    navigate('/analysis?stock=' + code);
   };
 
   const getScoreColor = (score: number) => {

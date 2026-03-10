@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { marketApi } from '../../api/market';
 import type { ConceptItem } from '../../types/market';
 import { safeFixed } from '../../utils/format';
@@ -16,7 +16,12 @@ const PortfolioHeatScan: React.FC<PortfolioHeatScanProps> = ({ portfolioItems })
   const [loaded, setLoaded] = useState(false);
 
   const holdingCodes = portfolioItems.map(p => p.code);
+  const holdingCodesKey = useMemo(() => portfolioItems.map(p => p.code).join(','), [portfolioItems]);
   const holdingNameMap = Object.fromEntries(portfolioItems.map(p => [p.code, p.name]));
+
+  useEffect(() => {
+    if (loaded) setLoaded(false);
+  }, [holdingCodesKey]);
 
   useEffect(() => {
     if (!expanded || loaded) return;

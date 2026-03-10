@@ -271,7 +271,7 @@ const MonitorCard: React.FC<{
   signal: MonitorSignal;
   onRemove: (code: string) => void;
   onRefresh: () => void;
-  scoreTrend?: { score: number; change: number; direction: string } | null;
+    scoreTrend?: { score: number; change: number; direction: string; date?: string } | null;
 }> = ({ signal, onRemove, onRefresh, scoreTrend }) => {
   const navigate = useNavigate();
   const cfg = signalConfig[signal.signal] || signalConfig.unknown;
@@ -281,10 +281,6 @@ const MonitorCard: React.FC<{
   const [showLogs, setShowLogs] = useState(false);
   const [showTradeForm, setShowTradeForm] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-
-  const closeMenu = useCallback(() => {
-    setTimeout(() => setMenuOpen(false), 100);
-  }, []);
 
   return (
     <div className={`rounded-lg border p-3 space-y-2 ${cfg.bg}`}>
@@ -310,7 +306,7 @@ const MonitorCard: React.FC<{
             <button
               type="button"
               onClick={() => setMenuOpen(v => !v)}
-              onBlur={closeMenu}
+              onBlur={() => setMenuOpen(false)}
               className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-secondary hover:border-black/[0.1] transition"
             >
               …
@@ -319,23 +315,24 @@ const MonitorCard: React.FC<{
               <div className="absolute right-0 top-full mt-1 z-10 min-w-[88px] py-1 rounded border border-black/[0.08] bg-base shadow-lg">
                 <button
                   type="button"
-                  onClick={() => { setShowLogs(v => !v); closeMenu(); }}
+                  onMouseDown={(e) => { e.preventDefault(); setShowLogs(v => !v); setMenuOpen(false); }}
                   className="w-full text-left text-[10px] px-2 py-1.5 text-muted hover:text-secondary hover:bg-black/[0.04] transition"
                 >
                   📋 日志
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowTradeForm(v => !v); setShowLogs(false); closeMenu(); }}
+                  onMouseDown={(e) => { e.preventDefault(); setShowTradeForm(v => !v); setShowLogs(false); setMenuOpen(false); }}
                   className="w-full text-left text-[10px] px-2 py-1.5 text-muted hover:text-amber-400 hover:bg-black/[0.04] transition"
                 >
                   ✏️ 记录
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
+                  onMouseDown={(e) => {
+                    e.preventDefault();
                     if (confirm(`确认从持仓中移除 ${signal.name || signal.code}？`)) onRemove(signal.code);
-                    closeMenu();
+                    setMenuOpen(false);
                   }}
                   className="w-full text-left text-[10px] px-2 py-1.5 text-red-600 hover:bg-red-500/10 transition"
                 >
@@ -356,10 +353,16 @@ const MonitorCard: React.FC<{
           const s = scoreTrend.score;
           const label = s >= 70 ? '强' : s >= 50 ? '中' : '弱';
           const labelColor = s >= 70 ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20' : s >= 50 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-red-600 bg-red-500/10 border-red-500/20';
+          const dateLabel = scoreTrend.date ? (() => {
+            const d = scoreTrend.date;
+            const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            return m ? `${m[2]}/${m[3]}` : d;
+          })() : null;
           return (
             <span className="text-muted flex items-center gap-1">
               评分 <span className={`font-mono font-medium ${scoreTrend.change > 0 ? 'text-red-600' : scoreTrend.change < 0 ? 'text-emerald-600' : 'text-secondary'}`}>{s}{scoreTrend.change !== 0 && <span className="text-[10px] ml-0.5">({scoreTrend.change > 0 ? '+' : ''}{scoreTrend.change})</span>}</span>
               <span className={`text-[10px] px-1 py-px rounded border font-medium ${labelColor}`}>{label}</span>
+              {dateLabel && <span className="text-[9px] text-muted/50 ml-1">{dateLabel}</span>}
             </span>
           );
         })()}
@@ -549,7 +552,7 @@ const PortfolioPage: React.FC = () => {
   const [addWatchName, setAddWatchName] = useState('');
   const [signalError, setSignalError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [scoreTrends, setScoreTrends] = useState<Record<string, { score: number; change: number; direction: string }>>({});
+  const [scoreTrends, setScoreTrends] = useState<Record<string, { score: number; change: number; direction: string; date?: string }>>({});
 
   const fetchSignals = useCallback(async (forceRefresh = false) => {
     setLoadingSignals(true);
@@ -633,10 +636,10 @@ const PortfolioPage: React.FC = () => {
     let cancelled = false;
     scoreTrendApi.getBatchTrend(signals.map(s => s.code), 5).then(results => {
       if (cancelled) return;
-      const mapped: Record<string, { score: number; change: number; direction: string }> = {};
+      const mapped: Record<string, { score: number; change: number; direction: string; date?: string }> = {};
       for (const [code, trend] of Object.entries(results)) {
         const latest = trend.scores?.[trend.scores.length - 1];
-        if (latest) mapped[code] = { score: latest.score, change: trend.score_change, direction: trend.trend_direction };
+        if (latest) mapped[code] = { score: latest.score, change: trend.score_change, direction: trend.trend_direction, date: latest.date };
       }
       setScoreTrends(mapped);
     }).catch(() => {});

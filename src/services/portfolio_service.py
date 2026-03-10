@@ -9,6 +9,7 @@
 4. 分时分析辅助（调用 intraday_fetcher + intraday_analyzer）
 """
 
+import functools
 import logging
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
@@ -310,6 +311,7 @@ def get_portfolio_sector_risk(current_code: str) -> Optional[Dict[str, Any]]:
 # 关注股 CRUD
 # ─────────────────────────────────────────────
 
+@functools.lru_cache(maxsize=256)
 def _resolve_stock_name(code: str) -> str:
     """当 name 为空时，从本地数据库或数据源解析股票名称。优先本地，避免额外网络请求。
 
@@ -634,24 +636,27 @@ def _get_beta_from_analysis(code: str) -> float:
         return 1.0
 
 
-def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
-    """处理单只持仓的实时监控：拉取价格、计算ATR止损、生成操作信号、写回数据库。"""
+def _process_single_holding(holding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """处理单只持仓的实时监控：拉取价格、计算ATR止损、生成操作信号、写回数据库。
+
+    接收 dict（由 Portfolio.to_dict() 序列化），避免 ORM 对象在 session 关闭后 detached 导致 PostgreSQL 迁移问题。
+    """
     from src.stock_analyzer.risk_management import RiskManager
 
-    code = holding.code
-    cost_price = holding.cost_price
+    code = holding.get('code')
+    cost_price = holding.get('cost_price')
     current_price = _get_realtime_price(code)
 
     if current_price is None:
         return {
             'code': code,
-            'name': holding.name,
+            'name': holding.get('name'),
             'cost_price': cost_price,
             'current_price': None,
             'signal': 'unknown',
             'signal_text': '数据获取失败',
             'reasons': ['⚪ 无法获取实时价格'],
-            'atr_stop': holding.atr_stop_loss,
+            'atr_stop': holding.get('atr_stop_loss'),
             'pnl_pct': None,
         }
 
@@ -661,11 +666,11 @@ def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
         df=df,
         cost_price=cost_price,
         current_price=current_price,
-        prev_atr_stop=holding.atr_stop_loss,
-        prev_highest=holding.highest_price,
+        prev_atr_stop=holding.get('atr_stop_loss'),
+        prev_highest=holding.get('highest_price'),
         beta=beta,
     ) if df is not None else {
-        'atr': 0, 'atr_stop': holding.atr_stop_loss or 0,
+        'atr': 0, 'atr_stop': holding.get('atr_stop_loss') or 0,
         'highest_price': current_price, 'stop_triggered': False,
         'pnl_pct': (current_price - cost_price) / cost_price * 100 if cost_price > 0 else 0,
         'stop_pnl_pct': 0,
@@ -692,12 +697,12 @@ def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
         intraday_info=intraday_info,
     )
 
-    prev_signal = holding.last_signal or ''
+    prev_signal = holding.get('last_signal') or ''
     new_signal = signal_info['signal']
     if new_signal == 'stop_loss' and prev_signal != 'stop_loss':
         _push_stop_loss_alert(
             code=code,
-            name=holding.name,
+            name=holding.get('name'),
             current_price=current_price,
             atr_stop=atr_result['atr_stop'],
             pnl_pct=atr_result['pnl_pct'],
@@ -729,10 +734,10 @@ def _process_single_holding(holding) -> Optional[Dict[str, Any]]:
 
     return {
         'code': code,
-        'name': holding.name,
+        'name': holding.get('name'),
         'cost_price': cost_price,
-        'shares': holding.shares,
-        'entry_date': holding.entry_date.isoformat() if holding.entry_date else None,
+        'shares': holding.get('shares'),
+        'entry_date': holding.get('entry_date'),  # to_dict 已转为 isoformat 字符串
         'current_price': current_price,
         'pnl_pct': atr_result['pnl_pct'],
         'atr': atr_result['atr'],
@@ -759,7 +764,7 @@ def monitor_portfolio() -> List[Dict[str, Any]]:
     db = DatabaseManager.get_instance()
     with db.get_session() as session:
         holdings = session.execute(select(Portfolio)).scalars().all()
-        holdings_list = [h for h in holdings]
+        holdings_list = [h.to_dict() for h in holdings]
 
     if not holdings_list:
         return []
@@ -774,7 +779,7 @@ def monitor_portfolio() -> List[Dict[str, Any]]:
                 if result:
                     results.append(result)
             except Exception as e:
-                logger.warning("监控处理失败 %s: %s", item.code, e)
+                logger.warning("监控处理失败 %s: %s", item.get('code'), e)
 
     return results
 
