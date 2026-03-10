@@ -11,4 +11,12 @@ export const marketApi = {
     const { data } = await apiClient.get('/api/v1/market/todo-list');
     return toCamelCase<MarketTodoList>(data);
   },
+  getConceptHoldings: async (codes: string[]): Promise<Record<string, string[]>> => {
+    try {
+      const { data } = await apiClient.post<{ mapping: Record<string, string[]> }>('/api/v1/market/concept-holdings', { codes });
+      return data.mapping || {};
+    } catch {
+      return {};
+    }
+  },
 };

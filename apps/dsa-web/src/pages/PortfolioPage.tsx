@@ -167,14 +167,113 @@ const LogPanel: React.FC<{ code: string }> = ({ code }) => {
   );
 };
 
+// ─── 快捷交易记录表单 ─────────────────────────────
+const TradeForm: React.FC<{ code: string; onDone: () => void }> = ({ code, onDone }) => {
+  const [action, setAction] = useState<'buy' | 'sell'>('buy');
+  const [shares, setShares] = useState('');
+  const [price, setPrice] = useState('');
+  const [reason, setReason] = useState('');
+  const [costPriceInput, setCostPriceInput] = useState('');
+  const [sharesInput, setSharesInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleRecordTrade = async () => {
+    if (!shares || !price) { setError('请填写数量和价格'); return; }
+    setSaving(true); setError('');
+    try {
+      await portfolioApi.recordTrade(code, {
+        action,
+        shares: parseInt(shares),
+        price: parseFloat(price),
+        reason: reason || undefined,
+      });
+      onDone();
+    } catch { setError('记录失败'); }
+    finally { setSaving(false); }
+  };
+
+  const handleUpdateCost = async () => {
+    if (!costPriceInput) { setError('请填写成本价'); return; }
+    setSaving(true); setError('');
+    try {
+      await portfolioApi.updateCost(code, {
+        cost_price: parseFloat(costPriceInput),
+        shares: sharesInput ? parseInt(sharesInput) : undefined,
+      });
+      onDone();
+    } catch { setError('更新失败'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="border-t border-black/[0.05] pt-3 space-y-3">
+      <div className="flex items-center gap-4 text-[12px]">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="radio" checked={action === 'buy'} onChange={() => setAction('buy')} className="accent-red-600" />
+          <span className="text-red-600 font-medium">买入</span>
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="radio" checked={action === 'sell'} onChange={() => setAction('sell')} className="accent-emerald-600" />
+          <span className="text-emerald-600 font-medium">卖出</span>
+        </label>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="flex items-center gap-1">
+          <input value={shares} onChange={e => setShares(e.target.value)} placeholder="数量" type="number"
+            className="flex-1 bg-black/[0.03] border border-black/[0.06] rounded px-2 py-1 text-[11px] text-primary placeholder-muted/70 focus:outline-none focus:border-black/[0.12]" />
+          <span className="text-[10px] text-muted">股</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <input value={price} onChange={e => setPrice(e.target.value)} placeholder="价格" type="number" step="0.01"
+            className="flex-1 bg-black/[0.03] border border-black/[0.06] rounded px-2 py-1 text-[11px] text-primary placeholder-muted/70 focus:outline-none focus:border-black/[0.12]" />
+          <span className="text-[10px] text-muted">元</span>
+        </div>
+        <input value={reason} onChange={e => setReason(e.target.value)} placeholder="备注（选填）"
+          className="bg-black/[0.03] border border-black/[0.06] rounded px-2 py-1 text-[11px] text-primary placeholder-muted/70 focus:outline-none focus:border-black/[0.12]" />
+      </div>
+      <button onClick={handleRecordTrade} disabled={saving}
+        className="w-full py-1.5 rounded bg-cyan-500/15 border border-cyan-500/25 text-cyan-600 text-[11px] hover:bg-cyan-500/25 transition disabled:opacity-50">
+        {saving ? '提交中…' : '确认记录'}
+      </button>
+
+      <div className="flex items-center gap-2 text-[10px] text-muted/60">
+        <div className="flex-1 h-px bg-black/[0.05]" />
+        <span>或直接更新</span>
+        <div className="flex-1 h-px bg-black/[0.05]" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-center gap-1">
+          <input value={costPriceInput} onChange={e => setCostPriceInput(e.target.value)} placeholder="成本价" type="number" step="0.01"
+            className="flex-1 bg-black/[0.03] border border-black/[0.06] rounded px-2 py-1 text-[11px] text-primary placeholder-muted/70 focus:outline-none focus:border-black/[0.12]" />
+          <span className="text-[10px] text-muted">元</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <input value={sharesInput} onChange={e => setSharesInput(e.target.value)} placeholder="持仓量" type="number"
+            className="flex-1 bg-black/[0.03] border border-black/[0.06] rounded px-2 py-1 text-[11px] text-primary placeholder-muted/70 focus:outline-none focus:border-black/[0.12]" />
+          <span className="text-[10px] text-muted">股</span>
+        </div>
+      </div>
+      <button onClick={handleUpdateCost} disabled={saving}
+        className="w-full py-1.5 rounded bg-black/[0.03] border border-black/[0.06] text-secondary text-[11px] hover:bg-black/[0.06] transition disabled:opacity-50">
+        {saving ? '更新中…' : '更新'}
+      </button>
+
+      {error && <p className="text-[10px] text-red-600">{error}</p>}
+    </div>
+  );
+};
+
 // ─── 持仓监控卡片 ─────────────────────────────
-const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) => void }> = ({ signal, onRemove }) => {
+const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) => void; onRefresh: () => void }> = ({ signal, onRemove, onRefresh }) => {
   const navigate = useNavigate();
   const cfg = signalConfig[signal.signal] || signalConfig.unknown;
   const pnl = signal.pnlPct;
   const pnlColor = pnl == null ? 'text-muted' : pnl >= 0 ? 'text-red-600' : 'text-emerald-600';
   const pnlStr = pnl == null ? '--' : `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
   const [showLogs, setShowLogs] = useState(false);
+  const [showTradeForm, setShowTradeForm] = useState(false);
 
   const [scoreTrend, setScoreTrend] = useState<{ score: number; change: number; direction: string } | null>(null);
   useEffect(() => {
@@ -202,14 +301,17 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.color}`}>
             {cfg.label}
           </span>
-          <button onClick={() => setShowLogs(v => !v)} className="text-[11px] text-muted/70 hover:text-secondary transition" title="操作日志">📋</button>
-          <button onClick={() => window.open(`/portfolio/${signal.code}/simple`, '_blank')} className="text-[11px] text-muted/70 hover:text-sky-400 transition" title="简化视图">📊</button>
-          <button onClick={() => navigate(`/analysis?stock=${signal.code}`)} className="text-[11px] text-muted/70 hover:text-cyan transition" title="AI分析">🔍</button>
-          <button onClick={() => onRemove(signal.code)} className="text-[11px] text-muted/70 hover:text-red-600 transition">×</button>
+          <button onClick={() => setShowLogs(v => !v)} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-secondary hover:border-black/[0.1] transition">📋 日志</button>
+          <button onClick={() => window.open(`/portfolio/${signal.code}/simple`, '_blank')} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-sky-400 hover:border-sky-500/20 transition">📊 详情</button>
+          <button onClick={() => navigate(`/analysis?stock=${signal.code}`)} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-cyan hover:border-cyan/20 transition">🔍 分析</button>
+          <button onClick={() => { setShowTradeForm(v => !v); setShowLogs(false); }} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-amber-400 hover:border-amber-500/20 transition">✏️ 记录</button>
+          <button onClick={() => {
+            if (confirm(`确认从持仓中移除 ${signal.name || signal.code}？`)) onRemove(signal.code);
+          }} className="text-[10px] px-1.5 py-0.5 rounded border border-black/[0.06] text-muted hover:text-red-600 hover:border-red-500/20 transition" title="移除持仓">× 移除</button>
         </div>
       </div>
 
@@ -218,17 +320,32 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
         <span className="text-muted">成本 <span className="text-primary/70 font-mono">{safeFixed(signal.costPrice, 2)}</span></span>
         <span className="text-muted">现价 <span className={`font-mono ${signal.currentPrice ? 'text-primary/80' : 'text-muted'}`}>{signal.currentPrice?.toFixed(2) ?? '--'}</span></span>
         <span className="text-muted">浮盈 <span className={`font-mono font-medium ${pnlColor}`}>{pnlStr}</span></span>
-        {scoreTrend && (
-          <span className="text-muted">评分 <span className={`font-mono font-medium ${scoreTrend.change > 0 ? 'text-red-600' : scoreTrend.change < 0 ? 'text-emerald-600' : 'text-secondary'}`}>{scoreTrend.score}{scoreTrend.change !== 0 && <span className="text-[10px] ml-0.5">({scoreTrend.change > 0 ? '+' : ''}{scoreTrend.change})</span>}</span></span>
-        )}
+        {scoreTrend && (() => {
+          const s = scoreTrend.score;
+          const label = s >= 70 ? '强' : s >= 50 ? '中' : '弱';
+          const labelColor = s >= 70 ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20' : s >= 50 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' : 'text-red-600 bg-red-500/10 border-red-500/20';
+          return (
+            <span className="text-muted flex items-center gap-1">
+              评分 <span className={`font-mono font-medium ${scoreTrend.change > 0 ? 'text-red-600' : scoreTrend.change < 0 ? 'text-emerald-600' : 'text-secondary'}`}>{s}{scoreTrend.change !== 0 && <span className="text-[10px] ml-0.5">({scoreTrend.change > 0 ? '+' : ''}{scoreTrend.change})</span>}</span>
+              <span className={`text-[10px] px-1 py-px rounded border font-medium ${labelColor}`}>{label}</span>
+            </span>
+          );
+        })()}
       </div>
 
       {/* ATR 止损线 */}
       {signal.atrStop > 0 && (
-        <div className="flex items-center gap-4 text-[11px] text-muted">
-          <span>ATR止损 <span className="font-mono text-amber-400/80">{safeFixed(signal.atrStop, 2)}</span></span>
-          <span>锁住浮盈 <span className={`font-mono ${(signal.stopPnlPct ?? 0) >= 0 ? 'text-red-600/70' : 'text-emerald-600/70'}`}>{(signal.stopPnlPct ?? 0) >= 0 ? '+' : ''}{safeFixed(signal.stopPnlPct, 1)}%</span></span>
-          {signal.highestPrice > 0 && <span>持仓高点 <span className="font-mono text-secondary">{safeFixed(signal.highestPrice, 2)}</span></span>}
+        <div className="space-y-1">
+          {signal.currentPrice != null && signal.currentPrice < signal.atrStop && (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-red-600 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">
+              <span>⚠️</span><span>已跌破止损价！当前 {signal.currentPrice.toFixed(2)} &lt; 止损 {safeFixed(signal.atrStop, 2)}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-4 text-[11px] text-muted">
+            <span>止损价 <span className="font-mono text-amber-400/80">{safeFixed(signal.atrStop, 2)}</span> 元</span>
+            <span>锁住浮盈 <span className={`font-mono ${(signal.stopPnlPct ?? 0) >= 0 ? 'text-red-600/70' : 'text-emerald-600/70'}`}>{(signal.stopPnlPct ?? 0) >= 0 ? '+' : ''}{safeFixed(signal.stopPnlPct, 1)}%</span></span>
+            {signal.highestPrice > 0 && <span>持仓高点 <span className="font-mono text-secondary">{safeFixed(signal.highestPrice, 2)}</span></span>}
+          </div>
         </div>
       )}
 
@@ -270,6 +387,11 @@ const MonitorCard: React.FC<{ signal: MonitorSignal; onRemove: (code: string) =>
 
       {/* 操作日志面板（按需展开） */}
       {showLogs && <LogPanel code={signal.code} />}
+
+      {/* 快捷交易记录（按需展开） */}
+      {showTradeForm && (
+        <TradeForm code={signal.code} onDone={() => { setShowTradeForm(false); onRefresh(); }} />
+      )}
     </div>
   );
 };
@@ -398,7 +520,6 @@ const PortfolioPage: React.FC = () => {
   useEffect(() => { fetchWatchlist(); }, [sortBy, fetchWatchlist]);
 
   const handleRemovePortfolio = async (code: string) => {
-    if (!confirm(`确认从持仓中移除 ${code}？`)) return;
     await portfolioApi.remove(code);
     fetchSignals();
   };
@@ -409,7 +530,7 @@ const PortfolioPage: React.FC = () => {
   };
 
   const handleAnalyze = (code: string) => {
-    window.location.href = `/?code=${code}`;
+    window.location.href = `/analysis?stock=${code}`;
   };
 
   const handleAddWatchlist = async (e: React.FormEvent) => {
@@ -676,7 +797,7 @@ const PortfolioPage: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {signals.map(s => (
-                  <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} />
+                  <MonitorCard key={s.code} signal={s} onRemove={handleRemovePortfolio} onRefresh={fetchSignals} />
                 ))}
               </div>
             )}

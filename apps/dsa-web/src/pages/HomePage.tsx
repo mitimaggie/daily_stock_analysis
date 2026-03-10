@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { HistoryItem, AnalysisReport, TaskInfo, PositionInfo } from '../types/analysis';
 import { mapAdviceDisplay } from '../types/analysis';
 import { historyApi } from '../api/history';
@@ -90,6 +91,7 @@ const QuickAddBar: React.FC<{ report: AnalysisReport }> = ({ report }) => {
  */
 const HomePage: React.FC = () => {
   const { setLoading, setError: setStoreError, error: storeError } = useAnalysisStore();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // 输入状态
   const [stockCode, setStockCode] = useState('');
@@ -356,6 +358,21 @@ const HomePage: React.FC = () => {
   useEffect(() => {
     fetchHistory(true);
   }, []);
+
+  // 读取 URL ?stock= 参数，自动触发分析
+  const stockParamHandled = useRef(false);
+  useEffect(() => {
+    const stockParam = searchParams.get('stock');
+    if (stockParam && !stockParamHandled.current) {
+      stockParamHandled.current = true;
+      setStockCode(stockParam);
+      setSearchParams({}, { replace: true });
+      setTimeout(() => {
+        const btn = document.querySelector('[data-analyze-btn]') as HTMLButtonElement;
+        if (btn) btn.click();
+      }, 100);
+    }
+  }, [searchParams, setSearchParams]);
 
   // 点击历史项加载报告
   const handleHistoryClick = async (queryId: string, itemStockCode?: string) => {

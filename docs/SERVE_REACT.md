@@ -62,4 +62,36 @@ cd apps/dsa-web && npm run build && cd ../..
 
 ## 四、API 文档
 
-服务启动后可在浏览器打开 **http://127.0.0.1:8000/docs** 查看并调试所有接口。
+服务启动后可在浏览器打开 **http://127.0.0.1:8000/docs** 查看并调试所有接口（OpenAPI/Swagger 自动生成）。
+
+### 主要 API 端点
+
+#### 市场概览
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/market/overview` | GET | 市场情绪温度、涨跌停统计、概念热度 Top10、红绿灯信号 |
+| `/api/v1/market/concept-holdings` | POST | 查询持仓股属于哪些概念板块（body: `{"codes": ["600519"]}` ） |
+| `/api/v1/market/todo-list` | GET | 今日操作清单（止损预警、评分异动） |
+
+#### 持仓管理
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/portfolio` | GET | 获取所有持仓（含板块暴露度） |
+| `/api/v1/portfolio` | POST | 新增/更新持仓 |
+| `/api/v1/portfolio/{code}` | GET | 获取单只持仓详情 |
+| `/api/v1/portfolio/{code}` | DELETE | 删除持仓 |
+| `/api/v1/portfolio/{code}/trade` | POST | 记录买入/卖出交易，自动更新成本价和股数 |
+| `/api/v1/portfolio/{code}/cost` | PUT | 从券商同步精确成本价 |
+| `/api/v1/portfolio/{code}/logs` | GET | 获取操作日志（`?limit=20`） |
+| `/api/v1/portfolio/{code}/simple` | GET | 散户简化视图（信号灯 + 一句话建议） |
+| `/api/v1/portfolio/monitor/signals` | GET | 所有持仓实时监控信号（含集中度预警、板块暴露、总资金） |
+
+#### 关注股
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/watchlist` | GET | 获取所有关注股（`?sort_by=score/change/date`） |
+| `/api/v1/watchlist` | POST | 新增关注股 |
+| `/api/v1/watchlist/{code}` | DELETE | 删除关注股 |

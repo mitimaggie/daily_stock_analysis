@@ -206,6 +206,7 @@ daily_stock_analysis/
 | `SCHEDULE_ENABLED` | 启用定时任务 | `false` |
 | `SCHEDULE_TIME` | 定时执行时间 | `18:00` |
 | `LOG_DIR` | 日志目录 | `./logs` |
+| `PORTFOLIO_SIZE` | 总资金额度（元），配置后可获得精确仓位百分比和集中度预警（如 `100000` = 10 万） | `0`（不启用） |
 
 ---
 
@@ -507,6 +508,66 @@ GEMINI_MODEL=gemini-3-flash-preview
 OPENAI_API_KEY=xxx
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-chat
+```
+
+### 总资金配置
+
+配置 `PORTFOLIO_SIZE` 后，系统可根据实际资金计算仓位百分比和集中度预警：
+
+```bash
+PORTFOLIO_SIZE=100000   # 10万资金
+```
+
+配置后的效果：
+- 持仓监控 API 返回每只股票的仓位占比
+- 集中度预警（单只占比过高时告警）
+- 板块暴露度分析（同板块持仓过于集中时告警）
+
+未配置（默认 `0`）时，系统会回退到"持仓总市值"作为基准计算。
+
+### 持仓管理 API
+
+通过 React 前端或 API 直接管理持仓，支持快捷交易和成本同步。
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/portfolio/{code}/trade` | POST | 记录买入/卖出交易，自动更新成本价和股数 |
+| `/api/v1/portfolio/{code}/cost` | PUT | 从券商同步精确成本价（可选同时更新股数） |
+| `/api/v1/portfolio/{code}/logs` | GET | 获取单只股票的操作日志（按时间倒序，默认 20 条） |
+| `/api/v1/market/concept-holdings` | POST | 查询持仓股属于哪些概念板块 |
+
+**交易记录示例**：
+```bash
+# 买入 600519，200股，价格 1800
+curl -X POST "http://127.0.0.1:8000/api/v1/portfolio/600519/trade" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "buy", "shares": 200, "price": 1800, "reason": "回调到支撑位"}'
+
+# 卖出 600519，100股，价格 1900
+curl -X POST "http://127.0.0.1:8000/api/v1/portfolio/600519/trade" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "sell", "shares": 100, "price": 1900, "reason": "止盈减仓"}'
+```
+
+买入时系统自动用加权平均法计算新成本价；卖出时自动递减股数，清仓时自动标记为 `stop_exit`。
+
+**更新成本价示例**：
+```bash
+curl -X PUT "http://127.0.0.1:8000/api/v1/portfolio/600519/cost" \
+  -H "Content-Type: application/json" \
+  -d '{"cost_price": 1785.50, "shares": 300}'
+```
+
+**查询操作日志**：
+```bash
+curl "http://127.0.0.1:8000/api/v1/portfolio/600519/logs?limit=10"
+```
+
+**查询持仓概念关联**：
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/market/concept-holdings" \
+  -H "Content-Type: application/json" \
+  -d '{"codes": ["600519", "300750"]}'
 ```
 
 ### 调试模式

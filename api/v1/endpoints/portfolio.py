@@ -43,6 +43,18 @@ class PortfolioLogRequest(BaseModel):
     triggered_by: str = 'manual'
 
 
+class TradeRequest(BaseModel):
+    action: str       # "buy" | "sell"
+    shares: int       # 本次操作股数（正数）
+    price: float      # 本次操作价格
+    reason: str = ""  # 操作原因（可选）
+
+
+class CostUpdateRequest(BaseModel):
+    cost_price: float
+    shares: Optional[int] = None
+
+
 class HorizonUpdateRequest(BaseModel):
     holding_horizon_label: str
 
@@ -101,6 +113,77 @@ def api_update_horizon(code: str, req: HorizonUpdateRequest):
 def api_refresh_review_date(code: str):
     review_date = update_next_review_date(code)
     return {"next_review_at": review_date}
+
+
+@router.post("/portfolio/{code}/trade", summary="记录交易操作并更新持仓")
+async def api_record_trade(code: str, req: TradeRequest):
+    """快捷记录买入/卖出，自动更新成本价和股数"""
+    from sqlalchemy import select
+    from src.storage import DatabaseManager, Portfolio, PortfolioLog
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        record = session.execute(
+            select(Portfolio).where(Portfolio.code == code)
+        ).scalar_one_or_none()
+        if not record:
+            raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
+
+        old_shares = record.shares or 0
+        old_cost = record.cost_price or 0.0
+
+        if req.action == "buy":
+            new_shares = old_shares + req.shares
+            if new_shares > 0:
+                new_cost = (old_cost * old_shares + req.price * req.shares) / new_shares
+            else:
+                new_cost = req.price
+            record.shares = new_shares
+            record.cost_price = round(new_cost, 4)
+            log_action = "add" if old_shares > 0 else "buy"
+        elif req.action == "sell":
+            new_shares = max(0, old_shares - req.shares)
+            record.shares = new_shares
+            log_action = "reduce" if new_shares > 0 else "stop_exit"
+        else:
+            raise HTTPException(status_code=400, detail=f"不支持的操作: {req.action}")
+
+        log = PortfolioLog(
+            code=code,
+            action=log_action,
+            price=req.price,
+            shares=req.shares,
+            reason=req.reason,
+            triggered_by='manual',
+        )
+        session.add(log)
+        session.commit()
+
+        return {
+            "success": True,
+            "portfolio": record.to_dict(),
+            "log": log.to_dict(),
+        }
+
+
+@router.put("/portfolio/{code}/cost", summary="直接更新成本价")
+async def api_update_cost(code: str, req: CostUpdateRequest):
+    """从券商同步精确成本价，可选同时更新股数"""
+    from sqlalchemy import select
+    from src.storage import DatabaseManager, Portfolio
+
+    db = DatabaseManager.get_instance()
+    with db.get_session() as session:
+        record = session.execute(
+            select(Portfolio).where(Portfolio.code == code)
+        ).scalar_one_or_none()
+        if not record:
+            raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
+        record.cost_price = req.cost_price
+        if req.shares is not None:
+            record.shares = req.shares
+        session.commit()
+        return {"success": True, "portfolio": record.to_dict()}
 
 
 @router.delete("/portfolio/{code}", summary="删除持仓")

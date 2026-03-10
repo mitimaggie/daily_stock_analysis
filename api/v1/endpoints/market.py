@@ -14,6 +14,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from fastapi import APIRouter
 
 logger = logging.getLogger(__name__)
@@ -77,6 +79,22 @@ async def get_market_overview() -> Dict[str, Any]:
         logger.warning(f"获取概念热度失败: {e}")
 
     return result
+
+
+class ConceptHoldingsRequest(BaseModel):
+    codes: List[str]
+
+@router.post("/concept-holdings", summary="持仓股概念关联查询")
+async def api_concept_holdings(req: ConceptHoldingsRequest) -> Dict[str, Any]:
+    """查询持仓股属于哪些概念"""
+    from src.storage import DatabaseManager
+
+    db = DatabaseManager.get_instance()
+    mappings: Dict[str, List[str]] = {}
+    for code in req.codes:
+        concepts = db.get_stock_concepts(code)
+        mappings[code] = [c.concept_name for c in concepts] if concepts else []
+    return {"mappings": mappings}
 
 
 @router.get("/todo-list")

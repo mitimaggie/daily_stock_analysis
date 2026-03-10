@@ -5,6 +5,41 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.4.0] - 2026-03-10
+
+### 新增
+- 📊 **持仓快捷交易**
+  - 新增 `POST /api/v1/portfolio/{code}/trade` 端点，支持快捷买入/卖出，自动计算加权成本价和更新股数
+  - 新增 `PUT /api/v1/portfolio/{code}/cost` 端点，支持从券商同步精确成本价
+  - 新增 `GET /api/v1/portfolio/{code}/logs` 端点，查询单只股票的操作日志（按时间倒序）
+- 🔥 **概念热度持仓关联**
+  - 新增 `POST /api/v1/market/concept-holdings` 端点，查询持仓股属于哪些概念板块
+  - 市场页概念热度列表与持仓标签联动
+- 🔍 **分析页自动跳转**
+  - 持仓卡片点击分析图标自动跳转分析页，携带股票代码参数，自动填充并触发分析
+- 💰 **总资金配置**
+  - 新增 `PORTFOLIO_SIZE` 环境变量，配置总资金额度后可获得精确的仓位百分比和集中度预警
+- 🤖 **研发流程升级**
+  - 新增 6 个 Subagent 角色：DevOps、DataEngineer、Security、PM、DocWriter、UXReviewer
+  - 工作流从 7 步升级到 11 步，增加用户体验验收、安全审查、文档同步环节
+
+### 改进
+- 🎨 **浅色主题全站改造**
+  - CSS 变量和 Tailwind 配色方案从深色切换为浅色
+  - 40+ 前端组件文件适配新主题
+- 📱 **持仓页面 UX 大幅优化**
+  - 桌面端响应式断点从 768px 提升到 1280px，采用双列卡片布局
+  - 持仓卡片：图标替换为中文文字按钮、ATR 止损值通俗化显示、新增评分颜色标签
+  - 信号灯枚举匹配修复，确保与后端 `stop_loss`/`reduce`/`add_watch`/`hold` 一致
+- 📈 **涨跌颜色统一为 A 股惯例**
+  - 全站涨跌颜色统一为红涨绿跌（A 股标准），替换原有美股风格绿涨红跌
+
+### 修复
+- 🐛 **P0: `_NUMERIC_DEFAULTS` key 格式修复**
+  - 修复持仓监控 API 中数值字段默认值 key 名不匹配导致前端数据归零的严重 bug
+- 🐛 **P0: 总资金 50 万硬编码移除**
+  - 将 `portfolio_size` 硬编码值替换为可配置的 `PORTFOLIO_SIZE` 环境变量，默认值为 0（不启用仓位计算）
+
 ## [2.3.0] - 2026-02-01
 
 ### 新增
@@ -369,7 +404,8 @@
 
 ---
 
-[Unreleased]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.2.5...v2.3.0
 [2.2.5]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.2.4...v2.2.5
 [2.2.4]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v2.2.3...v2.2.4

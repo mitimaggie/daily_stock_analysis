@@ -223,4 +223,12 @@ export const portfolioApi = {
   updateHorizon: async (code: string, label: string): Promise<void> => {
     await apiClient.put(`/api/v1/portfolio/${code}/horizon`, { holding_horizon_label: label });
   },
+
+  recordTrade: async (code: string, data: { action: string; shares: number; price: number; reason?: string }): Promise<void> => {
+    await apiClient.post(`/api/v1/portfolio/${code}/trade`, data);
+  },
+
+  updateCost: async (code: string, data: { cost_price: number; shares?: number }): Promise<void> => {
+    await apiClient.put(`/api/v1/portfolio/${code}/cost`, data);
+  },
 };
