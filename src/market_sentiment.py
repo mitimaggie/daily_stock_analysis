@@ -361,7 +361,7 @@ def fetch_market_sentiment_with_fallback() -> Optional[MarketSentiment]:
     """
     # Level 1: akshare 涨停池
     sentiment = fetch_market_sentiment()
-    if sentiment:
+    if sentiment and (sentiment.up_count > 0 or sentiment.limit_up_count > 0 or sentiment.limit_down_count > 0):
         sentiment._source = 'akshare_zt_pool'  # type: ignore[attr-defined]
         return sentiment
 
@@ -416,15 +416,18 @@ def get_market_sentiment_cached(db: Optional[object] = None) -> Optional[MarketS
                 fields = {k: v for k, v in data.items()
                           if k in MarketSentiment.__dataclass_fields__}
                 sentiment = MarketSentiment(**fields)
-                _sentiment_cache.update({'data': sentiment, 'ts': now})
-                logger.debug("[市场情绪] L2 DB缓存命中")
-                return sentiment
+                if sentiment.up_count > 0 or sentiment.limit_up_count > 0 or sentiment.limit_down_count > 0:
+                    _sentiment_cache.update({'data': sentiment, 'ts': now})
+                    logger.debug("[市场情绪] L2 DB缓存命中")
+                    return sentiment
+                else:
+                    logger.debug("[市场情绪] L2 DB缓存数据无效，将重新获取")
         except Exception as e:
             logger.debug(f"[市场情绪] L2 DB缓存读取失败: {e}")
 
     # L3 网络（三级 fallback）
     sentiment = fetch_market_sentiment_with_fallback()
-    if sentiment:
+    if sentiment and (sentiment.up_count > 0 or sentiment.limit_up_count > 0 or sentiment.limit_down_count > 0):
         # 写入 DB
         if db is not None:
             try:
